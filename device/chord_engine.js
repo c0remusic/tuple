@@ -136,7 +136,7 @@ var strumCurve          = 0;          // Linear par défaut
 var humanizeAmt         = 0;          // 0-100 : 0 = off ; variation vélocité ±25% + timing ±15ms
 var _emitTasks          = [];         // Tasks de notes différées (strum/humanize) en cours
 
-var TUPLE_VERSION = "1.0.1";
+var TUPLE_VERSION = "1.0.2";
 
 function loadbang() {
 	try {
@@ -146,11 +146,12 @@ function loadbang() {
 		var url;
 		if (fp && fp.length > 0) {
 			fp = fp.replace(/\\/g, '/');
+			// macOS Max returns an HFS-style path WITH the volume name ("Macintosh HD:/Users/…").
+			// Strip the volume → POSIX path ("/Users/…"). Windows "C:/…" (single-letter drive) is
+			// left as-is. Then: POSIX/Mac starts with '/' → file:// + path ; Windows → file:/// + path.
+			// (Two bugs lived here: 4 slashes on Mac, then "file:///Macintosh%20HD:/…" — both = 404.)
+			if (!/^[A-Za-z]:\//.test(fp)) { fp = fp.replace(/^[^/:]*:\//, '/'); }
 			var dir = fp.substring(0, fp.lastIndexOf('/') + 1).replace(/ /g, '%20');
-			// macOS paths start with '/' (→ file:// + /Users/…); Windows paths start
-			// with 'C:/' (→ file:/// + C:/…). Prepending 'file:///' blindly produced
-			// FOUR slashes on Mac (file:////Users/…) → ERR_FILE_NOT_FOUND. Add the
-			// leading slash only when the path doesn't already have one.
 			url = 'file://' + (dir.charAt(0) === '/' ? '' : '/') + dir + 'ui/tuple_ui.html';
 		} else {
 			// pas de fallback machine-spécifique : le device s'auto-localise via
