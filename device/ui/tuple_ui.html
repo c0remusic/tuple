@@ -1005,6 +1005,21 @@
     } else { console.log('[demo]',a.join(' ')); demoHandle(a); }
   }
 
+  // External links: the jweb has no tabs, so a plain <a> would navigate the device
+  // in place (UI gone, device unusable). Intercept and route the URL to Max, which
+  // opens it in the system browser via "; max launchbrowser". In the demo (no M),
+  // open a normal new tab instead.
+  document.addEventListener('click', function(e){
+    var t = e.target;
+    var a = (t && t.closest) ? t.closest('a[href]') : null;
+    if(!a) return;
+    var href = a.getAttribute('href') || '';
+    if(!/^(https?:|mailto:)/i.test(href)) return;
+    e.preventDefault();
+    if(M){ send('openurl', href); }
+    else { window.open(href, '_blank', 'noopener'); }
+  });
+
   // ── INCOMING ──
   function bind(){
     if(!M) return;

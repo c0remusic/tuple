@@ -199,7 +199,8 @@ function list() {
 		requeststate: requeststate, midinote: midinote, key: key,
 		keynote: keynote, keynoteup: keynoteup, pushmode: pushmode,
 		colorscheme: colorscheme, strumms: strumms, strumramp: strumramp,
-		strumcurve: strumcurve, humanizeamt: humanizeamt
+		strumcurve: strumcurve, humanizeamt: humanizeamt,
+		openurl: openurl
 	};
 	if (D[sel]) { D[sel].apply(null, rest); }
 	else { post("list: selecteur jweb inconnu '" + sel + "' (" + rest.join(" ") + ")\n"); }
@@ -246,6 +247,18 @@ function onloadstart()  {}
 function onloadend()    {}
 function url()          {}
 function title()        {}
+
+// Liens externes : le [jweb] n'a pas d'onglets — un <a href> ferait naviguer le
+// device EN PLACE (UI perdue, device inutilisable). L'UI intercepte le clic et nous
+// envoie l'URL ici ; on l'ouvre dans le navigateur système via "; max launchbrowser".
+function openurl(u) {
+	try {
+		max.message('launchbrowser', String(u));
+		post('tuple: launchbrowser ' + u + '\n');
+	} catch (e) {
+		post('tuple: openurl error: ' + e + '\n');
+	}
+}
 
 // =====================================================
 // CONFIG
