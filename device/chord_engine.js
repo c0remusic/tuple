@@ -136,7 +136,7 @@ var strumCurve          = 0;          // Linear par défaut
 var humanizeAmt         = 0;          // 0-100 : 0 = off ; variation vélocité ±25% + timing ±15ms
 var _emitTasks          = [];         // Tasks de notes différées (strum/humanize) en cours
 
-var TUPLE_VERSION = "1.0.2";
+var TUPLE_VERSION = "1.0.3";
 
 function loadbang() {
 	try {
@@ -403,6 +403,7 @@ function voicingidx(v) {
 function voiceleading(v) {
 	// Accepte "on"/"off" (toggle jsui) ET 1/0 (toggle jweb)
 	var s = String(v).toLowerCase();
+	sendNoteOff(); activeMidiNote = -1;   // libère toute note tenue → le toggle ne peut pas laisser de note coincée (no-op si rien ne sonne)
 	voiceLeadingEnabled = (s === "on" || s === "1" || s === "true");
 	_vl2_reset();
 	pushConfigState();   // pas de rebuild grille
@@ -414,6 +415,7 @@ function resetvoiceleading() {
 
 // Reçoit "vlmode anchored" ou "vlmode relative"
 function vlmode(m) {
+	sendNoteOff(); activeMidiNote = -1;   // idem : pas de note orpheline au changement de mode
 	vlMode = String(m);
 	_vl2_reset();
 	pushConfigState();   // pas de rebuild grille
