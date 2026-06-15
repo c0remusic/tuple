@@ -458,7 +458,7 @@
       <div class="ib-logo">Tuple</div>
       <div class="ib-tag">Max for Live · Harmonic composition tool</div>
       <hr>
-      <div class="ib-row"><div class="ib-label">Version</div><div class="ib-val">1.0.6</div></div>
+      <div class="ib-row"><div class="ib-label">Version</div><div class="ib-val">1.0.7</div></div>
       <div class="ib-row"><div class="ib-label">Creator</div><div class="ib-val">c0re</div></div>
       <div class="ib-row"><div class="ib-label">Contact</div><div class="ib-val"><a href="mailto:c0re_m4l@proton.me">c0re_m4l@proton.me</a></div></div>
       <div class="ib-row"><div class="ib-label">Community</div><div class="ib-val"><a href="https://discord.gg/N52jGhGE">discord.gg/N52jGhGE</a></div></div>
@@ -1029,6 +1029,12 @@
     M.bindInlet('gridbor',   function(i,label,semis,type,roman){ if(tmpBor) tmpBor.push({label:String(label),roman:roman?String(roman):'',semis:parseInt(semis),type:String(type)}); });
     M.bindInlet('griddone',  function(){ if(tmpCols){cols=tmpCols;bor=tmpBor;tmpCols=null;tmpBor=null;renderGrid();} });
     M.bindInlet('qualities', function(){ degQual=Array.prototype.slice.call(arguments).map(Number); if(colorScheme===4) applyScheme(); });
+    // Layout (logique couleur) changé ailleurs (Push / moteur) → le refléter sur la fenêtre principale.
+    M.bindInlet('colorscheme', function(v){
+      var n=SCHEME_NAMES.length; colorScheme=(((parseInt(v)||0)%n)+n)%n;
+      var cb=document.getElementById('colorBtn'); if(cb) cb.textContent='LAYOUT · '+SCHEME_NAMES[colorScheme];
+      applyScheme();
+    });
     M.bindInlet('root',      function(v){ state.root=parseInt(v); renderConfig(); });
     M.bindInlet('scale',     function(v){ state.scaleIdx=parseInt(v); renderConfig(); });
     M.bindInlet('octave',    function(v){ state.oct=parseInt(v); renderConfig(); });
