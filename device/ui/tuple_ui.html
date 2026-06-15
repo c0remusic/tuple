@@ -90,7 +90,7 @@
     font-family:var(--sans);font-size:8px;letter-spacing:.14em;font-weight:600;
     color:rgba(255,220,130,.35);text-transform:uppercase;
   }
-  .dd-grid{display:grid;gap:3px;flex:1;align-content:start;overflow-y:auto;min-height:0}  /* scroll si la liste dépasse la fenêtre (strip court) → jamais tronqué, scale avec +de voicings */
+  .dd-grid{display:grid;gap:3px;flex:1;align-content:start}
   .dd-cell{
     background:var(--cell);border:1px solid var(--cell-bd);border-radius:5px;
     padding:6px 8px;cursor:pointer;text-align:left;
@@ -100,9 +100,9 @@
     transition:background .07s,color .07s,border-color .07s;
     pointer-events:auto;
   }
-  body.strip .dd-cell{padding:0 8px;font-size:10px;letter-spacing:0;min-height:26px;justify-content:flex-start}
-  body.strip .dd-ov{padding:10px 8px;gap:0}
-  body.strip .dd-grid{align-content:start;gap:5px}
+  body.strip .dd-cell{padding:0 4px;font-size:8px;letter-spacing:0;min-height:22px;justify-content:flex-start;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;line-height:22px}
+  body.strip .dd-ov{padding:9px 8px;gap:0}
+  body.strip .dd-grid{align-content:start;gap:4px}   /* tout tient sans scroll : 3 colonnes (voir openDrop) + cellules compactes */
   .dd-cell:hover{background-color:rgba(255,255,255,.08);color:var(--txt);border-color:rgba(255,255,255,.15)}
   .dd-cell.on{background:var(--gold-dim);border-color:var(--gold-bd);color:var(--gold);font-weight:600}
   /* Full : options plus grandes + bloc centré (la fenêtre est haute → fini le vide en bas) */
@@ -311,7 +311,7 @@
   body.strip .lbl-row      {height:20px;flex:none;justify-content:flex-end}   /* sync sur sa propre ligne au-dessus de KEY/SCALE (comme en full), aligné à droite */
   body.strip .lbl-row .sync{height:20px;width:26px;font-size:10px}
   body.strip .krow         {padding-right:0}
-  body.strip .krow .csel .cl{display:none}   /* strip compact : pas de label in-cell sur KEY/SCALE → la valeur (ex. C#) n'est jamais coupée */
+  body.strip .krow .csel .cl{font-size:8px}   /* labels KEY/SCALE gardés mais compacts (la sync déplacée a libéré la largeur → la valeur C# tient quand même) */
 
   /* Strip — octave */
   body.strip .oct          {height:20px;flex:none;display:flex;gap:5px}
@@ -458,7 +458,7 @@
       <div class="ib-logo">Tuple</div>
       <div class="ib-tag">Max for Live · Harmonic composition tool</div>
       <hr>
-      <div class="ib-row"><div class="ib-label">Version</div><div class="ib-val">1.0.8</div></div>
+      <div class="ib-row"><div class="ib-label">Version</div><div class="ib-val">1.0.9</div></div>
       <div class="ib-row"><div class="ib-label">Creator</div><div class="ib-val">c0re</div></div>
       <div class="ib-row"><div class="ib-label">Contact</div><div class="ib-val"><a href="mailto:c0re_m4l@proton.me">c0re_m4l@proton.me</a></div></div>
       <div class="ib-row"><div class="ib-label">Community</div><div class="ib-val"><a href="https://discord.gg/N52jGhGE">discord.gg/N52jGhGE</a></div></div>
@@ -1101,7 +1101,7 @@
   };
   document.getElementById('voicing').onclick = function(e){
     e.stopPropagation();
-    openDrop('voicing','VOICING',VOICINGS,state.voicingIdx,2,function(i,name){
+    openDrop('voicing','VOICING',VOICINGS,state.voicingIdx,mode==='strip'?3:2,function(i,name){
       state.voicingIdx=i; document.getElementById('voicingV').textContent=name; send('voicingidx',i);
     });
   };
