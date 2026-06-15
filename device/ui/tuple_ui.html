@@ -308,9 +308,9 @@
   /* Strip — key row (20px = hauteur STANDARD de tous les contrôles du strip) */
   body.strip .row          {height:20px;flex:none;display:flex;gap:5px}
   body.strip .row .csel    {flex:1;height:100%;padding:0 7px;font-size:10px}
-  body.strip .lbl-row      {height:0;overflow:visible;position:relative;flex:none}
-  body.strip .lbl-row .sync{position:absolute;top:5px;right:0;height:20px;width:26px;font-size:10px}
-  body.strip .krow         {padding-right:31px}
+  body.strip .lbl-row      {height:20px;flex:none;justify-content:flex-end}   /* sync sur sa propre ligne au-dessus de KEY/SCALE (comme en full), aligné à droite */
+  body.strip .lbl-row .sync{height:20px;width:26px;font-size:10px}
+  body.strip .krow         {padding-right:0}
   body.strip .krow .csel .cl{display:none}   /* strip compact : pas de label in-cell sur KEY/SCALE → la valeur (ex. C#) n'est jamais coupée */
 
   /* Strip — octave */
@@ -458,7 +458,7 @@
       <div class="ib-logo">Tuple</div>
       <div class="ib-tag">Max for Live · Harmonic composition tool</div>
       <hr>
-      <div class="ib-row"><div class="ib-label">Version</div><div class="ib-val">1.0.5</div></div>
+      <div class="ib-row"><div class="ib-label">Version</div><div class="ib-val">1.0.6</div></div>
       <div class="ib-row"><div class="ib-label">Creator</div><div class="ib-val">c0re</div></div>
       <div class="ib-row"><div class="ib-label">Contact</div><div class="ib-val"><a href="mailto:c0re_m4l@proton.me">c0re_m4l@proton.me</a></div></div>
       <div class="ib-row"><div class="ib-label">Community</div><div class="ib-val"><a href="https://discord.gg/N52jGhGE">discord.gg/N52jGhGE</a></div></div>
