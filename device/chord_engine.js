@@ -136,7 +136,7 @@ var strumCurve          = 0;          // Linear par défaut
 var humanizeAmt         = 0;          // 0-100 : 0 = off ; variation vélocité ±25% + timing ±15ms
 var _emitTasks          = [];         // Tasks de notes différées (strum/humanize) en cours
 
-var TUPLE_VERSION = "1.0.3";
+var TUPLE_VERSION = "1.0.4";
 
 function loadbang() {
 	try {

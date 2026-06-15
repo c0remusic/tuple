@@ -90,7 +90,7 @@
     font-family:var(--sans);font-size:8px;letter-spacing:.14em;font-weight:600;
     color:rgba(255,220,130,.35);text-transform:uppercase;
   }
-  .dd-grid{display:grid;gap:3px;flex:1;align-content:start}
+  .dd-grid{display:grid;gap:3px;flex:1;align-content:start;overflow-y:auto;min-height:0}  /* scroll si la liste dépasse la fenêtre (strip court) → jamais tronqué, scale avec +de voicings */
   .dd-cell{
     background:var(--cell);border:1px solid var(--cell-bd);border-radius:5px;
     padding:6px 8px;cursor:pointer;text-align:left;
@@ -457,7 +457,7 @@
       <div class="ib-logo">Tuple</div>
       <div class="ib-tag">Max for Live · Harmonic composition tool</div>
       <hr>
-      <div class="ib-row"><div class="ib-label">Version</div><div class="ib-val">1.0.3</div></div>
+      <div class="ib-row"><div class="ib-label">Version</div><div class="ib-val">1.0.4</div></div>
       <div class="ib-row"><div class="ib-label">Creator</div><div class="ib-val">c0re</div></div>
       <div class="ib-row"><div class="ib-label">Contact</div><div class="ib-val"><a href="mailto:c0re_m4l@proton.me">c0re_m4l@proton.me</a></div></div>
       <div class="ib-row"><div class="ib-label">Community</div><div class="ib-val"><a href="https://discord.gg/N52jGhGE">discord.gg/N52jGhGE</a></div></div>
