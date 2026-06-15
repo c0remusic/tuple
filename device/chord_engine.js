@@ -136,7 +136,7 @@ var strumCurve          = 0;          // Linear par défaut
 var humanizeAmt         = 0;          // 0-100 : 0 = off ; variation vélocité ±25% + timing ±15ms
 var _emitTasks          = [];         // Tasks de notes différées (strum/humanize) en cours
 
-var TUPLE_VERSION = "1.0.4";
+var TUPLE_VERSION = "1.0.5";
 
 function loadbang() {
 	try {
@@ -737,6 +737,13 @@ function midinote(pitch, vel) {
 		if (pitch === activeMidiNote) { activeMidiNote = -1; sendNoteOff(); }
 		return;
 	}
+
+	// Dédoublonnage SYMÉTRIQUE : la même touche peut arriver par DEUX chemins
+	// (notein du Computer MIDI Keyboard d'Ableton + l'objet [key] du patch). Si cette
+	// note sonne déjà, on ignore le 2e déclenchement — sinon double-attaque et l'état
+	// de voice leading avance 2× → accords suivants erratiques. (keynote() dédoublonnait
+	// déjà dans un seul sens ; ici c'est complet.)
+	if (pitch === activeMidiNote) return;
 
 	var idx = pitch - MIDI_BASE;
 	if (idx < 0 || idx >= flatGrid.length) return;
