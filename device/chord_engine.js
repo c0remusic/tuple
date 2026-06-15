@@ -136,9 +136,13 @@ var strumCurve          = 0;          // Linear par défaut
 var humanizeAmt         = 0;          // 0-100 : 0 = off ; variation vélocité ±25% + timing ±15ms
 var _emitTasks          = [];         // Tasks de notes différées (strum/humanize) en cours
 
+var TUPLE_VERSION = "1.0.1";
+
 function loadbang() {
 	try {
+		post('Tuple v' + TUPLE_VERSION + ' — loadbang\n');
 		var fp = this.patcher.filepath;
+		post('tuple: raw filepath=' + fp + '\n');   // DIAGNOSTIC: exact path Max returns (Win C:/... vs Mac /Users/...)
 		var url;
 		if (fp && fp.length > 0) {
 			fp = fp.replace(/\\/g, '/');
