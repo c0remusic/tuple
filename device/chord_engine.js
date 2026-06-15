@@ -136,7 +136,7 @@ var strumCurve          = 0;          // Linear par défaut
 var humanizeAmt         = 0;          // 0-100 : 0 = off ; variation vélocité ±25% + timing ±15ms
 var _emitTasks          = [];         // Tasks de notes différées (strum/humanize) en cours
 
-var TUPLE_VERSION = "1.0.11";
+var TUPLE_VERSION = "1.0.12";
 
 var _patcher = null;
 
@@ -160,7 +160,7 @@ function _sendFullUrl() {
 	var url = _uiUrl(); if (!url) return;
 	var fvp = _patcher.getnamed('tuple_fullview_patcher'); if (!fvp) return;
 	var sub = fvp.subpatcher(); if (!sub) return;
-	var fw = sub.getnamed('tuple_full_jweb'); if (fw) fw.message('url', url + '?full');
+	var fw = sub.getnamed('tuple_full_jweb'); if (fw) fw.message('url', url + '?full&v=' + TUPLE_VERSION + '&t=' + (new Date()).getTime());
 }
 
 function loadbang() {
@@ -173,7 +173,7 @@ function loadbang() {
 		post('tuple: url=' + url + '\n');
 		var sw = this.patcher.getnamed('tuple_strip_jweb');
 		post('tuple: strip_jweb=' + (sw ? 'found' : 'null') + '\n');
-		if (sw) sw.message('url', url);
+		if (sw) sw.message('url', url + '?v=' + TUPLE_VERSION + '&t=' + (new Date()).getTime());
 		_sendFullUrl();
 	} catch(e) { post('tuple: loadbang error: ' + e + '\n'); }
 }
