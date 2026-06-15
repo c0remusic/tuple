@@ -458,7 +458,7 @@
       <div class="ib-logo">Tuple</div>
       <div class="ib-tag">Max for Live · Harmonic composition tool</div>
       <hr>
-      <div class="ib-row"><div class="ib-label">Version</div><div class="ib-val">1.0.9</div></div>
+      <div class="ib-row"><div class="ib-label">Version</div><div class="ib-val">1.0.10</div></div>
       <div class="ib-row"><div class="ib-label">Creator</div><div class="ib-val">c0re</div></div>
       <div class="ib-row"><div class="ib-label">Contact</div><div class="ib-val"><a href="mailto:c0re_m4l@proton.me">c0re_m4l@proton.me</a></div></div>
       <div class="ib-row"><div class="ib-label">Community</div><div class="ib-val"><a href="https://discord.gg/N52jGhGE">discord.gg/N52jGhGE</a></div></div>
@@ -1108,6 +1108,23 @@
 
   document.getElementById('vl').onmousedown     = function(e){ if(e)e.preventDefault(); state.vl=!state.vl; renderConfig(); send('voiceleading',state.vl?1:0); };
   document.getElementById('vlmode').onmousedown = function(e){ if(e)e.preventDefault(); state.vlmodeIdx=(state.vlmodeIdx+1)%VLMODES.length; renderConfig(); send('vlmode',VLMODE_MSG[state.vlmodeIdx]); };
+
+  // MOLETTE SUR LES MENUS (KEY/SCALE/VOICING/VL MODE) : change la valeur sans ouvrir le
+  // dropdown. Comme l'octave, la molette ne déclenche pas WM_SETFOCUS → le clavier MIDI
+  // d'Ableton n'est pas interrompu. Wheel up = suivant, wheel down = précédent (cyclique).
+  function wheelMenu(id, arr, getIdx, apply){
+    var node=document.getElementById(id); if(!node) return;
+    node.addEventListener('wheel', function(e){
+      e.preventDefault(); e.stopPropagation();
+      var n=arr().length; if(!n) return;
+      apply((getIdx()+(e.deltaY>0?-1:1)+n)%n);
+    }, {passive:false});
+  }
+  wheelMenu('key',     function(){return KEYS;},     function(){return state.root;},      function(i){ state.root=i;       document.getElementById('keyV').textContent=KEYS[i];        send('rootidx',i); });
+  wheelMenu('scale',   function(){return SCALES;},   function(){return state.scaleIdx;},   function(i){ state.scaleIdx=i;   document.getElementById('scaleV').textContent=SCALES[i];    send('scaleidx',i); });
+  wheelMenu('voicing', function(){return VOICINGS;}, function(){return state.voicingIdx;}, function(i){ state.voicingIdx=i; document.getElementById('voicingV').textContent=VOICINGS[i]; send('voicingidx',i); });
+  wheelMenu('vlmode',  function(){return VLMODES;},  function(){return state.vlmodeIdx;},  function(i){ state.vlmodeIdx=i;  renderConfig(); send('vlmode',VLMODE_MSG[i]); });
+
   // Feedback OPEN/CLOSE : flash doré bref au mousedown, identique au sync.
   document.getElementById('toggleBtn').onmousedown = function(){ pressFlash(this); };
   document.getElementById('toggleBtn').onclick = function(){
