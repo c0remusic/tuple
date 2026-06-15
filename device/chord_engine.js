@@ -136,42 +136,53 @@ var strumCurve          = 0;          // Linear par défaut
 var humanizeAmt         = 0;          // 0-100 : 0 = off ; variation vélocité ±25% + timing ±15ms
 var _emitTasks          = [];         // Tasks de notes différées (strum/humanize) en cours
 
-var TUPLE_VERSION = "1.0.7";
+var TUPLE_VERSION = "1.0.8";
+
+var _patcher = null;
+
+// Construit l'URL file:// de l'UI depuis patcher.filepath, multi-plateforme.
+// macOS renvoie un chemin HFS AVEC le nom du volume ("Macintosh HD:/Users/…") → on le retire
+// pour obtenir "/Users/…". Windows "C:/…" (lettre de lecteur) est laissé tel quel. Puis :
+// POSIX/Mac commence par '/' → file:// + chemin ; Windows → file:/// + chemin.
+function _uiUrl() {
+	if (!_patcher) return "";
+	var fp = _patcher.filepath;
+	if (!fp || !fp.length) return "";
+	fp = fp.replace(/\\/g, '/');
+	if (!/^[A-Za-z]:\//.test(fp)) { fp = fp.replace(/^[^/:]*:\//, '/'); }
+	var dir = fp.substring(0, fp.lastIndexOf('/') + 1).replace(/ /g, '%20');
+	return 'file://' + (dir.charAt(0) === '/' ? '' : '/') + dir + 'ui/tuple_ui.html';
+}
+
+// Envoie l'URL au jweb de la GRANDE fenêtre (sous-patcher tuple_fullview).
+function _sendFullUrl() {
+	if (!_patcher) return;
+	var url = _uiUrl(); if (!url) return;
+	var fvp = _patcher.getnamed('tuple_fullview_patcher'); if (!fvp) return;
+	var sub = fvp.subpatcher(); if (!sub) return;
+	var fw = sub.getnamed('tuple_full_jweb'); if (fw) fw.message('url', url + '?full');
+}
 
 function loadbang() {
 	try {
+		_patcher = this.patcher;
 		post('Tuple v' + TUPLE_VERSION + ' — loadbang\n');
-		var fp = this.patcher.filepath;
-		post('tuple: raw filepath=' + fp + '\n');   // DIAGNOSTIC: exact path Max returns (Win C:/... vs Mac /Users/...)
-		var url;
-		if (fp && fp.length > 0) {
-			fp = fp.replace(/\\/g, '/');
-			// macOS Max returns an HFS-style path WITH the volume name ("Macintosh HD:/Users/…").
-			// Strip the volume → POSIX path ("/Users/…"). Windows "C:/…" (single-letter drive) is
-			// left as-is. Then: POSIX/Mac starts with '/' → file:// + path ; Windows → file:/// + path.
-			// (Two bugs lived here: 4 slashes on Mac, then "file:///Macintosh%20HD:/…" — both = 404.)
-			if (!/^[A-Za-z]:\//.test(fp)) { fp = fp.replace(/^[^/:]*:\//, '/'); }
-			var dir = fp.substring(0, fp.lastIndexOf('/') + 1).replace(/ /g, '%20');
-			url = 'file://' + (dir.charAt(0) === '/' ? '' : '/') + dir + 'ui/tuple_ui.html';
-		} else {
-			// pas de fallback machine-spécifique : le device s'auto-localise via
-			// patcher.filepath (toujours présent). Si vide, on n'envoie pas d'URL cassée.
-			post('tuple: patcher.filepath vide — impossible de localiser ui/tuple_ui.html\n');
-			return;
-		}
+		post('tuple: raw filepath=' + this.patcher.filepath + '\n');   // DIAGNOSTIC
+		var url = _uiUrl();
+		if (!url) { post('tuple: patcher.filepath vide — impossible de localiser ui/tuple_ui.html\n'); return; }
 		post('tuple: url=' + url + '\n');
 		var sw = this.patcher.getnamed('tuple_strip_jweb');
 		post('tuple: strip_jweb=' + (sw ? 'found' : 'null') + '\n');
 		if (sw) sw.message('url', url);
-		var fvp = this.patcher.getnamed('tuple_fullview_patcher');
-		if (fvp) {
-			var sub = fvp.subpatcher();
-			if (sub) {
-				var fw = sub.getnamed('tuple_full_jweb');
-				if (fw) fw.message('url', url + '?full');
-			}
-		}
+		_sendFullUrl();
 	} catch(e) { post('tuple: loadbang error: ' + e + '\n'); }
+}
+
+// OPEN DEVICE → l'UI envoie 'openwindow full'. On RE-ENVOIE l'URL au jweb de la grande fenêtre :
+// le loadbang peut tourner avant que ce jweb (dans le sous-patcher) soit prêt, donc sur macOS il
+// gardait le chemin dev codé en dur → grande fenêtre blanche. Le re-send à l'ouverture le corrige.
+function openwindow(which) {
+	if (String(which) === 'full') { _sendFullUrl(); }
 }
 
 // =====================================================
@@ -205,7 +216,7 @@ function list() {
 		keynote: keynote, keynoteup: keynoteup, pushmode: pushmode,
 		colorscheme: colorscheme, strumms: strumms, strumramp: strumramp,
 		strumcurve: strumcurve, humanizeamt: humanizeamt,
-		openurl: openurl
+		openurl: openurl, openwindow: openwindow
 	};
 	if (D[sel]) { D[sel].apply(null, rest); }
 	else { post("list: selecteur jweb inconnu '" + sel + "' (" + rest.join(" ") + ")\n"); }
