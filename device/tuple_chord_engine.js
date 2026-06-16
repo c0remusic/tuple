@@ -126,6 +126,7 @@ var currentVelocity     = 100;
 var currentVoicing      = "classic";
 var voiceLeadingEnabled = false;
 var activeNotes         = [];
+var lastChordNotes      = [];         // dernier accord JOUÉ (non vidé par sendNoteOff) — pour le glisser → ajout
 var vlMode              = "anchored";  // "anchored" | "flow"
 var lastColorSemis      = 0;          // dernier accord emprunté (pour vl2)
 var lastColorType       = "maj";
@@ -133,10 +134,10 @@ var _strumMs            = 0;          // ms/note SIGNÉ : 0 = off, >0 = montant 
 var strumRamp           = 0;          // -100..100 : rampe de vélocité sur le strum. <0 = 1ère note forte puis fade, >0 = crescendo
 var STRUM_CURVE_P       = [1.0, 0.55, 1.8];  // exposant : Linear · Accel · Decel
 var strumCurve          = 0;          // Linear par défaut
-var humanizeAmt         = 0;          // 0-100 : 0 = off ; variation vélocité ±25% + timing ±15ms
+var humanizeAmt         = 0;          // 0-100 : 0 = off ; variation vélocité ±55 + timing ±60ms
 var _emitTasks          = [];         // Tasks de notes différées (strum/humanize) en cours
 
-var TUPLE_VERSION = "1.0.13";
+var TUPLE_VERSION = "1.1.0";
 
 var _patcher = null;
 
@@ -217,7 +218,9 @@ function list() {
 		colorscheme: colorscheme, strumms: strumms, strumramp: strumramp,
 		strumcurve: strumcurve, humanizeamt: humanizeamt,
 		openurl: openurl, openwindow: openwindow,
-		capture: capture, sendclip: sendclip, clearprog: clearprog, removelast: removelast
+		capture: capture, sendclip: sendclip, clearprog: clearprog, removelast: removelast,
+		removeat: removeat, setcursor: setcursor, playprog: playprog, moveprog: moveprog,
+		captureone: captureone
 	};
 	if (D[sel]) { D[sel].apply(null, rest); }
 	else { post("list: selecteur jweb inconnu '" + sel + "' (" + rest.join(" ") + ")\n"); }
@@ -242,19 +245,12 @@ var KEY_TO_MIDI = {
 };
 var KEY_VEL = 100;
 
-function keynote(ascii) {
-    ascii = parseInt(ascii);
-    var pitch = KEY_TO_MIDI[ascii];
-    if (pitch === undefined) return;
-    if (pitch === activeMidiNote) return;  // dedup : déjà joué via notein
-    midinote(pitch, KEY_VEL);
-}
-
-function keynoteup(ascii) {
-    ascii = parseInt(ascii);
-    var pitch = KEY_TO_MIDI[ascii];
-    if (pitch !== undefined) { midinote(pitch, 0); }
-}
+// [key] (clavier ORDINATEUR interne au device) DÉSACTIVÉ : il faisait DOUBLON avec le « Computer
+// MIDI Keyboard » d'Ableton (→ notein). Quand les deux sont actifs (surtout à des octaves
+// différentes), UNE touche déclenchait DEUX accords (et polluait la capture). On joue désormais
+// uniquement via l'entrée MIDI (notein / Computer MIDI Keyboard d'Ableton).
+function keynote(ascii)   { }
+function keynoteup(ascii) { }
 
 // Absorbeurs d'événements émis par l'objet [jweb] sur son outlet lors du chargement
 // de page (onloadstart, url <url>, title <titre>, onloadend...). Ils n'ont aucun sens
@@ -1314,15 +1310,15 @@ function _bell() { return Math.random() + Math.random() - 1; }
 function humanizeVel(v) {
 	v = Math.max(1, Math.min(127, Math.round(v)));   // clamp toujours (la rampe peut dépasser 127)
 	if (!humanizeAmt) return v;
-	var spread = humanizeAmt * 0.25;           // 100% → ±25
+	var spread = humanizeAmt * 0.55;           // 100% → ±55
 	var off = Math.round(_bell() * spread);
 	return Math.max(1, Math.min(127, v + off));
 }
 
-// Micro-décalage de timing en ms (humanize). 100% → ±15ms environ.
+// Décalage de timing en ms (humanize). 100% → ±60ms environ.
 function humanizeTime() {
 	if (!humanizeAmt) return 0;
-	return _bell() * (humanizeAmt / 100 * 15);
+	return _bell() * (humanizeAmt / 100 * 60);
 }
 
 function _cancelEmit() {
@@ -1394,6 +1390,7 @@ function sendChord(name, notes) {
 	notes = (v2 && v2.length) ? v2 : applyVoicing(notes);
 	sendNoteOff();
 	activeNotes = notes.slice();
+	lastChordNotes = notes.slice();            // survit au note-off → utilisé par le glisser → ajout
 	_emitNotes(notes);
 	if (captureMode) captureChord(name);       // progression -> clip (capture si ON)
 	outlet(7, "active", lastFn, lastDegree);   // highlight grille
@@ -1408,11 +1405,45 @@ function sendChord(name, notes) {
 var captureMode = false;       // toggle UI : ON = on empile chaque accord joué
 var progression = [];          // [{ name:"Cmaj7", notes:[48,52,55,59] }]
 var CLIP_BEATS_PER_BAR = 4;    // 4/4 par défaut (v1) ; 1 accord = 1 mesure
+var insertCursor = -1;         // index d'insertion (clic sur une carte) ; -1 = ajout à la fin
+var PROG_MAX     = 8;          // limite d'accords (pas de scroll) ; au-delà on n'ajoute plus
 
-// Appelé depuis sendChord() quand captureMode est ON : empile l'accord
-// (nom + notes voicées telles qu'entendues) puis rafraîchit la liste UI.
+// Libellé de degré (chiffre romain) de l'accord courant, pour la carte de progression.
+// Diatonique : casse selon la qualité du triade du degré (I, ii, iii, IV, V, vi, vii°).
+// Emprunt (lastFn === "color") : chiffre romain de l'accord emprunté (carte violette côté UI).
+function currentRoman() {
+	if (lastFn === "color") {
+		var bl = borrowedFor();
+		for (var i = 0; i < bl.length; i++) {
+			if (bl[i].semis === lastColorSemis && bl[i].type === lastColorType) return bl[i].roman || "·";
+		}
+		return "·";
+	}
+	var ROMAN = ["I","II","III","IV","V","VI","VII"];
+	var base = ROMAN[lastDegree] || "·";
+	var q = chordQuality(lastDegree);
+	if (q === 1) return base.toLowerCase();             // mineur
+	if (q === 2) return base.toLowerCase() + "°";  // diminué (°)
+	if (q === 3) return base + "+";                     // augmenté
+	return base;                                         // majeur
+}
+
+// Appelé depuis sendChord() quand captureMode est ON : empile l'accord joué (clic, clavier MIDI
+// ou pad Push). 1 déclenchement = 1 carte.
 function captureChord(name) {
-	progression.push({ name: String(name), notes: activeNotes.slice() });
+	if (progression.length >= PROG_MAX) { outlet(7, "progfull"); return; }   // limite atteinte (8)
+	var entry = {
+		name: String(name),
+		roman: currentRoman(),
+		deg: (lastFn === "color" ? -1 : lastDegree),  // -1 = emprunt (violet) ; 0..6 = degré
+		notes: activeNotes.slice()
+	};
+	if (insertCursor >= 0 && insertCursor <= progression.length) {
+		progression.splice(insertCursor, 0, entry);   // insère à la position du curseur, qui RESTE fixe :
+		                                               // l'accord suivant s'insère au MÊME point (devant le précédent)
+	} else {
+		progression.push(entry);                       // sinon : ajout à la fin
+	}
 	broadcastProg();
 }
 
@@ -1420,14 +1451,71 @@ function capture(v) {                      // toggle « Capture » depuis l'UI
 	captureMode = (parseInt(v) === 1);
 	outlet(7, "capture", captureMode ? 1 : 0);
 }
-function clearprog()  { progression = []; broadcastProg(); }
+function clearprog()  { progression = []; insertCursor = -1; broadcastProg(); }
 function removelast() { if (progression.length) progression.pop(); broadcastProg(); }
+function removeat(i)  {
+	i = parseInt(i);
+	if (i >= 0 && i < progression.length) {
+		progression.splice(i, 1);
+		if (insertCursor > i) insertCursor--;                       // le curseur suit le décalage
+		if (insertCursor > progression.length) insertCursor = progression.length;
+		broadcastProg();
+	}
+}
+// Curseur d'insertion posé par l'UI (clic sur une carte). -1 = ajout à la fin.
+function setcursor(i) { insertCursor = parseInt(i); }
+// Réordonne : déplace l'accord d'index `from` vers la position `to` (glisser-déposer).
+function moveprog(from, to) {
+	from = parseInt(from); to = parseInt(to);
+	if (from < 0 || from >= progression.length) return;
+	var item = progression.splice(from, 1)[0];
+	var t = (to > from) ? to - 1 : to;           // après retrait, les positions > from se décalent
+	if (t < 0) t = 0;
+	if (t > progression.length) t = progression.length;
+	progression.splice(t, 0, item);
+	broadcastProg();
+}
+// Ajoute l'accord COURANT (dernier joué/glissé) à la position `pos` — hors mode capture
+// (utilisé par le glisser d'une case de la grille vers la progression).
+function captureone(name, pos) {
+	if (progression.length >= PROG_MAX) { outlet(7, "progfull"); return; }
+	pos = parseInt(pos);
+	var entry = {
+		name: String(name),
+		roman: currentRoman(),
+		deg: (lastFn === "color" ? -1 : lastDegree),
+		notes: lastChordNotes.slice()              // ← dernier accord joué (activeNotes a pu être vidé par le release)
+	};
+	if (pos >= 0 && pos <= progression.length) progression.splice(pos, 0, entry);
+	else progression.push(entry);
+	broadcastProg();
+}
+// Écoute (audition) d'UN accord de la progression : rejoue ses notes puis note-off auto (~0.8 s).
+// Pas de séquence — un seul accord, conforme au principe « pas un séquenceur ».
+function playprog(i) {
+	i = parseInt(i);
+	if (i < 0 || i >= progression.length) return;
+	var notes = progression[i].notes;
+	if (!notes || !notes.length) return;
+	sendNoteOff();
+	activeNotes = notes.slice();
+	_emitNotes(notes);                          // MÊME chemin d'émission que le jeu de la grille (fiable)
+	outlet(7, ["notes"].concat(activeNotes));   // clavier moniteur
+	// pas de note-off auto : la note tient jusqu'au relâchement (message 'release', comme la grille)
+}
 
-// Diffuse la liste des noms à l'UI : "prog C Am F G" (vide = "prog" seul).
+// Diffuse la progression à l'UI par TRIPLETS : "prog <nom> <romain> <deg> …" (vide = "prog" seul).
+// deg : -1 = emprunt (carte violette) ; 0..6 = degré (couleur de la grille).
 function broadcastProg() {
-	var names = [];
-	for (var i = 0; i < progression.length; i++) names.push(progression[i].name);
-	outlet(7, ["prog"].concat(names));
+	var flat = [];
+	for (var i = 0; i < progression.length; i++) {
+		var p = progression[i];
+		flat.push(p.name);
+		flat.push(p.roman || "·");
+		flat.push(p.deg);
+	}
+	outlet(7, ["prog"].concat(flat));
+	outlet(7, "cursor", insertCursor);
 }
 
 // Écrit la progression dans le clip de l'emplacement SÉLECTIONNÉ (1 accord = 1 mesure).

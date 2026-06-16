@@ -171,7 +171,7 @@
     font-size:8.5px;text-align:center;padding-bottom:3px;
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
   }
-  .head .r{color:var(--gold)} .head .f{color:var(--muted2)}
+  .head .r{color:var(--gold)} .head .f{color:var(--muted)}
   .col.bor .head{color:var(--blue)}
   .cell{
     position:relative;background:rgba(255,255,255,.055);border:1px solid rgba(255,255,255,.10);
@@ -206,7 +206,7 @@
   .chord .deg{display:none;align-items:baseline;gap:4px;line-height:1}
   .chord .deg:empty{display:none!important}
   .chord .deg .r{font-family:var(--mono);font-weight:600;letter-spacing:.06em;color:var(--gold)}
-  .chord .deg .f{font-family:var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--muted2)}
+  .chord .deg .f{font-family:var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
 
   /* ── PIANO ── */
   .keys{
@@ -267,7 +267,7 @@
   #curveBtn{height:32px;padding:0 10px;font-size:10px}
   /* DEVICE group (Push · Layout) — full uniquement, colonne droite. Caché en strip. */
   .devgrp{display:none}
-  body.full .devgrp{display:flex;flex-direction:column;gap:8px;flex:none;margin-top:16px}
+  body.full .devgrp{display:flex;flex-direction:column;gap:8px;flex:none;margin-top:12px}
   /* boutons Device/Window = même hauteur standard (32px) que les autres contrôles full */
   body.full .devgrp .btn,body.full .wingrp .btn{height:32px;padding:0 10px;display:flex;align-items:center;justify-content:center;font-size:10px}
   body.full .devgrp .lbl,body.full .wingrp .lbl{display:block;font-size:9px;letter-spacing:.15em;font-weight:600;
@@ -279,20 +279,108 @@
   }
   /* WINDOW group (Always on top · Open/Close) */
   .wingrp{display:flex;flex-direction:column;gap:8px;flex:none}
-  body.full .wingrp{margin-top:10px}
+  body.full .wingrp{margin-top:12px}
   body.strip #ontopBtn{display:none}
   /* strip : WINDOW ne contient que ALWAYS ON TOP (masqué) → groupe vide, on le cache.
      Le CTA OPEN DEVICE descend tout en bas via le spacer. */
   body.strip .wingrp{display:none}
-  /* CLIP controls — compact, inside the Device group (full window only) */
-  body.full .clip-controls{display:none}  /* WIP capture->clip hidden until the A+B redesign (target 1.0.14) */
-  .clip-controls .cliprow{display:flex;gap:6px;align-items:stretch}
-  .clip-controls .cliprow > .btn{flex:1}
-  .clip-controls #progUndo{flex:0 0 30px;padding:0;font-size:12px}
-  .clip-controls #progClear{flex:0 0 auto;padding:0 8px;font-size:9px}
-  .clip-controls .proglist{flex:1;display:flex;gap:4px;align-items:center;height:26px;padding:0 6px;border-radius:6px;background:rgba(255,255,255,.03);overflow-x:auto;overflow-y:hidden;white-space:nowrap}
-  .clip-controls .proglist .chip{flex:0 0 auto;font-size:10px;line-height:1;padding:3px 6px;border-radius:4px;background:rgba(255,220,130,.14);color:var(--gold);border:1px solid rgba(255,220,130,.25)}
-  .clip-controls .proglist .empty{flex:0 0 auto;font-size:9px;opacity:.4}
+  /* ── CAPTURE → CLIP (device-only, full window) : tiroir Progression + barre toggle en bas ── */
+
+  /* Carte d'accord — petite case : degré (romain) + nom, en ligne. POLICE DU MONITOR :
+     nom en Space Grotesk, romain en JetBrains Mono. Couleur de degré via --cardc (bord gauche).
+     Clic = supprimer (info-bulle). */
+  /* carte = même hauteur que la grille (30px). Repos SOBRE : fond neutre + accent gauche de la
+     couleur du degré + romain coloré. Léger voile du degré au survol / à l'appui seulement. */
+  .pg-card{position:relative;flex:0 0 auto;display:flex;align-items:center;justify-content:center;gap:5px;cursor:pointer;
+    min-width:54px;height:30px;padding:0 11px;border-radius:6px;
+    background:rgba(255,255,255,.045);border:1px solid var(--cell-bd);border-left:3px solid var(--cardc,var(--muted));
+    transition:background .1s,transform .1s,opacity .12s}
+  .pg-card:hover{background:var(--cardbg,rgba(255,255,255,.10))}
+  .pg-card.pressed{transform:translateY(1px);background:var(--cardbg,rgba(255,255,255,.14))}
+  .pg-card .pg-r{font-family:var(--mono);font-size:9px;font-weight:600;line-height:1;color:var(--gold)}
+  .pg-card .pg-n{font-family:var(--sans);font-size:11px;font-weight:600;line-height:1;color:var(--txt);white-space:nowrap}
+  /* actions au survol : INSÉRER (+) au-dessus · SUPPRIMER (×) en-dessous. Clic carte = écouter. */
+  /* + / × pleine largeur. ASTUCE : l'écart vers la carte est un PADDING transparent
+     (background-clip:content-box) → la zone cliquable/survolable TOUCHE la carte (aucun "trou"
+     qui couperait le :hover), tout en gardant l'espace visuel. Pas de pseudo-pont fragile. */
+  .pg-card .pg-ins,.pg-card .pg-del{position:absolute;left:0;right:0;min-width:26px;
+    display:none;align-items:center;justify-content:center;height:24px;z-index:5;cursor:pointer;
+    font-size:14px;line-height:1;border-radius:5px;background:rgba(66,62,56,.99);background-clip:content-box}
+  .pg-card .pg-ins{bottom:100%;padding-bottom:5px;color:var(--gold)}
+  .pg-card .pg-del{top:100%;padding-top:5px;color:var(--muted)}
+  .pg-card:hover .pg-ins,.pg-card:hover .pg-del{display:flex}
+  .pg-card .pg-ins:hover{background-color:var(--gold-dim);color:var(--gold)}
+  .pg-card .pg-del:hover{background-color:rgba(229,139,139,.2);color:#E58B8B}
+  /* marqueur d'insertion entre deux cartes (où iront les prochains accords) */
+  .pg-cursor{flex:0 0 auto;width:2px;align-self:stretch;min-height:18px;border-radius:1px;
+    background:var(--gold);box-shadow:0 0 5px rgba(255,220,130,.6)}
+  /* repère de dépôt (pulse) + carte source estompée + fantôme suivant le curseur */
+  .pg-dropmark{flex:0 0 auto;width:3px;align-self:stretch;min-height:22px;border-radius:2px;
+    background:var(--gold);box-shadow:0 0 8px rgba(255,220,130,.85);animation:dropPulse .7s ease-in-out infinite}
+  @keyframes dropPulse{0%,100%{opacity:1}50%{opacity:.45}}
+  body.pg-dragging,body.pg-dragging .pg-card{cursor:grabbing}
+  .pg-card.pg-drag-src{opacity:.3;transform:scale(.96)}
+  body.pg-dragging .pg-ins,body.pg-dragging .pg-del{display:none!important}
+  #pg-ghost{position:fixed;z-index:200;pointer-events:none;display:flex;align-items:center;gap:5px;
+    padding:5px 11px;border-radius:6px;background:rgba(48,45,41,.97);border:1px solid var(--gold-bd);
+    box-shadow:0 8px 22px rgba(0,0,0,.55);font-family:var(--sans);color:var(--txt);
+    opacity:0;transform:scale(.85);transition:opacity .12s,transform .12s}
+  #pg-ghost.show{opacity:.96;transform:scale(1)}
+  #pg-ghost .gr{font-family:var(--mono);font-size:9px;font-weight:600;color:var(--gold)}
+  #pg-ghost .gn{font-size:12px;font-weight:600}
+
+  /* Colonne grille = grille (flex:1) + panneau Progression dessous (in-flow, sous LA GRILLE seule).
+     Ne touche PAS la colonne config (menus) ni le monitor. La grille se compresse → jamais recouverte. */
+  .gridwrap{flex:1;display:flex;flex-direction:column;min-width:0}
+  body.strip .gridwrap{display:none}            /* strip : pas de grille → pas de colonne grille */
+  .gridwrap .grid{flex:1;min-height:0}          /* la grille occupe la place restante au-dessus du dock */
+
+  /* Panneau Progression — SEAMLESS : pas de boîte, juste un filet de séparation en haut, fond transparent.
+     Contrôles EN HAUT (une ligne) · cartes EN DESSOUS (retour à la ligne + défilement) = place max. */
+  /* padding aligné sur la grille full (côtés 14px) → les cartes s'alignent sous les cases.
+     gap 8px = même espacement que les groupes Device/Window. */
+  #cap-dock{display:none;position:relative;flex:0 0 auto;flex-direction:column;gap:8px;padding:10px 14px 10px}
+  /* séparation dégradée, identique aux séparateurs des groupes Device/Window (25%/75%) */
+  #cap-dock::before{content:'';position:absolute;top:0;left:14px;right:14px;height:1px;
+    background:linear-gradient(to right, transparent 0%, rgba(255,255,255,.12) 25%, rgba(255,255,255,.12) 75%, transparent 100%)}
+  body.full.dock-open #cap-dock{display:flex}
+  /* TOGGLE bar — toujours visible en bas (full window). Ouvre/ferme le tiroir Progression. */
+  #prog-toggle{display:none;position:relative;flex:0 0 auto;align-items:center;gap:8px;cursor:pointer;height:30px;padding:0 14px}
+  body.full #prog-toggle{display:flex}
+  /* séparateur dégradé (comme la grille / les groupes) ; masqué quand le tiroir est ouvert
+     (c'est le séparateur du tiroir qui gère alors le haut) → pas de double trait. */
+  #prog-toggle::before{content:'';position:absolute;top:0;left:14px;right:14px;height:1px;
+    background:linear-gradient(to right, transparent 0%, rgba(255,255,255,.12) 25%, rgba(255,255,255,.12) 75%, transparent 100%)}
+  body.dock-open #prog-toggle::before{display:none}
+  #prog-toggle:hover .pt-lbl,#prog-toggle:hover .pt-chev{color:var(--txt)}
+  #prog-toggle .pt-chev{font-size:9px;color:var(--muted);line-height:1}
+  #prog-toggle .pt-lbl{font-size:9px;letter-spacing:.14em;text-transform:uppercase;font-weight:600;color:var(--muted)}
+  #prog-toggle.on .pt-lbl,#prog-toggle.on .pt-chev{color:var(--gold)}
+  #prog-toggle .pt-count{margin-left:auto;font-family:var(--mono);font-size:9px;color:var(--muted2)}
+  #cap-dock .cd-head{display:flex;align-items:center;gap:8px;min-width:0}
+  #cap-dock .cd-rec{flex:0 0 auto;display:flex;align-items:center;gap:6px;cursor:pointer;height:26px;
+    font-size:9px;letter-spacing:.1em;text-transform:uppercase;font-weight:600;color:var(--muted)}
+  #cap-dock .cd-rec:hover{color:var(--txt)}
+  #cap-dock .cd-rec .cd-dot{width:8px;height:8px;border-radius:50%;background:var(--muted2)}
+  #cap-dock .cd-rec.on{color:var(--gold)}
+  #cap-dock .cd-rec.on .cd-dot{background:var(--gold);animation:rbpulse 1.2s infinite}
+  @keyframes rbpulse{0%,100%{opacity:1}50%{opacity:.25}}
+  #cap-dock .cd-count{flex:0 1 auto;font-family:var(--mono);font-size:9px;color:var(--muted2);
+    letter-spacing:.04em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #cap-dock .cd-sp{flex:1}
+  #cap-dock .cd-head .btn{flex:0 0 auto;padding:6px 10px;height:26px;display:flex;align-items:center}
+  #cap-dock .cd-icon{flex:0 0 auto;width:26px;height:26px;display:flex;align-items:center;justify-content:center;
+    cursor:pointer;border-radius:5px;color:var(--muted);font-size:13px;line-height:1;
+    border:1px solid var(--cell-bd);background:var(--cell)}
+  #cap-dock .cd-icon:hover{color:var(--txt);background:rgba(255,255,255,.08)}
+  /* hauteur FIXE (≈2 rangées) → la barre ne se redimensionne pas quand les accords arrivent,
+     et peu de dead space ; défilement vertical au-delà. */
+  /* padding-top généreux = descend les cartes + loge le « + » au-dessus de la 1re rangée ;
+     row-gap large = espace pour les « + » / « × » entre les rangées. */
+  /* padding vertical ≥ hauteur d'un bouton + sa marge (19+5=24) → les + / × ne sont pas rognés. */
+  #cap-dock .cd-cards{display:flex;flex-wrap:wrap;column-gap:6px;row-gap:26px;align-items:flex-start;align-content:flex-start;
+    height:84px;padding:26px 0;overflow-y:auto;overflow-x:hidden}
+  #cap-dock .cd-empty{margin:auto;font-size:9px;color:var(--muted)}
   body.strip .mon-spacer{order:1}   /* strip : repousse le CTA en bas (full : l'espace reste en bas) */
   body.strip #toggleBtn{height:47px;order:2}  /* haut du CTA aligné avec le haut de VOICE LEADING (gauche) */
 
@@ -380,7 +468,8 @@
   body.full .mon-head      {display:block;flex:none;margin-top:32px}
   body.full .mon-head .lbl {margin-bottom:0}
   body.full .cfg-spacer    {display:block;flex:1;min-height:0}
-  body.full .toggle        {height:46px;margin-top:0}   /* CTA = 46px, identique au strip */
+  /* full : OPEN/CLOSE = bouton confortable épinglé en bas (le spacer garde l'espace au-dessus). */
+  body.full .toggle        {height:72px;margin-top:0}
   body.full .chord         {flex:none;height:auto;min-height:74px;padding:0;flex-direction:column;align-items:flex-start;justify-content:center;gap:6px;background:transparent;border:none}  /* hauteur réservée (degré+nom+notes) : éviter que l'affichage de l'accord pousse DEVICE/WINDOW vers le bas */
   body.full .chord .deg    {display:flex;gap:5px}
   body.full .chord .deg .r {font-size:13px}
@@ -467,7 +556,7 @@
       <div class="ib-logo">Tuple</div>
       <div class="ib-tag">Max for Live · Harmonic composition tool</div>
       <hr>
-      <div class="ib-row"><div class="ib-label">Version</div><div class="ib-val">1.0.13</div></div>
+      <div class="ib-row"><div class="ib-label">Version</div><div class="ib-val">1.1.0</div></div>
       <div class="ib-row"><div class="ib-label">Creator</div><div class="ib-val">c0re</div></div>
       <div class="ib-row"><div class="ib-label">Contact</div><div class="ib-val"><a href="mailto:c0re_m4l@proton.me">c0re_m4l@proton.me</a></div></div>
       <div class="ib-row"><div class="ib-label">Community</div><div class="ib-val"><a href="https://discord.gg/N52jGhGE">discord.gg/N52jGhGE</a></div></div>
@@ -557,7 +646,24 @@
 
     <!-- GRID (hidden in strip mode) -->
     <div class="vsep vsep-l"></div>
-    <div class="grid" id="grid"></div>
+    <div class="gridwrap">
+      <div class="grid" id="grid"></div>
+      <!-- PROGRESSION DRAWER + toggle — RESTE dans la zone grille (ne touche pas config/monitor). -->
+      <div id="cap-dock">
+        <div class="cd-head">
+          <div class="cd-rec" id="dockCap" title="Capture each chord you play"><span class="cd-dot"></span>CAPTURE</div>
+          <div class="cd-sp"></div>
+          <div class="btn" id="dockClear" title="Remove every chord">CLEAR</div>
+          <div class="btn" id="dockClip" title="Write the progression to the selected clip slot (1 chord = 1 bar)">CLIP</div>
+        </div>
+        <div class="cd-cards" id="dockCards"></div>
+      </div>
+      <div id="prog-toggle" title="Show / hide the progression">
+        <span class="pt-chev" id="ptChev">&#9650;</span>
+        <span class="pt-lbl">Progression</span>
+        <span class="pt-count" id="ptCount"></span>
+      </div>
+    </div>
 
     <div class="vsep"></div>
 
@@ -581,17 +687,6 @@
         <div class="lbl">Device</div>
         <div class="btn" id="pushBtn" title="Chord grid on Push 2 pads">PUSH</div>
         <div class="btn" id="colorBtn" title="Degree color logic">LAYOUT · Spectrum</div>
-        <div class="clip-controls">
-          <div class="cliprow">
-            <div class="btn" id="captureBtn" title="Capture played chords into a progression">CAPTURE</div>
-            <div class="btn" id="toClipBtn" title="Write the progression to the selected clip slot">&rarr; CLIP</div>
-          </div>
-          <div class="cliprow">
-            <div class="proglist" id="progList"></div>
-            <div class="btn cbtn-sm" id="progUndo" title="Remove the last chord">&#9003;</div>
-            <div class="btn cbtn-sm" id="progClear" title="Clear the progression">CLEAR</div>
-          </div>
-        </div>
       </div>
 
       <!-- WINDOW : gestion de la fenêtre (séparée du groupe Device) -->
@@ -803,7 +898,7 @@
       (cols[c]||[]).forEach(function(cell,row){
         var d=el('div','cell'+((activeCol===c&&activeRow===row)?' active':''),cell.label);
         d.setAttribute('data-col',c); d.setAttribute('data-row',row);
-        (function(cc,rr,dd){ dd.onmousedown=function(e){ if(e&&e.preventDefault)e.preventDefault(); pressCell(cc,rr,dd); }; })(c,row,d);
+        (function(cc,rr,dd){ dd.onmousedown=function(e){ _cellDown(e,cc,rr,dd); }; })(c,row,d);
         col.appendChild(d);
       });
       g.appendChild(col);
@@ -814,7 +909,7 @@
       var lab=cell.label;  /* pas de roman dans la case → homogène avec les degrés */
       var d=el('div','cell'+((activeCol===7&&activeRow===i)?' active':''),lab);
       d.setAttribute('data-col',7); d.setAttribute('data-row',i);
-      (function(ii,dd){ dd.onmousedown=function(e){ if(e&&e.preventDefault)e.preventDefault(); pressCell(7,ii,dd); }; })(i,d);
+      (function(ii,dd){ dd.onmousedown=function(e){ _cellDown(e,7,ii,dd); }; })(i,d);
       bc.appendChild(d);
     });
     g.appendChild(bc);
@@ -1090,10 +1185,12 @@
     M.bindInlet('strumramp', function(v){ state.strumRamp=parseInt(v)||0; renderExpr(); });
     M.bindInlet('strumcurve',function(v){ var i=parseInt(v); if(i>=0&&i<3) state.strumCurveIdx=i; renderExpr(); });
     M.bindInlet('humanize',  function(v){ state.humanize=parseInt(v)||0; renderExpr(); });
-    M.bindInlet('mode',      function(m){ setMode(String(m)); });
+    M.bindInlet('mode',      function(m){ setMode(String(m)); applyDock(); });
     M.bindInlet('prog',      function(){ renderProg(Array.prototype.slice.call(arguments)); });
-    M.bindInlet('capture',   function(v){ captureOn=(parseInt(v)===1); if(captureBtn){ captureBtn.classList.toggle('on',captureOn); captureBtn.textContent=captureOn?'CAPTURE ON':'CAPTURE'; } });
-    M.bindInlet('clipdone',  function(){ if(toClipBtn) flash(toClipBtn); clipMsg('WRITTEN'); });
+    M.bindInlet('cursor',    function(v){ cursor=parseInt(v); renderProgViews(); });
+    M.bindInlet('progfull',  function(){ var c=gE('ptCount'); if(c){ c.textContent='Max 8'; setTimeout(renderProgViews,1200); } });
+    M.bindInlet('capture',   function(v){ setCaptureUI(parseInt(v)===1); });
+    M.bindInlet('clipdone',  function(){ clipMsg('WRITTEN'); });
     M.bindInlet('clipbusy',  function(){ clipMsg('SLOT BUSY'); });
     M.bindInlet('clipnoslot',function(){ clipMsg('NO SLOT'); });
     M.bindInlet('clipempty', function(){ clipMsg('EMPTY'); });
@@ -1194,45 +1291,181 @@
     send('pushmode', pushOn?1:0);
   };
 
-  // ── CLIP : capture une progression d'accords -> clip Live (fenêtre full) ──
+  // ── CAPTURE → CLIP : progression d'accords -> clip Live (fenêtre full). Device-only. ──
+  // UI = opener (groupe Device) + panneau ANCRÉ sous la grille (#cap-dock) : contrôles EN HAUT,
+  // cartes EN DESSOUS (retour à la ligne + défilement) → un max de place pour les longues progressions.
+  // Le moteur est la source de vérité : l'UI affiche prog[] et envoie des actions.
   var captureOn=false;
-  var captureBtn=document.getElementById('captureBtn');
-  var toClipBtn=document.getElementById('toClipBtn');
-  var _toClipOrig=toClipBtn?toClipBtn.textContent:'→ CLIP';
-  captureBtn.onmousedown=function(e){ if(e)e.preventDefault(); };
-  captureBtn.onclick=function(){
-    captureOn=!captureOn;
-    this.classList.toggle('on',captureOn);
-    this.textContent=captureOn?'CAPTURE ON':'CAPTURE';
-    send('capture', captureOn?1:0);
-  };
-  toClipBtn.onmousedown=function(e){ if(e)e.preventDefault(); };
-  toClipBtn.onclick=function(){ send('sendclip'); };
-  document.getElementById('progUndo').onmousedown=function(e){ if(e)e.preventDefault(); };
-  document.getElementById('progUndo').onclick=function(){ send('removelast'); };
-  document.getElementById('progClear').onmousedown=function(e){ if(e)e.preventDefault(); };
-  document.getElementById('progClear').onclick=function(){ send('clearprog'); };
+  var prog=[];                 // miroir local : [{name, roman, deg}]
+  var dockOpen=false;          // panneau visible ?
+  var cursor=-1;               // index d'insertion (clic carte) ; -1 = ajout à la fin ; miroir moteur
+  var _drag=null;              // glisser-déposer en cours (réordonnancement)
 
-  // Rendu de la liste de progression (puces). Construit en textContent (pas d'injection).
-  function renderProg(names){
-    var el=document.getElementById('progList'); if(!el) return;
-    el.innerHTML='';
-    if(!names || !names.length){
-      var em=document.createElement('span'); em.className='empty'; em.textContent='No chords captured'; el.appendChild(em); return;
-    }
-    for(var i=0;i<names.length;i++){
-      var c=document.createElement('span'); c.className='chip'; c.textContent=String(names[i]); el.appendChild(c);
+  function gE(id){ return document.getElementById(id); }
+  function noSelect(el2,fn){ if(!el2)return; el2.onmousedown=function(e){ if(e)e.preventDefault(); }; el2.onclick=fn; }
+
+  function applyDock(){
+    var open = dockOpen && mode==='full';
+    document.body.classList.toggle('dock-open', open);
+    var t=gE('prog-toggle'); if(t) t.classList.toggle('on', open);            // barre dorée quand ouvert
+    var ch=gE('ptChev'); if(ch) ch.innerHTML = open ? '&#9660;' : '&#9650;';  // ▼ ouvert / ▲ fermé
+  }
+  function openDock(){ dockOpen=true; applyDock(); }
+  function closeDock(){ dockOpen=false; applyDock(); }
+
+  // Synchronise l'UI de capture (toggle du panneau + opener doré). Capturer => panneau visible.
+  function setCaptureUI(on){
+    captureOn=!!on;
+    var dc=gE('dockCap'); if(dc) dc.classList.toggle('on',captureOn);
+    if(captureOn) openDock();           // l'opener reflète l'état OUVERT/FERMÉ (pas la capture)
+    renderProgViews();                  // le message d'invite dépend de l'état capture
+  }
+  function toggleCapture(){ setCaptureUI(!captureOn); send('capture', captureOn?1:0); }
+
+  // Couleur de degré d'une carte : 0..6 = grille (degColorFor) ; -1 = emprunt (violet).
+  function cardColor(deg){ return (deg>=0 && deg<7) ? degColorFor(deg) : borColorFor(); }
+  function hexToRgba(h,a){ h=String(h).replace('#',''); if(h.length===3) h=h.charAt(0)+h.charAt(0)+h.charAt(1)+h.charAt(1)+h.charAt(2)+h.charAt(2); var n=parseInt(h,16); return 'rgba('+((n>>16)&255)+','+((n>>8)&255)+','+(n&255)+','+a+')'; }
+
+  // Curseur d'insertion : où iront les prochains accords. Posé par le « + » au survol d'une carte.
+  function setCursorTo(c){ cursor=c; send('setcursor', c); renderProgViews(); }
+
+  // Rendu d'une carte (nom + degré coloré, police du Monitor).
+  // Clic = ÉCOUTER l'accord (comme une case de la grille). Survol → « + » au-dessus (insérer ici)
+  // et « × » en-dessous (supprimer).
+  function buildCard(entry, idx){
+    var card=el('div','pg-card');
+    var col=cardColor(entry.deg);
+    card.style.setProperty('--cardc', col);
+    card.style.setProperty('--cardbg', hexToRgba(col,.13));   // voile léger (survol / appui seulement)
+    card.appendChild(el('span','pg-r', entry.roman||'·'));
+    card.appendChild(el('span','pg-n', entry.name||'?'));
+    var ins=el('div','pg-ins','+'); ins.title='Insert next chords after this one';
+    var del=el('div','pg-del','×'); del.title='Remove';
+    card.appendChild(ins); card.appendChild(del);
+    card.title=(entry.name||'?')+' — press & hold to play';
+    // Appui = joue l'accord et TIENT jusqu'au relâchement (comme une case de la grille).
+    // Le note-off vient du mouseup global → releaseAll() → message 'release'.
+    card.onmousedown=function(e){
+      if(e){ e.preventDefault();
+        var cn=(e.target&&e.target.className)?String(e.target.className):'';
+        if(cn.indexOf('pg-ins')>=0||cn.indexOf('pg-del')>=0) return;   // viser +/× ne joue pas l'accord
+      }
+      send('playprog', idx); card.classList.add('pressed');
+      _drag={ kind:'reorder', idx:idx, x:(e?e.clientX:0), y:(e?e.clientY:0), active:false, target:-1 };  // début éventuel d'un glisser (réordonner)
+    };
+    ins.onmousedown=function(e){ if(e){e.preventDefault();e.stopPropagation();} };
+    ins.onclick=function(e){ if(e)e.stopPropagation(); setCursorTo(cursor===idx+1?-1:idx+1); }; // + = insertion APRÈS
+    del.onmousedown=function(e){ if(e){e.preventDefault();e.stopPropagation();} };
+    del.onclick=function(e){ if(e)e.stopPropagation(); send('removeat', idx); };          // × = supprimer
+    return card;
+  }
+
+  // Rendu du panneau (cartes + compteurs) depuis prog[].
+  function renderProgViews(){
+    var n=prog.length, i;
+    var lab=gE('ptCount'); if(lab) lab.textContent = n ? (n+(n>1?' chords':' chord')) : '';
+    var box=gE('dockCards');
+    if(!box) return;
+    box.innerHTML='';
+    if(!n){ box.appendChild(el('span','cd-empty', captureOn ? 'Play the grid to capture chords…' : 'Turn on Capture, then play the grid.')); return; }
+    for(i=0;i<=n;i++){
+      if(cursor===i) box.appendChild(el('div','pg-cursor'));   // marqueur d'insertion
+      if(i<n) box.appendChild(buildCard(prog[i], i));
     }
   }
+
+  // Inlet 'prog' : liste plate par triplets [name, roman, deg, …] -> prog[].
+  function renderProg(flat){
+    prog=[];
+    if(flat) for(var i=0;i+2<flat.length;i+=3) prog.push({ name:String(flat[i]), roman:String(flat[i+1]), deg:parseInt(flat[i+2]) });
+    renderProgViews();
+  }
   renderProg([]);
+
+  // Câblage : barre toggle en bas + contrôles du tiroir.
+  noSelect(gE('prog-toggle'), function(){ if(dockOpen) closeDock(); else openDock(); });
+  noSelect(gE('dockCap'),     toggleCapture);
+  noSelect(gE('dockClear'),   function(){ send('clearprog'); });
+  noSelect(gE('dockClip'),    function(){ send('sendclip'); });
+
+  // ── Glisser-déposer (clic rapide = jouer ; appuyer + glisser = déplacer/ajouter) ──
+  // kind 'reorder' = depuis une carte de progression ; kind 'add' = depuis une case de la grille.
+  function _dropTargetFor(x){
+    var cards=gE('dockCards').querySelectorAll('.pg-card');
+    for(var i=0;i<cards.length;i++){ var r=cards[i].getBoundingClientRect(); if(x < r.left+r.width/2) return i; }
+    return cards.length;
+  }
+  function _overProg(x,y){
+    var box=gE('cap-dock'); if(!box || getComputedStyle(box).display==='none') return false;
+    var r=box.getBoundingClientRect();
+    return x>=r.left && x<=r.right && y>=r.top && y<=r.bottom;
+  }
+  function _placeDropMark(target){
+    var box=gE('dockCards'); if(!box) return;
+    var ind=gE('pg-dropmark');
+    if(!ind){ ind=el('div'); ind.id='pg-dropmark'; ind.className='pg-dropmark'; }
+    var cards=box.querySelectorAll('.pg-card');
+    if(target>=cards.length) box.appendChild(ind); else box.insertBefore(ind, cards[target]);
+  }
+  function _clearMark(){ var ind=gE('pg-dropmark'); if(ind&&ind.parentNode) ind.parentNode.removeChild(ind); }
+  // Fantôme qui suit le curseur pendant le glisser (animation).
+  function _ghostLabel(){
+    if(_drag && _drag.kind==='reorder' && prog[_drag.idx]) return {r:prog[_drag.idx].roman, n:prog[_drag.idx].name};
+    return {r:'', n:(_drag&&_drag.name)||'?'};
+  }
+  function _moveGhost(x,y){ var g=gE('pg-ghost'); if(g){ g.style.left=(x+13)+'px'; g.style.top=(y+10)+'px'; } }
+  function _makeGhost(x,y){
+    var ex=gE('pg-ghost'); if(ex&&ex.parentNode) ex.parentNode.removeChild(ex);
+    var g=el('div'); g.id='pg-ghost'; var lab=_ghostLabel();
+    if(lab.r) g.appendChild(el('span','gr',lab.r));
+    g.appendChild(el('span','gn',lab.n));
+    document.body.appendChild(g); _moveGhost(x,y);
+    setTimeout(function(){ var gg=gE('pg-ghost'); if(gg) gg.classList.add('show'); },10);
+  }
+  function _killGhost(){ var g=gE('pg-ghost'); if(g){ g.classList.remove('show'); setTimeout(function(){ if(g.parentNode) g.parentNode.removeChild(g); },150); } }
+  function _clearDrag(){
+    _clearMark(); _killGhost();
+    var s=document.querySelector('#dockCards .pg-drag-src'); if(s) s.classList.remove('pg-drag-src');
+    document.body.classList.remove('pg-dragging');
+  }
+  // Démarre un glisser 'add' depuis une case de la grille (après l'avoir jouée via pressCell).
+  function _cellDown(e, cc, rr, dd){
+    if(e&&e.preventDefault)e.preventDefault();
+    pressCell(cc,rr,dd);
+    _drag={ kind:'add', name:activeChordName, x:(e?e.clientX:0), y:(e?e.clientY:0), active:false, target:-1 };
+  }
+  document.addEventListener('mousemove', function(e){
+    if(!_drag) return;
+    if(!_drag.active){
+      if(Math.abs(e.clientX-_drag.x)+Math.abs(e.clientY-_drag.y) < 8) return;   // seuil (évite les drags accidentels)
+      _drag.active=true;                                                          // la note CONTINUE de sonner jusqu'au relâchement (mouseup → release)
+      document.body.classList.add('pg-dragging');
+      if(_drag.kind==='reorder'){ var src=gE('dockCards').querySelectorAll('.pg-card')[_drag.idx]; if(src) src.classList.add('pg-drag-src'); }
+      else if(_drag.kind==='add' && !dockOpen){ openDock(); }                    // ouvre le tiroir pour recevoir le dépôt
+      _makeGhost(e.clientX,e.clientY);                                           // fantôme qui suit le curseur
+    }
+    _moveGhost(e.clientX,e.clientY);
+    if(_overProg(e.clientX,e.clientY)){ _drag.target=_dropTargetFor(e.clientX); _placeDropMark(_drag.target); }
+    else { _drag.target=-1; _clearMark(); }
+  });
+  document.addEventListener('mouseup', function(){
+    if(_drag && _drag.active){
+      var d=_drag; _clearDrag();
+      if(d.target>=0){
+        if(d.kind==='reorder') send('moveprog', d.idx, d.target);
+        else if(d.kind==='add')  send('captureone', d.name, d.target);
+      }
+    }
+    _drag=null;
+  });
 
   // Retour visuel bref sur « → CLIP » (slot occupé / vide / erreur n'ouvrent pas de dialogue).
   var _clipMsgT=null;
   function clipMsg(txt){
-    if(!toClipBtn) return;
+    var b=gE('dockClip'); if(!b) return;
     if(_clipMsgT) clearTimeout(_clipMsgT);
-    toClipBtn.textContent=txt;
-    _clipMsgT=setTimeout(function(){ toClipBtn.textContent=_toClipOrig; _clipMsgT=null; }, 1300);
+    b.textContent=txt;
+    _clipMsgT=setTimeout(function(){ b.textContent='CLIP'; _clipMsgT=null; }, 1300);
   }
 
   // Cycler de logique couleur : Spectre / Fonction tonale / Cycle des quintes (légende UI).
