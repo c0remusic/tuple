@@ -279,11 +279,20 @@
   }
   /* WINDOW group (Always on top · Open/Close) */
   .wingrp{display:flex;flex-direction:column;gap:8px;flex:none}
-  body.full .wingrp{margin-top:16px}
+  body.full .wingrp{margin-top:10px}
   body.strip #ontopBtn{display:none}
   /* strip : WINDOW ne contient que ALWAYS ON TOP (masqué) → groupe vide, on le cache.
      Le CTA OPEN DEVICE descend tout en bas via le spacer. */
   body.strip .wingrp{display:none}
+  /* CLIP controls — compact, inside the Device group (full window only) */
+  body.full .clip-controls{display:none}  /* WIP capture->clip hidden until the A+B redesign (target 1.0.14) */
+  .clip-controls .cliprow{display:flex;gap:6px;align-items:stretch}
+  .clip-controls .cliprow > .btn{flex:1}
+  .clip-controls #progUndo{flex:0 0 30px;padding:0;font-size:12px}
+  .clip-controls #progClear{flex:0 0 auto;padding:0 8px;font-size:9px}
+  .clip-controls .proglist{flex:1;display:flex;gap:4px;align-items:center;height:26px;padding:0 6px;border-radius:6px;background:rgba(255,255,255,.03);overflow-x:auto;overflow-y:hidden;white-space:nowrap}
+  .clip-controls .proglist .chip{flex:0 0 auto;font-size:10px;line-height:1;padding:3px 6px;border-radius:4px;background:rgba(255,220,130,.14);color:var(--gold);border:1px solid rgba(255,220,130,.25)}
+  .clip-controls .proglist .empty{flex:0 0 auto;font-size:9px;opacity:.4}
   body.strip .mon-spacer{order:1}   /* strip : repousse le CTA en bas (full : l'espace reste en bas) */
   body.strip #toggleBtn{height:47px;order:2}  /* haut du CTA aligné avec le haut de VOICE LEADING (gauche) */
 
@@ -458,7 +467,7 @@
       <div class="ib-logo">Tuple</div>
       <div class="ib-tag">Max for Live · Harmonic composition tool</div>
       <hr>
-      <div class="ib-row"><div class="ib-label">Version</div><div class="ib-val">1.0.12</div></div>
+      <div class="ib-row"><div class="ib-label">Version</div><div class="ib-val">1.0.13</div></div>
       <div class="ib-row"><div class="ib-label">Creator</div><div class="ib-val">c0re</div></div>
       <div class="ib-row"><div class="ib-label">Contact</div><div class="ib-val"><a href="mailto:c0re_m4l@proton.me">c0re_m4l@proton.me</a></div></div>
       <div class="ib-row"><div class="ib-label">Community</div><div class="ib-val"><a href="https://discord.gg/N52jGhGE">discord.gg/N52jGhGE</a></div></div>
@@ -572,6 +581,17 @@
         <div class="lbl">Device</div>
         <div class="btn" id="pushBtn" title="Chord grid on Push 2 pads">PUSH</div>
         <div class="btn" id="colorBtn" title="Degree color logic">LAYOUT · Spectrum</div>
+        <div class="clip-controls">
+          <div class="cliprow">
+            <div class="btn" id="captureBtn" title="Capture played chords into a progression">CAPTURE</div>
+            <div class="btn" id="toClipBtn" title="Write the progression to the selected clip slot">&rarr; CLIP</div>
+          </div>
+          <div class="cliprow">
+            <div class="proglist" id="progList"></div>
+            <div class="btn cbtn-sm" id="progUndo" title="Remove the last chord">&#9003;</div>
+            <div class="btn cbtn-sm" id="progClear" title="Clear the progression">CLEAR</div>
+          </div>
+        </div>
       </div>
 
       <!-- WINDOW : gestion de la fenêtre (séparée du groupe Device) -->
@@ -1071,6 +1091,13 @@
     M.bindInlet('strumcurve',function(v){ var i=parseInt(v); if(i>=0&&i<3) state.strumCurveIdx=i; renderExpr(); });
     M.bindInlet('humanize',  function(v){ state.humanize=parseInt(v)||0; renderExpr(); });
     M.bindInlet('mode',      function(m){ setMode(String(m)); });
+    M.bindInlet('prog',      function(){ renderProg(Array.prototype.slice.call(arguments)); });
+    M.bindInlet('capture',   function(v){ captureOn=(parseInt(v)===1); if(captureBtn){ captureBtn.classList.toggle('on',captureOn); captureBtn.textContent=captureOn?'CAPTURE ON':'CAPTURE'; } });
+    M.bindInlet('clipdone',  function(){ if(toClipBtn) flash(toClipBtn); clipMsg('WRITTEN'); });
+    M.bindInlet('clipbusy',  function(){ clipMsg('SLOT BUSY'); });
+    M.bindInlet('clipnoslot',function(){ clipMsg('NO SLOT'); });
+    M.bindInlet('clipempty', function(){ clipMsg('EMPTY'); });
+    M.bindInlet('cliperr',   function(){ clipMsg('ERROR'); });
     // Resynchronise le bouton du strip quand la fenêtre est fermée/ouverte ailleurs
     // (ex. bouton CLOSE de la grande fenêtre). Le X Windows n'émet rien → non couvert.
     M.bindInlet('windowstate',function(v){
@@ -1166,6 +1193,47 @@
     this.textContent = pushOn ? 'PUSH ON' : 'PUSH';
     send('pushmode', pushOn?1:0);
   };
+
+  // ── CLIP : capture une progression d'accords -> clip Live (fenêtre full) ──
+  var captureOn=false;
+  var captureBtn=document.getElementById('captureBtn');
+  var toClipBtn=document.getElementById('toClipBtn');
+  var _toClipOrig=toClipBtn?toClipBtn.textContent:'→ CLIP';
+  captureBtn.onmousedown=function(e){ if(e)e.preventDefault(); };
+  captureBtn.onclick=function(){
+    captureOn=!captureOn;
+    this.classList.toggle('on',captureOn);
+    this.textContent=captureOn?'CAPTURE ON':'CAPTURE';
+    send('capture', captureOn?1:0);
+  };
+  toClipBtn.onmousedown=function(e){ if(e)e.preventDefault(); };
+  toClipBtn.onclick=function(){ send('sendclip'); };
+  document.getElementById('progUndo').onmousedown=function(e){ if(e)e.preventDefault(); };
+  document.getElementById('progUndo').onclick=function(){ send('removelast'); };
+  document.getElementById('progClear').onmousedown=function(e){ if(e)e.preventDefault(); };
+  document.getElementById('progClear').onclick=function(){ send('clearprog'); };
+
+  // Rendu de la liste de progression (puces). Construit en textContent (pas d'injection).
+  function renderProg(names){
+    var el=document.getElementById('progList'); if(!el) return;
+    el.innerHTML='';
+    if(!names || !names.length){
+      var em=document.createElement('span'); em.className='empty'; em.textContent='No chords captured'; el.appendChild(em); return;
+    }
+    for(var i=0;i<names.length;i++){
+      var c=document.createElement('span'); c.className='chip'; c.textContent=String(names[i]); el.appendChild(c);
+    }
+  }
+  renderProg([]);
+
+  // Retour visuel bref sur « → CLIP » (slot occupé / vide / erreur n'ouvrent pas de dialogue).
+  var _clipMsgT=null;
+  function clipMsg(txt){
+    if(!toClipBtn) return;
+    if(_clipMsgT) clearTimeout(_clipMsgT);
+    toClipBtn.textContent=txt;
+    _clipMsgT=setTimeout(function(){ toClipBtn.textContent=_toClipOrig; _clipMsgT=null; }, 1300);
+  }
 
   // Cycler de logique couleur : Spectre / Fonction tonale / Cycle des quintes (légende UI).
   document.getElementById('colorBtn').onmousedown = function(e){ if(e)e.preventDefault(); };
@@ -1303,7 +1371,7 @@
   if(location.search.indexOf('full')!==-1) setMode('full');
   if(M){
     bind(); renderConfig(); renderNotes([]);
-    send('requeststate'); send('requestgrid');   // une seule fois, APRÈS bind()
+    send('requeststate'); send('requestgrid'); send('capture',0);   // une seule fois, APRÈS bind()
   }
   else  { setMode('full'); loadDemo(); }
 </script>

@@ -136,7 +136,7 @@ var strumCurve          = 0;          // Linear par défaut
 var humanizeAmt         = 0;          // 0-100 : 0 = off ; variation vélocité ±25% + timing ±15ms
 var _emitTasks          = [];         // Tasks de notes différées (strum/humanize) en cours
 
-var TUPLE_VERSION = "1.0.12";
+var TUPLE_VERSION = "1.0.13";
 
 var _patcher = null;
 
@@ -216,7 +216,8 @@ function list() {
 		keynote: keynote, keynoteup: keynoteup, pushmode: pushmode,
 		colorscheme: colorscheme, strumms: strumms, strumramp: strumramp,
 		strumcurve: strumcurve, humanizeamt: humanizeamt,
-		openurl: openurl, openwindow: openwindow
+		openurl: openurl, openwindow: openwindow,
+		capture: capture, sendclip: sendclip, clearprog: clearprog, removelast: removelast
 	};
 	if (D[sel]) { D[sel].apply(null, rest); }
 	else { post("list: selecteur jweb inconnu '" + sel + "' (" + rest.join(" ") + ")\n"); }
@@ -673,6 +674,7 @@ function requestgrid() {
 // Synchronise l'état (key, scale) vers l'UI au reload
 function requeststate() {
 	pushUIState();
+	broadcastProg();   // repeuple la liste de progression après un reload du jweb
 }
 
 // Joue une case par (colonne, rangée) — entrée Push.
@@ -1393,8 +1395,67 @@ function sendChord(name, notes) {
 	sendNoteOff();
 	activeNotes = notes.slice();
 	_emitNotes(notes);
+	if (captureMode) captureChord(name);       // progression -> clip (capture si ON)
 	outlet(7, "active", lastFn, lastDegree);   // highlight grille
 	outlet(7, ["notes"].concat(activeNotes));  // → clavier moniteur
+}
+
+// =====================================================
+// PROGRESSION -> CLIP (device-only) — capture les accords joués puis les écrit
+// dans un clip Live. Voir docs/decisions.md (2026-06-16) + issue #1.
+// captureMode est OFF par défaut -> AUCUN impact sur le jeu normal.
+// =====================================================
+var captureMode = false;       // toggle UI : ON = on empile chaque accord joué
+var progression = [];          // [{ name:"Cmaj7", notes:[48,52,55,59] }]
+var CLIP_BEATS_PER_BAR = 4;    // 4/4 par défaut (v1) ; 1 accord = 1 mesure
+
+// Appelé depuis sendChord() quand captureMode est ON : empile l'accord
+// (nom + notes voicées telles qu'entendues) puis rafraîchit la liste UI.
+function captureChord(name) {
+	progression.push({ name: String(name), notes: activeNotes.slice() });
+	broadcastProg();
+}
+
+function capture(v) {                      // toggle « Capture » depuis l'UI
+	captureMode = (parseInt(v) === 1);
+	outlet(7, "capture", captureMode ? 1 : 0);
+}
+function clearprog()  { progression = []; broadcastProg(); }
+function removelast() { if (progression.length) progression.pop(); broadcastProg(); }
+
+// Diffuse la liste des noms à l'UI : "prog C Am F G" (vide = "prog" seul).
+function broadcastProg() {
+	var names = [];
+	for (var i = 0; i < progression.length; i++) names.push(progression[i].name);
+	outlet(7, ["prog"].concat(names));
+}
+
+// Écrit la progression dans le clip de l'emplacement SÉLECTIONNÉ (1 accord = 1 mesure).
+// NON destructif : si le slot contient déjà un clip -> "clipbusy" (on n'écrase pas).
+// Notes "block" propres (pas de strum/humanize : ce sont des effets de jeu).
+function sendclip() {
+	if (!progression.length) { outlet(7, "clipempty"); post("sendclip: progression vide\n"); return; }
+	var barLen = CLIP_BEATS_PER_BAR;
+	var total  = progression.length * barLen;
+	try {
+		var slot = new LiveAPI(function(){}, "live_set view highlighted_clip_slot");
+		if (!slot || !slot.id || parseInt(slot.id) === 0) { outlet(7, "clipnoslot"); post("sendclip: aucun slot selectionne\n"); return; }
+		var has = slot.get("has_clip"); has = (has instanceof Array) ? has[0] : has;
+		if (parseInt(has) === 1) { outlet(7, "clipbusy"); post("sendclip: slot occupe -> choisir un slot vide\n"); return; }
+		slot.call("create_clip", total);
+		var clip = new LiveAPI(function(){}, "live_set view highlighted_clip_slot clip");
+		var count = 0, i, k;
+		for (i = 0; i < progression.length; i++) count += progression[i].notes.length;
+		clip.call("set_notes");
+		clip.call("notes", count);
+		for (i = 0; i < progression.length; i++) {
+			var start = i * barLen, ns = progression[i].notes;
+			for (k = 0; k < ns.length; k++) clip.call("note", ns[k], start, barLen, 100, 0);
+		}
+		clip.call("done");
+		outlet(7, "clipdone", progression.length);
+		post("sendclip: " + progression.length + " accords -> clip (" + total + " temps)\n");
+	} catch (e) { outlet(7, "cliperr"); post("sendclip ERR " + e + "\n"); }
 }
 
 // =====================================================
