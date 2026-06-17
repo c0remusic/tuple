@@ -24,7 +24,7 @@ outlets = 1;
 // =====================================================================
 // DEBUG = 1 : tee les logs Push vers device/push_console.log (outil dev).
 // DEBUG = 0 (release) : _plog() est un no-op — aucune écriture disque, chemin jamais utilisé.
-var DEBUG = 1;   // TEST layout Smart : tee les logs vers push_console.log (remettre à 0 avant release)
+var DEBUG = 0;   // release : _plog() no-op (aucune écriture disque). Passer à 1 pour teer les logs Push vers push_console.log en dev.
 var PSPK_LOG = "C:/Users/LEETJ/Desktop/CHORD SELECTOR/device/push_console.log";
 function _plog(s) {
 	if (!DEBUG) return;
