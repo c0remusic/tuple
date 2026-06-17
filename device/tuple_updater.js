@@ -24,7 +24,7 @@ try { Max = require('max-api'); } catch(e) {
 // ──────────────────────────────────────────────────────────────────────────────
 // CONFIGURATION — fill in OWNER/REPO before first release
 // ──────────────────────────────────────────────────────────────────────────────
-var REPO      = 'OWNER/REPO';          // ← replace with real GitHub owner/repo slug
+var REPO      = 'c0remusic/tuple';     // GitHub owner/repo slug
 var API_URL   = 'https://api.github.com/repos/' + REPO + '/releases/latest';
 var CHECK_TTL = 24 * 60 * 60 * 1000;  // 1 day in ms
 
