@@ -214,7 +214,7 @@ function list() {
 		voicingidx: voicingidx, voiceleading: voiceleading, vlmode: vlmode,
 		voicing: voicing, synclive: synclive, requestgrid: requestgrid,
 		requeststate: requeststate, midinote: midinote, key: key,
-		keynote: keynote, keynoteup: keynoteup, pushmode: pushmode,
+		keynote: keynote, keynoteup: keynoteup, pushmode: pushmode, smart: smart,
 		colorscheme: colorscheme, strumms: strumms, strumramp: strumramp,
 		strumcurve: strumcurve, humanizeamt: humanizeamt,
 		openurl: openurl, openwindow: openwindow,
@@ -319,6 +319,8 @@ function pushUIState() {
 	}
 
 	broadcastGrid();   // la grille dépend de root/scale → on rediffuse
+	_sg_reset();
+	if (smartOn) _sg_broadcast();   // smart chords : reset live-memory on key/scale change
 }
 
 // SYNC : relit la tonalité du set Live (bouton SYNC du jsui)
@@ -628,6 +630,123 @@ function chordQuality(d) {
 	if (third === 4 && fifth === 8) return 3;
 	if (third === 3) return 1;
 	return 0;
+}
+
+// =====================================================================
+// SMART CHORDS — scoring (miroir ES5 de site/vl2/suggest.js) + état.
+// Indépendant du voicing/VL : ne lit que degré + type + pitch classes.
+// Réutilise _vl2_buildSpec / _vl2_buildColorSpec (hoisted, définis plus bas).
+// =====================================================================
+var smartOn = false;
+var _sg_hist = [];            // mémoire live : [{kind, degree, pcs}], récents en fin
+var SG_HIST_MAX = 8;
+
+var SG_MAJOR = [
+	[0.2,0.6,0.4,0.7,0.7,0.6,0.3],[0.3,0.0,0.3,0.4,0.9,0.3,0.6],
+	[0.3,0.4,0.0,0.6,0.3,0.8,0.2],[0.6,0.5,0.3,0.0,0.9,0.4,0.5],
+	[0.95,0.2,0.3,0.3,0.0,0.6,0.2],[0.3,0.7,0.4,0.7,0.6,0.0,0.2],
+	[0.9,0.2,0.5,0.2,0.3,0.4,0.0]
+];
+var SG_MINOR = [
+	[0.2,0.5,0.4,0.7,0.7,0.6,0.4],[0.3,0.0,0.3,0.4,0.9,0.3,0.5],
+	[0.3,0.4,0.0,0.5,0.4,0.7,0.5],[0.6,0.4,0.3,0.0,0.9,0.4,0.4],
+	[0.95,0.2,0.3,0.3,0.0,0.6,0.2],[0.3,0.6,0.5,0.6,0.5,0.0,0.4],
+	[0.4,0.2,0.8,0.3,0.3,0.4,0.0]
+];
+function _sg_clamp(v){ return v < 0 ? 0 : (v > 1 ? 1 : v); }
+function _sg_level(s){ if (s >= 0.7) return 3; if (s >= 0.45) return 2; if (s >= 0.2) return 1; return 0; }
+function _sg_isMinor(){ return chordQuality(0) === 1; }
+function _sg_base(lastDeg, tgt, isMin){
+	if (lastDeg == null || lastDeg < 0 || tgt < 0) return 0;
+	return (isMin ? SG_MINOR : SG_MAJOR)[lastDeg][tgt];
+}
+function _sg_quality(cell){
+	if (cell.kind !== "d") return 0;
+	var deg = cell.degree, dlt = 0;
+	var isDom = (deg === 4 || deg === 6), isTon = (deg === 0), isPre = (deg === 1 || deg === 3);
+	if (isDom){ if (cell.isDominant) dlt += 0.12; else if (cell.hasSeventh) dlt += 0.05; }
+	else if (isTon){ if (cell.isDominant) dlt -= 0.10; else if (cell.fn === "triad" || cell.fn === "mmaj7" || cell.fn === "six") dlt += 0.08; }
+	else if (isPre){ if (cell.hasSeventh) dlt += 0.06; }
+	if (cell.fn === "sevenflat9" || cell.fn === "sevensharp9" || cell.fn === "m7s5"
+		|| cell.fn === "sus2" || cell.fn === "sus4" || cell.fn === "sevensus4") dlt -= 0.05;
+	return dlt;
+}
+function _sg_context(cell, isMin){
+	if (cell.kind !== "d") return 0;
+	var tgt = cell.degree, dlt = 0, n = _sg_hist.length;
+	var last = n >= 1 ? _sg_hist[n-1] : null, prev = n >= 2 ? _sg_hist[n-2] : null;
+	var lastDeg = (last && last.kind === "d") ? last.degree : -1;
+	var prevDeg = (prev && prev.kind === "d") ? prev.degree : -1;
+	if (prevDeg >= 0) dlt += 0.3 * (isMin ? SG_MINOR : SG_MAJOR)[prevDeg][tgt];
+	if (lastDeg === 4 && (prevDeg === 1 || prevDeg === 3) && tgt === 0) dlt += 0.2;
+	if (tgt === 0 && n >= 4){
+		var hit = false, i;
+		for (i = n-4; i < n; i++) if (_sg_hist[i] && _sg_hist[i].kind === "d" && _sg_hist[i].degree === 0) hit = true;
+		if (!hit) dlt += 0.1;
+	}
+	return dlt;
+}
+function _sg_common(lastPcs, cellPcs){
+	if (!lastPcs || !cellPcs || !lastPcs.length || !cellPcs.length) return 0;
+	var shared = 0, i, j;
+	for (i = 0; i < cellPcs.length; i++) for (j = 0; j < lastPcs.length; j++) if (cellPcs[i] === lastPcs[j]) { shared++; break; }
+	var b = 0.05 * shared; return b > 0.12 ? 0.12 : b;
+}
+function _sg_borrowedBase(cell){ var s = 0.35; if (cell.isSecDom) s += 0.1; return s; }
+function _sg_pcs(spec){ var a = [], i; for (i = 0; i < spec.pcs.length; i++) a.push(spec.pcs[i].pc); return a; }
+function _sg_diatonicCell(d, fn){
+	var sp = _vl2_buildSpec(fn, d); if (!sp) return null;
+	return { kind:"d", degree:d, fn:fn, pcs:_sg_pcs(sp), isDominant:sp.isDominant, hasSeventh:sp.hasSeventh };
+}
+function _sg_borrowedCell(index, semis, type){
+	var sp = _vl2_buildColorSpec(semis, type);
+	return { kind:"b", index:index, pcs:_sg_pcs(sp), isDominant:sp.isDominant, hasSeventh:sp.hasSeventh, isSecDom:(type === "dom7") };
+}
+function _sg_remember(){
+	var sp = (lastFn === "color") ? _vl2_buildColorSpec(lastColorSemis, lastColorType) : _vl2_buildSpec(lastFn, lastDegree);
+	if (!sp) return;
+	var entry = { kind:(lastFn === "color") ? "b" : "d", degree:(lastFn === "color") ? -1 : lastDegree, pcs:_sg_pcs(sp) };
+	_sg_hist.push(entry);
+	if (_sg_hist.length > SG_HIST_MAX) _sg_hist.shift();
+}
+function _sg_reset(){ _sg_hist = []; }
+
+// Recalcule + diffuse la heat-map (outlet 7). Émis seulement si SMART on ; sinon neutralise.
+function _sg_broadcast(){
+	outlet(7, "smartclear");
+	if (!smartOn || !_sg_hist.length) { outlet(7, "smartdone"); return; }
+	var isMin = _sg_isMinor();
+	var last = _sg_hist[_sg_hist.length-1], lastPcs = (last && last.pcs) ? last.pcs : [];
+	var lastDeg = (last && last.kind === "d") ? last.degree : -1;
+	var d, t, fn, s, lvl;
+	var degMask = SCALE_VALID_DEGREES[scaleName];
+	for (d = 0; d < 7; d++){
+		if (degMask && !degMask[d]) continue;
+		for (t = 0; t < GRID_TYPES.length; t++){
+			fn = GRID_TYPES[t];
+			if (!gridTypeValid(d, fn)) continue;
+			var cell = _sg_diatonicCell(d, fn); if (!cell) continue;
+			s = _sg_clamp(_sg_base(lastDeg, d, isMin) + _sg_quality(cell) + _sg_context(cell, isMin) + _sg_common(lastPcs, cell.pcs));
+			lvl = _sg_level(s);
+			if (lvl > 0) outlet(7, "smartcell", d, fn, lvl);
+		}
+	}
+	var bl = borrowedFor();
+	for (t = 0; t < bl.length; t++){
+		var bc = _sg_borrowedCell(t, bl[t].semis, bl[t].type);
+		s = _sg_clamp(_sg_borrowedBase(bc) + _sg_common(lastPcs, bc.pcs));
+		lvl = _sg_level(s);
+		if (lvl > 0) outlet(7, "smartbor", t, lvl);
+	}
+	outlet(7, "smartdone");
+}
+
+// Toggle UI : "smart 1/0".
+function smart(v){
+	smartOn = (parseInt(v) === 1);
+	if (!smartOn) _sg_hist = [];
+	outlet(7, "smart", smartOn ? 1 : 0);
+	_sg_broadcast();
 }
 
 // Diffuse toute la grille à l'UI ET au Push (outlet 7) + reconstruit flatGrid/gCols/gBor
@@ -1394,6 +1513,7 @@ function sendChord(name, notes) {
 	_emitNotes(notes);
 	if (captureMode) captureChord(name);       // progression -> clip (capture si ON)
 	outlet(7, "active", lastFn, lastDegree);   // highlight grille
+	if (smartOn) { _sg_remember(); _sg_broadcast(); }   // smart chords : recompute heat-map
 	outlet(7, ["notes"].concat(activeNotes));  // → clavier moniteur
 }
 
