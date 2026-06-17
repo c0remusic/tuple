@@ -1937,6 +1937,18 @@ function colorchord(semis, type) {
 var gridInitTask = new Task(broadcastGrid, this);
 gridInitTask.schedule(700);
 
+// Called by the patch when tuple_updater.js signals 'reload_ui'.
+// Re-sends the jweb URL to both strip and full windows (cache-busted).
+function reloadui() {
+	try {
+		if (!_patcher) return;
+		var url = _uiUrl(); if (!url) return;
+		var sw = _patcher.getnamed('tuple_strip_jweb');
+		if (sw) sw.message('url', url + '?v=' + TUPLE_VERSION + '&t=' + (new Date()).getTime());
+		_sendFullUrl();
+	} catch(e) { post('reloadui error: ' + e + '\n'); }
+}
+
 // =====================================================
 // SELF-CHECK — confirme que les globals critiques sont initialisés.
 // Visible dans device/max_console.log après (re)chargement.
