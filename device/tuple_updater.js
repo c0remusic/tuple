@@ -46,7 +46,7 @@ function _semver(a, b) {
   b = String(b).replace(/^v/, '');
   var pa = a.split('.').map(Number);
   var pb = b.split('.').map(Number);
-  if (pa.some(isNaN) || pb.some(isNaN) || pa.length < 3 || pb.length < 3) return 0;
+  if (pa.some(isNaN) || pb.some(isNaN) || pa.length !== 3 || pb.length !== 3) return 0;
   for (var i = 0; i < 3; i++) {
     if (pa[i] < pb[i]) return -1;
     if (pa[i] > pb[i]) return  1;
