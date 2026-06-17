@@ -654,7 +654,7 @@ var SG_MINOR = [
 	[0.4,0.2,0.8,0.3,0.3,0.4,0.0]
 ];
 function _sg_clamp(v){ return v < 0 ? 0 : (v > 1 ? 1 : v); }
-function _sg_level(s){ if (s >= 0.7) return 3; if (s >= 0.45) return 2; if (s >= 0.2) return 1; return 0; }
+function _sg_level(s){ if (s >= 0.75) return 3; if (s >= 0.55) return 2; if (s >= 0.40) return 1; return 0; }
 function _sg_isMinor(){ return chordQuality(0) === 1; }
 function _sg_base(lastDeg, tgt, isMin){
 	if (lastDeg == null || lastDeg < 0 || tgt < 0) return 0;
