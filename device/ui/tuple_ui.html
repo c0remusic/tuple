@@ -556,9 +556,10 @@
   #tour-pop .tp-skip:hover{color:var(--txt)}
   /* ── Smart Chords (heat-map) — fond teinté par fonction de transition, intensité = opacité ── */
   .smart-legend{ display:none; flex-wrap:wrap; gap:6px 14px; padding:7px 14px 3px; }
-  body.smart .smart-legend{ display:flex; }
+  body.full .smart-legend{ display:flex; }   /* full window : légende toujours visible (layout si SMART off, sinon luminosité SMART) */
   .smart-legend span{ display:inline-flex; align-items:center; gap:5px; font-size:9px; letter-spacing:.06em; color:var(--muted); text-transform:uppercase; font-weight:600; }
   .smart-legend i{ width:8px; height:8px; border-radius:50%; display:inline-block; flex:0 0 auto; }
+  .smart-legend i.bar{ width:22px; border-radius:3px; }   /* logiques en échelle/séquence (Spectrum/Tension/Fifths) : barre dégradée */
   /* (têtes : plus d'atténuation en smart — le layout « Smart » les colore par rôle de transition via applyScheme) */
 </style>
 </head>
@@ -938,6 +939,7 @@
       heads[i].style.borderBottom = '2px solid '+((i<7)?degColorFor(i):borColorFor());   // couleurs de degré (statiques = layout), visibles aussi en smart
     }
     if(typeof renderProgViews==='function') renderProgViews();   // les cartes de progression suivent le layout
+    if(typeof buildLegend==='function') buildLegend();           // légende = layout (SMART off) ou luminosité (SMART on)
   }
 
   // Met à jour le highlight de l'accord actif SANS reconstruire le DOM.
@@ -962,6 +964,22 @@
     var lab=(smartMode==='voiceleading')?'Voice-leading · brighter = smoother':'Function · brighter = stronger';
     var al=[.16,.30,.52], dots='', i; for(i=0;i<3;i++) dots+='<i style="background:rgba(237,233,224,'+al[i]+')"></i>';
     el.innerHTML='<span>'+dots+'&nbsp; '+lab+'</span>'; }
+  // ── Légende LAYOUT — pastilles informatives par logique couleur (plus besoin du manuel).
+  //    dot = rond plein (logiques en groupes) · bar = barre dégradée (logiques en échelle/séquence).
+  function _lgDot(hex){ return '<i style="background:'+hex+'"></i>'; }
+  function _lgBar(stops){ return '<i class="bar" style="background:linear-gradient(90deg,'+stops+')"></i>'; }
+  function _lgChip(inner,label){ return '<span>'+inner+'&nbsp; '+label+'</span>'; }
+  function buildLayoutLegend(){ var el=document.getElementById('smart-legend'); if(!el)return; var h='';
+    switch(colorScheme){
+      case 0: h=_lgChip(_lgBar(SCHEMES[0].join(',')),'Scale degree (I → VII)'); break;                  // Spectrum
+      case 1: h=_lgChip(_lgDot('#4F86C8'),'Tonic')+_lgChip(_lgDot('#55B05A'),'Subdominant')+_lgChip(_lgDot('#D05050'),'Dominant'); break;  // Function
+      case 2: h=_lgChip(_lgBar('#4F86C8,#C8BE50,#D05050'),'Home → Tense'); break;                        // Tension
+      case 3: h=_lgChip(_lgBar('#4F86C8,#C8BE50,#D05050'),'Near → Far'); break;                          // Fifths
+      default: h=_lgChip(_lgDot(QUALHEX[0]),'Major')+_lgChip(_lgDot(QUALHEX[1]),'Minor')+_lgChip(_lgDot(QUALHEX[2]),'Dim')+_lgChip(_lgDot(QUALHEX[3]),'Aug');  // Quality
+    }
+    h+=_lgChip(_lgDot(BORCOLOR),'Borrowed');   // emprunt = violet dans toutes les logiques
+    el.innerHTML=h; }
+  function buildLegend(){ if(smartOn) buildSmartLegend(); else buildLayoutLegend(); }
   // Couleur = le degré (hex passé) ; LUMINOSITÉ = lvl (signal smart : force ou fluidité selon le mode).
   function _smartPaint(c,hex,lvl){ var bg=[0,.12,.26,.46][lvl], tx=[0,.62,.82,1][lvl];
     c.style.backgroundColor=hexToRgba(hex,bg); c.style.color=hexToRgba(hex,tx);
@@ -989,7 +1007,6 @@
     var b=document.getElementById('smartBtn'); if(b) b.className='btn lblbtn'+(smartOn?'':' off');   // grisé quand inactif
     var v=document.getElementById('smartV'); if(v) v.textContent = smartOn ? (smartMode==='function'?'Function':'Voice-leading') : 'Off';
     document.body.classList.toggle('smart',smartOn);
-    if(smartOn) buildSmartLegend();
     var cb=document.getElementById('colorBtn'); if(cb) cb.textContent='LAYOUT · '+SCHEME_NAMES[colorScheme];
     if(!smartOn) _smartClearAll();
     if(typeof applyScheme==='function') applyScheme();   // têtes = couleurs de degré (layout) + cartes de progression
@@ -1162,6 +1179,7 @@
     setToggle(m==='full');
     if(m==='full'){
       renderGrid();
+      if(typeof buildLegend==='function') buildLegend();   // légende layout visible dès l'ouverture de la fenêtre (indépendant de l'ordre des msgs boot)
       // NB : les requêtes requeststate/requestgrid partent au BOOT, après bind(),
       // sinon la réponse arrive avant que les handlers soient en place (grille vide).
       // 1er lancement : guide des zones (rejouable via About). Délai = settle du layout.
