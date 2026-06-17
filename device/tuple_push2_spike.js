@@ -24,7 +24,7 @@ outlets = 1;
 // =====================================================================
 // DEBUG = 1 : tee les logs Push vers device/push_console.log (outil dev).
 // DEBUG = 0 (release) : _plog() est un no-op — aucune écriture disque, chemin jamais utilisé.
-var DEBUG = 0;
+var DEBUG = 1;   // TEST layout Smart : tee les logs vers push_console.log (remettre à 0 avant release)
 var PSPK_LOG = "C:/Users/LEETJ/Desktop/CHORD SELECTOR/device/push_console.log";
 function _plog(s) {
 	if (!DEBUG) return;
@@ -68,6 +68,12 @@ var redrawTicks = 0;             // compteur de redraws différés (settle du gr
 var theCS = null, theMatrix = null, theMid = null;
 var pressed = {}, pressedPitch = {};
 var colLen = [0,0,0,0,0,0,0], borLen = 0, colTmp = null, borTmp = 0;
+var colFns = [[],[],[],[],[],[],[]], colFnsTmp = null;   // ordre des types par colonne (mapper smartcell fn -> row)
+// SMART (layout intelligent) : pads cohérents colorés par rôle de transition, le reste ÉTEINT.
+var smartActive = false, smartPads = {};
+var SMARTIDX  = { resolution:18, dominant:19, predominant:20, deceptive:21, color:22 };   // slots palette dédiés
+var SMART_RGB = { resolution:[40,130,240], dominant:[240,70,55], predominant:[70,200,80], deceptive:[250,195,30], color:[175,80,240] };   // couleurs FRANCHES (LED Push : valeurs saturées)
+var WHITEIDX  = 9;   // layout Smart : accord DISPONIBLE mais non encore coloré = allumé en BLANC (slot 9 libre)
 
 // Observe device active state — release grab si le device est désactivé.
 // IMPORTANT : créé PARESSEUSEMENT (dans enable()), PAS au chargement du script.
@@ -173,12 +179,22 @@ function disable() {
 // RÉCEPTION SORTIE 7 DU MOTEUR (grille + notes)
 // =====================================================================
 function notes() { var p = arrayfromargs(arguments); lastNotes = []; for (var i = 0; i < p.length; i++) { var n = parseInt(p[i]); if (!isNaN(n)) lastNotes.push(n); } }
-function gridclear() { colTmp = [0,0,0,0,0,0,0]; borTmp = 0; }
-function gridcell(col) { if (colTmp) colTmp[parseInt(col)]++; }
+function gridclear() { colTmp = [0,0,0,0,0,0,0]; borTmp = 0; colFnsTmp = [[],[],[],[],[],[],[]]; }
+function gridcell(col, fn) { if (colTmp) { var c = parseInt(col); colTmp[c]++; if (colFnsTmp) colFnsTmp[c].push(String(fn)); } }
 function gridbor() { borTmp++; }
-function griddone() { if (colTmp) { colLen = colTmp; borLen = borTmp; colTmp = null; } L("griddone colLen=[" + colLen.join(",") + "] bor=" + borLen + " enabled=" + enabled); if (enabled) refreshGrid(); }
+function griddone() { if (colTmp) { colLen = colTmp; borLen = borTmp; colTmp = null; colFns = colFnsTmp || colFns; colFnsTmp = null; } L("griddone colLen=[" + colLen.join(",") + "] bor=" + borLen + " enabled=" + enabled); if (enabled) refreshGrid(); }
 function anything() {}   // absorbe active/clearnotes/root/scale/octave/voicing/...
 function colorscheme(v) { scheme = parseInt(v) % NSCHEMES; L("colorscheme=" + scheme); if (enabled) { applyPalette(); refreshGrid(); } flush(); }
+// SMART : reçus de l'outlet 7 du moteur. smartcell/bor = accords suggérés (colorés) ; accord dispo non suggéré = blanc, pad vide = éteint.
+function smart(v) { smartActive = (parseInt(v) === 1); L("smart=" + smartActive); if (enabled) { applyPalette(); refreshGrid(); } flush(); }
+function smartclear() { smartPads = {}; }
+function smartcell(d, fn, lvl, cat) { var col = parseInt(d), row = (colFns[col]) ? colFns[col].indexOf(String(fn)) : -1; if (row >= 0) { smartPads[col + "_" + row] = String(cat); } }
+function smartbor(index, lvl, cat) { smartPads["7_" + parseInt(index)] = String(cat); }
+function smartdone() {
+	var n = 0, k; for (k in smartPads) if (smartPads.hasOwnProperty(k)) n++;
+	L("smartdone: " + n + " pads cohérents (active=" + smartActive + " enabled=" + enabled + " colFns0=" + (colFns[0] ? colFns[0].length : -1) + ")");
+	if (enabled && smartActive) refreshGrid();
+}
 function qualities() { var q = arrayfromargs(arguments); degQual = []; for (var i = 0; i < q.length; i++) degQual.push(parseInt(q[i])); if (scheme === 4 && enabled) { applyPalette(); refreshGrid(); } }
 
 // Réécrit les RGB des slots de palette via SysEx Push 2 (cmd 0x03), puis on allume avec ces index.
@@ -198,31 +214,42 @@ function applyPalette() {
 	var bor = [170, 50, 230];                 // emprunt violet (toutes logiques)
 	setPaletteRGB(BORIDX, bor);
 	setPaletteRGB(BRIGHTBOR, brighten(bor));
+	for (var sc in SMART_RGB) if (SMART_RGB.hasOwnProperty(sc)) setPaletteRGB(SMARTIDX[sc], SMART_RGB[sc]);   // slots couleurs de transition (layout Smart)
+	setPaletteRGB(WHITEIDX, [200, 200, 205]);   // blanc doux : accord disponible (layout Smart)
 	L("palette RGB appliquée (scheme " + scheme + ")"); flush();
 }
 
+// Un pad porte-t-il un accord ? (forme de la grille = longueurs de colonnes + emprunts) — source unique.
+function hasChord(col, row) { return (col < 7) ? (row < colLen[col]) : (row < borLen); }
 // Index palette "normal" (non pressé) d'un pad : couleur de degré/emprunt si valide, sinon éteint.
 function normalIdx(col, row) {
-	var on = (col < 7) ? (row < colLen[col]) : (row < borLen);
+	var on = hasChord(col, row);
 	return on ? ((col < 7) ? DEGIDX[col] : BORIDX) : OFFIDX;
 }
 
 // Index palette "éclairci" d'un pad valide (feedback d'appui) : même teinte, plus clair.
 function brightIdx(col, row) {
-	var on = (col < 7) ? (row < colLen[col]) : (row < borLen);
+	var on = hasChord(col, row);
 	return on ? ((col < 7) ? BRIGHTDEG[col] : BRIGHTBOR) : OFFIDX;
 }
 
 function refreshGrid() {
 	if (!enabled || !theMatrix) { L("refreshGrid SKIP enabled=" + enabled + " matrix=" + (theMatrix != null)); flush(); return; }
 	var n = 0, firstErr = "";
+	var spotlight = smartActive;   // SMART actif → projecteur : accord suggéré = couleur, accord dispo = blanc, pad vide = éteint
 	for (var c = 0; c < 8; c++) for (var r = 0; r < 8; r++) {
 		// pad tenu = version claire (ne pas écraser le feedback d'appui lors d'un redraw)
 		var key = c + "_" + r;
-		var idx = pressed[key] ? brightIdx(c, r) : normalIdx(c, r);
+		var idx;
+		if (spotlight) {
+			var has = hasChord(c, r);   // ce pad porte-t-il un accord ?
+			if (!has) idx = OFFIDX;                                 // pas d'accord → éteint
+			else { var cat = smartPads[key]; idx = cat ? SMARTIDX[cat] : WHITEIDX; }   // compatible → couleur ; sinon BLANC
+		}
+		else idx = pressed[key] ? brightIdx(c, r) : normalIdx(c, r);
 		try { theMatrix.call("send_value", c, r, idx); if (idx !== OFFIDX) n++; } catch (e) { if (!firstErr) firstErr = String(e); }
 	}
-	L("refreshGrid: " + n + " cases allumées" + (firstErr ? " ERR:" + firstErr : "")); flush();
+	L("refreshGrid: " + n + " cases allumées" + (spotlight ? " [SPOTLIGHT smart]" : "") + (firstErr ? " ERR:" + firstErr : "")); flush();
 }
 
 // =====================================================================

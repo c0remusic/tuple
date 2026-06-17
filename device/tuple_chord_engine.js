@@ -214,7 +214,7 @@ function list() {
 		voicingidx: voicingidx, voiceleading: voiceleading, vlmode: vlmode,
 		voicing: voicing, synclive: synclive, requestgrid: requestgrid,
 		requeststate: requeststate, midinote: midinote, key: key,
-		keynote: keynote, keynoteup: keynoteup, pushmode: pushmode, smart: smart,
+		keynote: keynote, keynoteup: keynoteup, pushmode: pushmode, smart: smart, smartmode: smartmode,
 		colorscheme: colorscheme, strumms: strumms, strumramp: strumramp,
 		strumcurve: strumcurve, humanizeamt: humanizeamt,
 		openurl: openurl, openwindow: openwindow,
@@ -297,6 +297,7 @@ function pushConfigState() {
 	outlet(7, "strumramp",  strumRamp);
 	outlet(7, "strumcurve", strumCurve);
 	outlet(7, "humanize",   humanizeAmt);
+	if (smartOn && smartMode === "voiceleading") _sg_broadcast();   // seul le voice-leading dépend du voicing/octave/VL ; en function les suggestions sont inchangées → pas de recalcul
 }
 
 // Relaie l'état complet (tonalité + config) ET rebuilde la grille.
@@ -638,6 +639,8 @@ function chordQuality(d) {
 // Réutilise _vl2_buildSpec / _vl2_buildColorSpec (hoisted, définis plus bas).
 // =====================================================================
 var smartOn = false;
+var smartMode = "function";   // "function" = meilleur score harmonique ; "voiceleading" = plus fluide (voicing). Reçu de l'UI.
+var SG_PER_FN = 3;            // par FONCTION de transition (les 5) : nb MAX d'accords colorés (plusieurs par degré possibles)
 var _sg_hist = [];            // mémoire live : [{kind, degree, pcs}], récents en fin
 var SG_HIST_MAX = 8;
 
@@ -717,11 +720,24 @@ function _sg_transType(lastDeg, targetDeg, isBor){
 function _sg_pcs(spec){ var a = [], i; for (i = 0; i < spec.pcs.length; i++) a.push(spec.pcs[i].pc); return a; }
 function _sg_diatonicCell(d, fn){
 	var sp = _vl2_buildSpec(fn, d); if (!sp) return null;
-	return { kind:"d", degree:d, fn:fn, pcs:_sg_pcs(sp), isDominant:sp.isDominant, hasSeventh:sp.hasSeventh };
+	return { kind:"d", degree:d, fn:fn, pcs:_sg_pcs(sp), isDominant:sp.isDominant, hasSeventh:sp.hasSeventh, sp:sp };
 }
 function _sg_borrowedCell(index, semis, type){
 	var sp = _vl2_buildColorSpec(semis, type);
-	return { kind:"b", index:index, pcs:_sg_pcs(sp), isDominant:sp.isDominant, hasSeventh:sp.hasSeventh, isSecDom:(type === "dom7") };
+	return { kind:"b", index:index, pcs:_sg_pcs(sp), sp:sp };   // emprunts : isDominant/hasSeventh/isSecDom non lus (le score d'emprunt n'utilise que pcs/sp)
+}
+// Fluidité de voice-leading : coût de mouvement min depuis le dernier accord joué (activeNotes)
+// vers le candidat, avec le voicing + l'octave courants. Plus bas = plus fluide. Tout est pur
+// (_vl2_realize / _vl2_movCost ne mutent pas l'état VL) → ne perturbe pas le jeu.
+function _sg_fluid(sp){
+	var ref = (typeof lastChordNotes !== "undefined" && lastChordNotes && lastChordNotes.length) ? lastChordNotes : activeNotes;
+	if (!sp || !ref || !ref.length) return 0;
+	var regBase = 48 + Math.max(-12, Math.min(24, currentOctave * 12));
+	var cands = _vl2_realize(sp, currentVoicing, { regBase:regBase, rootPos:!voiceLeadingEnabled });
+	if (!cands || !cands.length) return 9999;
+	var w = _vl2_pickW(currentVoicing), best = 1e9, i, c;
+	for (i = 0; i < cands.length; i++){ c = _vl2_movCost(ref, cands[i].notes, w); if (c < best) best = c; }
+	return best;
 }
 function _sg_remember(){
 	var sp = (lastFn === "color") ? _vl2_buildColorSpec(lastColorSemis, lastColorType) : _vl2_buildSpec(lastFn, lastDegree);
@@ -746,11 +762,14 @@ function _sg_broadcast(){
 	// emprunt comme source : dernier accord = emprunt → suggère fortement sa résolution (dom7 OU modal)
 	var tonicPc = ((root % 12) + 12) % 12;
 	var lastResolveDeg = (last && last.kind === "b") ? _sg_borrowedResolveDeg(last.pcs, tonicPc, isMin, degByRoot) : -1;
+	var vl = (smartMode === "voiceleading");
+	var byFn = {}, fnOrder = [], fluid;   // par FONCTION de transition (cat) : liste des cases compatibles
 	for (d = 0; d < 7; d++){
 		if (degMask && !degMask[d]) continue;
 		for (t = 0; t < GRID_TYPES.length; t++){
 			fn = GRID_TYPES[t];
 			if (!gridTypeValid(d, fn)) continue;
+			if (lastFn !== "color" && d === lastDegree && fn === lastFn) continue;   // ne pas re-suggérer l'accord qu'on vient de jouer
 			var cell = _sg_diatonicCell(d, fn); if (!cell) continue;
 			var dcat;
 			if (lastResolveDeg >= 0){
@@ -762,15 +781,35 @@ function _sg_broadcast(){
 			}
 			s = _sg_clamp(s + _sg_common(lastPcs, cell.pcs));
 			lvl = _sg_level(s);
-			if (lvl > 0) outlet(7, "smartcell", d, fn, lvl, dcat);
+			if (lvl <= 0) continue;
+			fluid = vl ? _sg_fluid(cell.sp) : 0;   // fluidité calculée seulement en mode voice-leading (coûteux)
+			if (!byFn[dcat]) { byFn[dcat] = []; fnOrder.push(dcat); }
+			byFn[dcat].push({ kind:"d", d:d, fn:fn, lvl:lvl, cat:dcat, s:s, fluid:fluid });
 		}
 	}
 	var bl = borrowedFor();
 	for (t = 0; t < bl.length; t++){
+		if (lastFn === "color" && bl[t].semis === lastColorSemis && bl[t].type === lastColorType) continue;   // ne pas re-suggérer l'emprunt joué
 		var bc = _sg_borrowedCell(t, bl[t].semis, bl[t].type);
 		s = _sg_clamp(_sg_borrowedScore(bc, lastDeg, isMin, degByRoot, tonicPc) + _sg_common(lastPcs, bc.pcs));
 		lvl = _sg_level(s);
-		if (lvl > 0) outlet(7, "smartbor", t, lvl, "color");
+		if (lvl <= 0) continue;
+		fluid = vl ? _sg_fluid(bc.sp) : 0;
+		if (!byFn["color"]) { byFn["color"] = []; fnOrder.push("color"); }
+		byFn["color"].push({ kind:"b", index:t, lvl:lvl, cat:"color", s:s, fluid:fluid });
+	}
+	// POUR CHAQUE FONCTION (les 5) : trie ses accords par mode, garde le top SG_PER_FN, émet
+	// → plusieurs accords par fonction (et par degré), toutes les fonctions présentes, borné (pas de rangées)
+	var fi, fa, j, n2, x;
+	for (fi = 0; fi < fnOrder.length; fi++){
+		fa = byFn[fnOrder[fi]];
+		fa.sort(vl ? function(a,b){ return a.fluid - b.fluid; } : function(a,b){ return b.s - a.s; });
+		n2 = (fa.length < SG_PER_FN) ? fa.length : SG_PER_FN;
+		for (j = 0; j < n2; j++){
+			x = fa[j];
+			if (x.kind === "d") outlet(7, "smartcell", x.d, x.fn, x.lvl, x.cat, x.s, x.fluid);
+			else outlet(7, "smartbor", x.index, x.lvl, x.cat, x.s, x.fluid);
+		}
 	}
 	outlet(7, "smartdone");
 }
@@ -779,8 +818,13 @@ function _sg_broadcast(){
 function smart(v){
 	smartOn = (parseInt(v) === 1);
 	if (!smartOn) _sg_hist = [];
-	outlet(7, "smart", smartOn ? 1 : 0);
+	outlet(7, "smart", smartOn ? 1 : 0);   // activation = ardoise vierge : cases d'accord en blanc, couleur seulement après avoir choisi un accord
 	_sg_broadcast();
+}
+// Mode de sélection des suggestions (reçu de l'UI) : "function" (meilleur score) ou "voiceleading" (plus fluide).
+function smartmode(v){
+	smartMode = (String(v) === "voiceleading") ? "voiceleading" : "function";
+	if (smartOn) _sg_broadcast();
 }
 
 // Diffuse toute la grille à l'UI ET au Push (outlet 7) + reconstruit flatGrid/gCols/gBor

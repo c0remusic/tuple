@@ -11,11 +11,11 @@
   @font-face{font-family:'Syne';src:url('fonts/Syne-Variable.woff2') format('woff2');font-weight:400 800;font-display:swap}
   @font-face{font-family:'JetBrains Mono';src:url('fonts/JetBrainsMono-Variable.woff2') format('woff2');font-weight:400 600;font-display:swap}
   :root{
-    --gold:#FFdc82; --gold-dim:rgba(255,220,130,.11); --gold-bd:rgba(255,220,130,.28);
+    --gold:#FFdc82; --gold-dim:rgba(255,220,130,.16); --gold-bd:transparent;
     --blue:#8ECCE8; --blue-dim:rgba(142,204,232,.12); --blue-bd:rgba(142,204,232,.32);
     --purple:#C4A0F0; --purple-dim:rgba(196,160,240,.12); --purple-bd:rgba(196,160,240,.3);
     --txt:#ede9e0; --muted:rgba(237,233,224,.45); --muted2:rgba(237,233,224,.22);
-    --cell:rgba(255,255,255,.055); --cell-bd:rgba(255,255,255,.10);
+    --cell:rgba(255,255,255,.10); --cell-bd:transparent;
     /* Brand fonts: Syne (display) + Space Grotesk (body) — identique au site. Mono pour les notes. */
     --sans:'Space Grotesk',system-ui,-apple-system,sans-serif;
     --mono:'JetBrains Mono',ui-monospace,monospace;
@@ -25,7 +25,7 @@
   html{height:100%}
   body::before{
     content:'';position:fixed;top:0;left:10px;right:10px;height:2px;z-index:999;pointer-events:none;
-    background:linear-gradient(90deg, transparent 0%, rgba(255,220,130,.18) 25%, rgba(255,220,130,.28) 50%, rgba(255,220,130,.18) 75%, transparent 100%);
+    background:linear-gradient(90deg, transparent 0%, rgba(255,255,255,.08) 25%, rgba(255,255,255,.13) 50%, rgba(255,255,255,.08) 75%, transparent 100%);
   }
   body{width:100vw;height:100vh;overflow:hidden;
     font-family:var(--sans);
@@ -53,7 +53,7 @@
   }
   .vsep{
     flex:none;width:1px;margin:8px 0;
-    background:linear-gradient(to bottom, transparent 0%, rgba(255,255,255,.12) 30%, rgba(255,255,255,.12) 70%, transparent 100%);
+    background:linear-gradient(to bottom, transparent 0%, rgba(255,255,255,.06) 30%, rgba(255,255,255,.06) 70%, transparent 100%);
   }
   body.strip .vsep-l{display:none}  /* pas de séparateur gauche en strip (grille cachée) */
   .lbl{font-size:8px;letter-spacing:.14em;color:rgba(255,220,130,.3);text-transform:uppercase;margin-bottom:2px;font-weight:600}
@@ -72,7 +72,7 @@
   body.strip .csel .cv{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   body.strip .row .csel{min-width:0}
   .csel::after{content:'▾';color:var(--muted2);font-size:8px;flex-shrink:0;margin-left:3px}
-  .csel:hover{background-color:rgba(255,255,255,.08);border-color:rgba(255,255,255,.13)}
+  .csel:hover{background-color:rgba(255,255,255,.08)}
 
   /* ── DROPDOWN OVERLAY ── */
   .dd-ov{
@@ -103,7 +103,7 @@
   body.strip .dd-cell{padding:0 4px;font-size:8px;letter-spacing:0;min-height:22px;justify-content:flex-start;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;line-height:22px}
   body.strip .dd-ov{padding:9px 8px;gap:0}
   body.strip .dd-grid{align-content:start;gap:4px}   /* tout tient sans scroll : 3 colonnes (voir openDrop) + cellules compactes */
-  .dd-cell:hover{background-color:rgba(255,255,255,.08);color:var(--txt);border-color:rgba(255,255,255,.15)}
+  .dd-cell:hover{background-color:rgba(255,255,255,.08);color:var(--txt)}
   .dd-cell.on{background:var(--gold-dim);border-color:var(--gold-bd);color:var(--gold);font-weight:600}
   /* Full : options plus grandes + bloc centré (la fenêtre est haute → fini le vide en bas) */
   body.full .dd-ov{padding:16px 14px;gap:12px}
@@ -119,7 +119,7 @@
     display:flex;justify-content:space-between;align-items:center;
     transition:background .1s,border-color .1s;
   }
-  .sel:hover{background-color:rgba(255,255,255,.08);border-color:rgba(255,255,255,.13)}
+  .sel:hover{background-color:rgba(255,255,255,.08)}
   .sel .v{color:var(--gold);font-size:10px}
 
   .sync{
@@ -128,12 +128,12 @@
     border-radius:5px;color:var(--muted);font-size:11px;letter-spacing:-.5px;
     font-weight:600;transition:all .1s;
   }
-  .sync:hover{background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.18)}
+  .sync:hover{background:rgba(255,255,255,.08)}
   .sync.flash{background:var(--gold-dim);border-color:var(--gold-bd);color:var(--gold);transition:none}
   /* OPEN/CLOSE : flash doré bref. Background comme sync (gold-dim), border
      plus opaque que sync (var(--gold) 100%) car le bouton est plus grand —
      1px à 28% alpha est invisible sur un élément large. */
-  .toggle.flash{background:var(--gold-dim);border-color:var(--gold);color:var(--gold);transition:none}
+  .toggle.flash{background:var(--gold-dim);border-color:var(--gold-bd);color:var(--gold);transition:none}
 
   .oct{display:flex;gap:2px}
   .oct span{
@@ -151,7 +151,7 @@
     font-size:9px;letter-spacing:.06em;font-weight:500;
     color:var(--muted);text-align:center;transition:all .1s;
   }
-  .btn:hover{background-color:rgba(255,255,255,.08);border-color:rgba(255,255,255,.13)}
+  .btn:hover{background-color:rgba(255,255,255,.08)}
   .btn.gold{color:var(--gold);background:var(--gold-dim);border-color:var(--gold-bd)}
   .btn.blue{color:var(--blue);background:var(--blue-dim);border-color:var(--blue-bd)}
   /* VL MODE = case label+valeur (miroir démo) : neutre, valeur dorée, grisée si VL off */
@@ -163,6 +163,7 @@
   .btn.on{color:var(--gold);background:var(--gold-dim);border-color:var(--gold-bd);font-weight:600}
   /* pousse Device + CLOSE en bas de la colonne monitor (réserve le milieu) */
   .mon-spacer{flex:1;min-height:0}
+  body.full .mon-spacer{flex:none}   /* full : supprime le grand gap avant OPEN/CLOSE → espacement cohérent (gap .mon) */
 
   /* ── GRID ── */
   .grid{flex:1;display:flex;gap:4px;padding:7px 6px;min-width:0}
@@ -174,19 +175,19 @@
   .head .r{color:var(--gold)} .head .f{color:var(--muted)}
   .col.bor .head{color:var(--blue)}
   .cell{
-    position:relative;background:rgba(255,255,255,.055);border:1px solid rgba(255,255,255,.10);
+    position:relative;background:var(--cell);border:1px solid var(--cell-bd);
     border-radius:5px;padding:0 3px;flex:1;max-height:28px;min-height:18px;
     display:flex;align-items:center;justify-content:center;
     font-size:10.5px;text-align:center;color:rgba(237,233,224,.65);
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;
     transition:background .1s,border-color .1s,color .1s;
   }
-  .cell:hover{background-color:rgba(255,255,255,.09);border-color:rgba(255,255,255,.14);color:var(--txt)}
+  .cell:hover{background-color:rgba(255,255,255,.17);color:var(--txt)}
   .cell.active{
     background:var(--gold-dim);border-color:var(--gold-bd);color:var(--gold);font-weight:600;
   }
   .cell.pressed{
-    background-color:rgba(255,255,255,.12);border-color:rgba(255,255,255,.2);
+    background-color:rgba(255,255,255,.14);
     transform:translateY(1px);
   }
 
@@ -211,13 +212,13 @@
   /* ── PIANO ── */
   .keys{
     border-radius:5px;overflow:hidden;
-    border:1px solid var(--cell-bd);background:#0d0c0c;
+    border:1px solid var(--cell-bd);background:transparent;
     position:relative;flex-shrink:0;
   }
   .wk{
     position:absolute;top:0;bottom:0;
-    background:rgba(255,255,255,.2);
-    border-right:1px solid rgba(0,0,0,.4);
+    background:rgba(255,255,255,.16);
+    border-right:1px solid rgba(0,0,0,.28);
     border-radius:0 0 3px 3px;
     transition:background .08s;
   }
@@ -234,13 +235,13 @@
   /* ── TOGGLE ── */
   .toggle{
     flex:none;height:28px;border-radius:5px;cursor:pointer;
-    background:var(--cell);border:1px solid rgba(255,255,255,.12);
+    background:var(--cell);border:1px solid var(--cell-bd);
     color:rgba(237,233,224,.4);font-size:10px;font-weight:600;
     letter-spacing:.08em;text-transform:uppercase;
     display:flex;align-items:center;justify-content:center;
     transition:all .1s;
   }
-  .toggle:hover{background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.18)}
+  .toggle:hover{background:rgba(255,255,255,.08)}
 
   .cfg-spacer{display:none}
   /* EXPRESSION zone — full uniquement (pas assez de place en strip) */
@@ -252,7 +253,7 @@
   .exslider{display:flex;align-items:center;gap:9px;height:32px;padding:0 10px;
     background:var(--cell);border:1px solid var(--cell-bd);border-radius:5px;
     transition:opacity .12s,border-color .1s,background .1s}
-  .exslider:hover{border-color:rgba(255,255,255,.13)}
+  .exslider:hover{background-color:rgba(255,255,255,.05)}
   .exslider.dim{opacity:.4;pointer-events:none}
   .exs-lbl{font-size:9px;letter-spacing:.07em;color:var(--muted);flex:0 0 52px;font-weight:500}
   .exs-track{flex:1;height:6px;background:rgba(255,255,255,.06);border-radius:3px;position:relative;cursor:ew-resize;touch-action:none}
@@ -275,7 +276,7 @@
   /* Séparateur dégradé avant devgrp et wingrp (full uniquement) */
   body.full .devgrp::before,body.full .wingrp::before{
     content:'';display:block;height:1px;margin-bottom:10px;
-    background:linear-gradient(to right, transparent 0%, rgba(255,255,255,.12) 25%, rgba(255,255,255,.12) 75%, transparent 100%);
+    background:linear-gradient(to right, transparent 0%, rgba(255,255,255,.06) 25%, rgba(255,255,255,.06) 75%, transparent 100%);
   }
   /* WINDOW group (Always on top · Open/Close) */
   .wingrp{display:flex;flex-direction:column;gap:8px;flex:none}
@@ -342,21 +343,24 @@
   #cap-dock{display:none;position:relative;flex:0 0 auto;flex-direction:column;gap:8px;padding:10px 14px 10px}
   /* séparation dégradée, identique aux séparateurs des groupes Device/Window (25%/75%) */
   #cap-dock::before{content:'';position:absolute;top:0;left:14px;right:14px;height:1px;
-    background:linear-gradient(to right, transparent 0%, rgba(255,255,255,.12) 25%, rgba(255,255,255,.12) 75%, transparent 100%)}
+    background:linear-gradient(to right, transparent 0%, rgba(255,255,255,.06) 25%, rgba(255,255,255,.06) 75%, transparent 100%)}
   body.full.dock-open #cap-dock{display:flex}
   /* TOGGLE bar — toujours visible en bas (full window). Ouvre/ferme le tiroir Progression. */
-  #prog-toggle{display:none;position:relative;flex:0 0 auto;align-items:center;gap:8px;cursor:pointer;height:30px;padding:0 14px}
+  #prog-toggle{display:none;position:relative;flex:0 0 auto;align-items:center;justify-content:center;gap:8px;cursor:pointer;height:30px;padding:0 14px}
   body.full #prog-toggle{display:flex}
   /* séparateur dégradé (comme la grille / les groupes) ; masqué quand le tiroir est ouvert
      (c'est le séparateur du tiroir qui gère alors le haut) → pas de double trait. */
   #prog-toggle::before{content:'';position:absolute;top:0;left:14px;right:14px;height:1px;
-    background:linear-gradient(to right, transparent 0%, rgba(255,255,255,.12) 25%, rgba(255,255,255,.12) 75%, transparent 100%)}
+    background:linear-gradient(to right, transparent 0%, rgba(255,255,255,.06) 25%, rgba(255,255,255,.06) 75%, transparent 100%)}
   body.dock-open #prog-toggle::before{display:none}
   #prog-toggle:hover .pt-lbl,#prog-toggle:hover .pt-chev{color:var(--txt)}
-  #prog-toggle .pt-chev{font-size:9px;color:var(--muted);line-height:1}
+  #prog-toggle .pt-chev{font-size:9px;color:var(--muted);line-height:1;flex:0 0 12px;text-align:center}
+  #prog-toggle::after{content:'';flex:0 0 12px}   /* équilibre le chevron → libellé vraiment centré */
   #prog-toggle .pt-lbl{font-size:9px;letter-spacing:.14em;text-transform:uppercase;font-weight:600;color:var(--muted)}
   #prog-toggle.on .pt-lbl,#prog-toggle.on .pt-chev{color:var(--gold)}
-  #prog-toggle .pt-count{margin-left:auto;font-family:var(--mono);font-size:9px;color:var(--muted2)}
+  /* halo discret au survol / quand ouvert (centré en haut, aligné au séparateur) */
+  #prog-toggle:hover, #prog-toggle.on{background:radial-gradient(62% 135% at 50% 0%, rgba(255,255,255,.035) 0%, rgba(255,255,255,.012) 42%, transparent 72%);background-origin:content-box;background-clip:content-box}
+  #prog-toggle .pt-count{position:absolute;right:14px;top:50%;transform:translateY(-50%);font-family:var(--mono);font-size:9px;color:var(--muted2)}
   #cap-dock .cd-head{display:flex;align-items:center;gap:8px;min-width:0}
   #cap-dock .cd-rec{flex:0 0 auto;display:flex;align-items:center;gap:6px;cursor:pointer;height:26px;
     font-size:9px;letter-spacing:.1em;text-transform:uppercase;font-weight:600;color:var(--muted)}
@@ -400,7 +404,7 @@
   body.strip .cfg-spacer{display:none}   /* space-between gère l'espace, pas de spacer */
   body.strip .lbl   {display:none}
   body.strip .zone  {display:contents}
-  body.strip .sep   {flex:none;height:1px;margin:0;background:linear-gradient(to right, transparent 0%, rgba(255,255,255,.10) 25%, rgba(255,255,255,.10) 75%, transparent 100%)}
+  body.strip .sep   {flex:none;height:1px;margin:0;background:linear-gradient(to right, transparent 0%, rgba(255,255,255,.06) 25%, rgba(255,255,255,.06) 75%, transparent 100%)}
 
   /* Strip — key row (20px = hauteur STANDARD de tous les contrôles du strip) */
   body.strip .row          {height:20px;flex:none;display:flex;gap:5px}
@@ -438,7 +442,7 @@
   body.full .brand{display:block;font-family:var(--display);font-weight:700;font-size:18px;color:var(--gold);line-height:1;margin-bottom:0;letter-spacing:.01em}
   body.full .zone          {display:flex;flex-direction:column;gap:10px}
   body.full .lbl           {display:block;font-size:9px;letter-spacing:.15em;margin-bottom:4px}
-  body.full .sep           {flex:none;height:1px;margin:10px 0;background:linear-gradient(to right, transparent 0%, rgba(255,255,255,.12) 25%, rgba(255,255,255,.12) 75%, transparent 100%)}
+  body.full .sep           {flex:none;height:1px;margin:10px 0;background:linear-gradient(to right, transparent 0%, rgba(255,255,255,.06) 25%, rgba(255,255,255,.06) 75%, transparent 100%)}
 
   /* Full : 32px = hauteur STANDARD de tous les contrôles ; gaps uniformes 8px */
   body.full .row           {height:32px;flex:none;display:flex;gap:8px}
@@ -510,21 +514,21 @@
   body.strip #info-box .ib-close{height:22px;margin-top:3px}
   #info-box .ib-logo{font-family:var(--display);font-weight:700;font-size:22px;color:var(--gold);letter-spacing:-.01em}
   #info-box .ib-tag{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted2);margin-top:-8px}
-  #info-box hr{border:none;border-top:1px solid rgba(237,233,224,.12);margin:0}
+  #info-box hr{border:none;border-top:1px solid rgba(237,233,224,.06);margin:0}
   #info-box .ib-row{display:flex;flex-direction:column;gap:3px}
   #info-box .ib-label{font-size:8.5px;letter-spacing:.14em;text-transform:uppercase;color:rgba(255,220,130,.45);font-weight:600}
   #info-box .ib-val{font-size:12px;color:var(--txt)}
   #info-box .ib-val a{color:var(--blue);text-decoration:none}
   #info-box .ib-close{margin-top:4px;height:30px;display:flex;align-items:center;justify-content:center;
     font-size:10px;letter-spacing:.12em;text-transform:uppercase;
-    border:1px solid rgba(237,233,224,.18);border-radius:5px;cursor:pointer;color:var(--muted2);
+    background:rgba(237,233,224,.06);border:1px solid transparent;border-radius:5px;cursor:pointer;color:var(--muted2);
     transition:background .1s,color .1s}
-  #info-box .ib-close:hover{background:rgba(237,233,224,.08);color:var(--txt)}
+  #info-box .ib-close:hover{background:rgba(237,233,224,.10);color:var(--txt)}
   #info-box .ib-guide{margin-top:2px;height:30px;display:flex;align-items:center;justify-content:center;
     font-size:10px;letter-spacing:.12em;text-transform:uppercase;
-    border:1px solid rgba(255,220,130,.4);border-radius:5px;cursor:pointer;color:var(--gold);
+    background:var(--gold-dim);border:1px solid transparent;border-radius:5px;cursor:pointer;color:var(--gold);
     transition:background .1s}
-  #info-box .ib-guide:hover{background:rgba(255,220,130,.1)}
+  #info-box .ib-guide:hover{background:rgba(255,220,130,.24)}
 
   /* ── ONBOARDING TOUR (full only) ── */
   #tour-ov{display:none;position:fixed;inset:0;z-index:90;background:rgba(20,19,18,.74)}
@@ -540,13 +544,19 @@
   #tour-pop .tp-text{font-size:11px;line-height:1.45;color:var(--muted)}
   #tour-pop .tp-nav{display:flex;gap:7px;margin-top:12px;align-items:center}
   #tour-pop .tp-btn{height:26px;padding:0 12px;display:flex;align-items:center;justify-content:center;
-    font-size:9px;letter-spacing:.1em;text-transform:uppercase;border:1px solid rgba(237,233,224,.18);
+    font-size:9px;letter-spacing:.1em;text-transform:uppercase;background:rgba(237,233,224,.06);border:1px solid transparent;
     border-radius:5px;cursor:pointer;color:var(--muted2);transition:background .1s,color .1s}
-  #tour-pop .tp-btn:hover{background:rgba(237,233,224,.08);color:var(--txt)}
-  #tour-pop .tp-btn.primary{border-color:rgba(255,220,130,.5);color:var(--gold)}
-  #tour-pop .tp-btn.primary:hover{background:rgba(255,220,130,.1)}
+  #tour-pop .tp-btn:hover{background:rgba(237,233,224,.10);color:var(--txt)}
+  #tour-pop .tp-btn.primary{background:var(--gold-dim);border-color:transparent;color:var(--gold)}
+  #tour-pop .tp-btn.primary:hover{background:rgba(255,220,130,.24)}
   #tour-pop .tp-skip{margin-left:auto;font-size:9px;color:var(--muted2);cursor:pointer;text-decoration:underline}
   #tour-pop .tp-skip:hover{color:var(--txt)}
+  /* ── Smart Chords (heat-map) — fond teinté par fonction de transition, intensité = opacité ── */
+  .smart-legend{ display:none; flex-wrap:wrap; gap:6px 14px; padding:7px 14px 3px; }
+  body.smart .smart-legend{ display:flex; }
+  .smart-legend span{ display:inline-flex; align-items:center; gap:5px; font-size:9px; letter-spacing:.06em; color:var(--muted); text-transform:uppercase; font-weight:600; }
+  .smart-legend i{ width:8px; height:8px; border-radius:50%; display:inline-block; flex:0 0 auto; }
+  /* (têtes : plus d'atténuation en smart — le layout « Smart » les colore par rôle de transition via applyScheme) */
 </style>
 </head>
 <body class="strip">
@@ -648,6 +658,7 @@
     <div class="vsep vsep-l"></div>
     <div class="gridwrap">
       <div class="grid" id="grid"></div>
+      <div id="smart-legend" class="smart-legend"></div>
       <!-- PROGRESSION DRAWER + toggle — RESTE dans la zone grille (ne touche pas config/monitor). -->
       <div id="cap-dock">
         <div class="cd-head">
@@ -687,6 +698,7 @@
         <div class="lbl">Device</div>
         <div class="btn" id="pushBtn" title="Chord grid on Push 2 pads">PUSH</div>
         <div class="btn" id="colorBtn" title="Degree color logic">LAYOUT · Spectrum</div>
+        <div class="btn lblbtn off" id="smartBtn" title="SMART suggestions — Off / Function / Voice-leading"><span class="cl">SMART</span><span class="cv" id="smartV">Off</span></div>
       </div>
 
       <!-- WINDOW : gestion de la fenêtre (séparée du groupe Device) -->
@@ -725,7 +737,7 @@
     //     IV,V=cyan (1) · II=vert (2) · VI=jaune (3) · III=orange (4) · VII=rouge (5).
     ['#4F86C8','#55B05A','#D8923C','#3FA8C0','#3FA8C0','#C8BE50','#D05050']
   ];
-  var SCHEME_NAMES = ['Spectrum','Function','Tension','Fifths','Quality'];
+  var SCHEME_NAMES = ['Spectrum','Function','Tension','Fifths','Quality'];   // SMART n'est PAS un layout : c'est un mode (bouton) qui marche dans tous les layouts
   var colorScheme = 0;
   var BORCOLOR = '#CDADDC';   // violet emprunts (toutes logiques)
   // Qualité (chaud/froid) : 0 majeur=chaud · 1 mineur=froid · 2 dim · 3 aug. Reçu du moteur.
@@ -918,7 +930,11 @@
   // Applique le schéma de couleur courant aux en-têtes (sans reconstruire la grille).
   function applyScheme(){
     var heads=document.getElementById('grid').getElementsByClassName('head');
-    for(var i=0;i<heads.length;i++){ heads[i].style.borderBottom='2px solid '+((i<7)?degColorFor(i):borColorFor()); }
+    for(var i=0;i<heads.length;i++){
+      // mode Smart : couleurs de degré DÉSACTIVÉES (le sens est dynamique → porté par les cases + les cartes, pas par des têtes fixes)
+      heads[i].style.borderBottom = smartOn ? '2px solid transparent' : '2px solid '+((i<7)?degColorFor(i):borColorFor());
+    }
+    if(typeof renderProgViews==='function') renderProgViews();   // les cartes de progression suivent le layout
   }
 
   // Met à jour le highlight de l'accord actif SANS reconstruire le DOM.
@@ -933,6 +949,48 @@
       if(cc===activeCol&&rr===activeRow) cells[i].classList.add('active');
       else cells[i].classList.remove('active');
     }
+  }
+
+  // ── Smart Chords — peint les cases compatibles reçues du moteur (la sélection par fonction est faite côté moteur) ──
+  var smartOn=false, smartMode='function', _smartBuf=[];
+  var HEATCOL={ resolution:[125,195,225], dominant:[228,138,112], predominant:[158,198,120], deceptive:[240,205,120], color:[190,160,235] };
+  var SMART_LABELS={ resolution:'Resolve', dominant:'Tension', predominant:'Setup', deceptive:'Surprise', color:'Color' };
+  var SMART_ORDER=['resolution','dominant','predominant','deceptive','color'];
+  function buildSmartLegend(){ var el=document.getElementById('smart-legend'); if(!el||el._built)return; el._built=true;
+    var h='',i; for(i=0;i<SMART_ORDER.length;i++){ var k=SMART_ORDER[i],c=HEATCOL[k];
+      h+='<span><i style="background:rgb('+c[0]+','+c[1]+','+c[2]+')"></i>'+SMART_LABELS[k]+'</span>'; }
+    el.innerHTML=h; }
+  function _smartPaint(c,cat,lvl){ var rgb=HEATCOL[cat]||HEATCOL.resolution, r=rgb[0],g=rgb[1],b=rgb[2];
+    var bg=[0,.16,.24,.34][lvl], tx=[0,.85,.95,1][lvl];
+    c.style.backgroundColor='rgba('+r+','+g+','+b+','+bg+')'; c.style.color='rgba('+r+','+g+','+b+','+tx+')';
+    c.style.borderColor='transparent'; c.style.boxShadow=''; }
+  function _smartClear(c){ c.style.backgroundColor=''; c.style.color=''; c.style.borderColor=''; c.style.boxShadow=''; }
+  function _smartClearAll(){ var cells=document.getElementById('grid').getElementsByClassName('cell'),i; for(i=0;i<cells.length;i++)_smartClear(cells[i]); }
+  function _rowOfFn(d,fn){ var arr=cols[d]||[],r; for(r=0;r<arr.length;r++){ if(arr[r].fn===fn) return r; } return -1; }
+  function _smartCellAt(col,row){ var cells=document.getElementById('grid').getElementsByClassName('cell'),i;
+    for(i=0;i<cells.length;i++){ if(parseInt(cells[i].getAttribute('data-col'))===col && parseInt(cells[i].getAttribute('data-row'))===row) return cells[i]; } return null; }
+  // Layout « Smart » — SIMPLE : on ne touche QUE les cases compatibles (couleur = rôle de transition,
+  // intensité = niveau). Les autres cases d'accord restent au DÉFAUT du device ; tant qu'aucun accord
+  // n'est choisi (_smartBuf vide), tout reste au défaut (cases blanches/normales).
+  function _smartRender(){
+    _smartClearAll();
+    if(!smartOn || !_smartBuf.length) return;
+    var i, it, col, row, c;
+    for(i=0;i<_smartBuf.length;i++){ it=_smartBuf[i];
+      if(it.kind==='d'){ col=it.d; row=_rowOfFn(it.d,it.fn); } else { col=7; row=it.index; }
+      if(row<0) continue;
+      if(col===activeCol && row===activeRow) continue;   // l'accord joué = .active, pas une suggestion
+      c=_smartCellAt(col,row); if(c) _smartPaint(c, it.cat, it.lvl);   // compatible → couleur
+    }
+  }
+  function _applySmartUI(){
+    var b=document.getElementById('smartBtn'); if(b) b.className='btn lblbtn'+(smartOn?'':' off');   // grisé quand inactif
+    var v=document.getElementById('smartV'); if(v) v.textContent = smartOn ? (smartMode==='function'?'Function':'Voice-leading') : 'Off';
+    document.body.classList.toggle('smart',smartOn);
+    if(smartOn) buildSmartLegend();
+    var cb=document.getElementById('colorBtn'); if(cb) cb.textContent='LAYOUT · '+SCHEME_NAMES[colorScheme];
+    if(!smartOn) _smartClearAll();
+    if(typeof applyScheme==='function') applyScheme();   // têtes neutres si smart, sinon couleurs du layout + cartes de progression
   }
 
   function renderConfig(){
@@ -1180,6 +1238,11 @@
     });
     M.bindInlet('notes',     function(){ renderNotes(Array.prototype.slice.call(arguments)); });
     M.bindInlet('clearnotes',function(){ activeCol=-1;activeRow=-1;activeChordName=''; renderNotes([]); updateActive(); });
+    M.bindInlet('smart',     function(v){ smartOn=(parseInt(v)===1); _applySmartUI(); });
+    M.bindInlet('smartclear',function(){ _smartBuf=[]; });
+    M.bindInlet('smartcell', function(d,fn,lvl,cat,score,fluid){ _smartBuf.push({kind:'d',d:parseInt(d),fn:String(fn),lvl:parseInt(lvl),cat:String(cat),score:parseFloat(score),fluid:parseFloat(fluid)}); });
+    M.bindInlet('smartbor',  function(index,lvl,cat,score,fluid){ _smartBuf.push({kind:'b',index:parseInt(index),lvl:parseInt(lvl),cat:String(cat),score:parseFloat(score),fluid:parseFloat(fluid)}); });
+    M.bindInlet('smartdone', function(){ _smartRender(); });
     M.bindInlet('sync',      function(){ if(!syncClickPending) flash(document.getElementById('sync')); });
     M.bindInlet('strumms',   function(v){ state.strumMs=parseInt(v)||0; renderExpr(); });
     M.bindInlet('strumramp', function(v){ state.strumRamp=parseInt(v)||0; renderExpr(); });
@@ -1324,6 +1387,25 @@
 
   // Couleur de degré d'une carte : 0..6 = grille (degColorFor) ; -1 = emprunt (violet).
   function cardColor(deg){ return (deg>=0 && deg<7) ? degColorFor(deg) : borColorFor(); }
+  // En SMART : couleur de la TRANSITION (carte précédente → carte). Sinon : couleur de degré du
+  // LAYOUT courant → suit dynamiquement le mode de layout. (Miroir de la démo.)
+  function _transType(lastDeg,targetDeg,isBor){
+    if(isBor) return 'color';
+    if(lastDeg===4 && targetDeg===5) return 'deceptive';
+    if(targetDeg===4 || targetDeg===6) return 'dominant';
+    if(targetDeg===1 || targetDeg===3) return 'predominant';
+    return 'resolution';
+  }
+  function _cardCol(idx){
+    var e=prog[idx];
+    if(e && smartOn){
+      if(idx>0){ var prev=prog[idx-1], rgb=HEATCOL[_transType(prev.deg, e.deg, e.deg<0)];
+        if(rgb) return { c:'rgb('+rgb[0]+','+rgb[1]+','+rgb[2]+')', bg:'rgba('+rgb[0]+','+rgb[1]+','+rgb[2]+',.13)' }; }
+      return { c:'rgba(237,233,224,.40)', bg:'rgba(237,233,224,.06)' };   // 1ère carte = ancre (pas de transition entrante)
+    }
+    var hex=(e && e.deg>=0 && e.deg<7)?degColorFor(e.deg):borColorFor();
+    return { c:hex, bg:hexToRgba(hex,.13) };
+  }
   function hexToRgba(h,a){ h=String(h).replace('#',''); if(h.length===3) h=h.charAt(0)+h.charAt(0)+h.charAt(1)+h.charAt(1)+h.charAt(2)+h.charAt(2); var n=parseInt(h,16); return 'rgba('+((n>>16)&255)+','+((n>>8)&255)+','+(n&255)+','+a+')'; }
 
   // Curseur d'insertion : où iront les prochains accords. Posé par le « + » au survol d'une carte.
@@ -1334,9 +1416,9 @@
   // et « × » en-dessous (supprimer).
   function buildCard(entry, idx){
     var card=el('div','pg-card');
-    var col=cardColor(entry.deg);
-    card.style.setProperty('--cardc', col);
-    card.style.setProperty('--cardbg', hexToRgba(col,.13));   // voile léger (survol / appui seulement)
+    var ci=_cardCol(idx);
+    card.style.setProperty('--cardc', ci.c);
+    card.style.setProperty('--cardbg', ci.bg);   // voile léger (survol / appui seulement)
     card.appendChild(el('span','pg-r', entry.roman||'·'));
     card.appendChild(el('span','pg-n', entry.name||'?'));
     var ins=el('div','pg-ins','+'); ins.title='Insert next chords after this one';
@@ -1469,12 +1551,14 @@
   }
 
   // Cycler de logique couleur : Spectre / Fonction tonale / Cycle des quintes (légende UI).
+  // Changement de layout (clic ou molette). Le layout « Smart » EST le mode smart : y entrer
+  // l'active (écran + Push via « smart 1 »), en sortir le coupe. Les autres layouts → colorscheme au Push.
+  // LAYOUT = schéma de couleurs des degrés, INDÉPENDANT du mode SMART (qui marche dans tous les layouts).
   document.getElementById('colorBtn').onmousedown = function(e){ if(e)e.preventDefault(); };
   document.getElementById('colorBtn').onclick = function(){
     colorScheme=(colorScheme+1)%SCHEME_NAMES.length;
     this.textContent='LAYOUT · '+SCHEME_NAMES[colorScheme];
-    applyScheme();
-    send('colorscheme', colorScheme);
+    applyScheme(); send('colorscheme', colorScheme);   // têtes : neutres si smart on, sinon couleurs du layout
   };
   document.getElementById('colorBtn').addEventListener('wheel', function(e){
     e.preventDefault(); e.stopPropagation();
@@ -1483,6 +1567,15 @@
     this.textContent='LAYOUT · '+SCHEME_NAMES[colorScheme];
     applyScheme(); send('colorscheme', colorScheme);
   }, {passive:false});
+
+  document.getElementById('smartBtn').onmousedown = function(e){ if(e)e.preventDefault(); };
+  document.getElementById('smartBtn').onclick = function(){
+    // SMART = mode indépendant du LAYOUT (marche dans tous les layouts) : on ne touche JAMAIS à colorScheme.
+    if(!smartOn){ smartOn=true; smartMode='function'; send('smartmode','function'); send('smart',1); }   // Off → Function → Voice-leading → Off
+    else if(smartMode==='function'){ smartMode='voiceleading'; send('smartmode','voiceleading'); }       // le moteur re-sélectionne (top par fonction) par fluidité → re-render via smartdone
+    else { smartOn=false; send('smart',0); }
+    _applySmartUI();
+  };
 
   // About = clic sur le logo (le bouton About dédié a été retiré, redondant)
   document.getElementById('brandLogo').onmousedown = function(e){ if(e)e.preventDefault(); };
