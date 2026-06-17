@@ -1237,6 +1237,8 @@
     });
     M.bindInlet('notes',     function(){ renderNotes(Array.prototype.slice.call(arguments)); });
     M.bindInlet('clearnotes',function(){ activeCol=-1;activeRow=-1;activeChordName=''; renderNotes([]); updateActive(); });
+    // Lecture d'une carte de progression (playprog) : nom + degré pour le Monitor (le 'notes' qui suit le rend).
+    M.bindInlet('monitor',   function(name,deg){ activeChordName=String(name); var d=parseInt(deg); activeCol=(d>=0&&d<7)?d:7; activeRow=-1; });
     M.bindInlet('smart',     function(v){ smartOn=(parseInt(v)===1); _applySmartUI(); });
     M.bindInlet('smartclear',function(){ _smartBuf=[]; });
     M.bindInlet('smartcell', function(d,fn,lvl,cat,score,fluid){ _smartBuf.push({kind:'d',d:parseInt(d),fn:String(fn),lvl:parseInt(lvl),cat:String(cat),score:parseFloat(score),fluid:parseFloat(fluid)}); });

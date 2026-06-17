@@ -1732,11 +1732,15 @@ function captureone(name, pos) {
 function playprog(i) {
 	i = parseInt(i);
 	if (i < 0 || i >= progression.length) return;
-	var notes = progression[i].notes;
+	var p = progression[i];
+	var notes = p.notes;
 	if (!notes || !notes.length) return;
 	sendNoteOff();
 	activeNotes = notes.slice();
 	_emitNotes(notes);                          // MÊME chemin d'émission que le jeu de la grille (fiable)
+	// Monitor : nom + degré de la carte. APRÈS sendNoteOff (qui émet 'clearnotes' → l'UI vide
+	// activeChordName) et AVANT 'notes' (qui rend le Monitor) — sinon le texte resterait vide.
+	outlet(7, "monitor", p.name, (p.deg == null ? -1 : p.deg));
 	outlet(7, ["notes"].concat(activeNotes));   // clavier moniteur
 	// pas de note-off auto : la note tient jusqu'au relâchement (message 'release', comme la grille)
 }
