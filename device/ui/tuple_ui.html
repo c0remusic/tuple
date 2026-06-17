@@ -932,7 +932,7 @@
     var heads=document.getElementById('grid').getElementsByClassName('head');
     for(var i=0;i<heads.length;i++){
       // mode Smart : couleurs de degré DÉSACTIVÉES (le sens est dynamique → porté par les cases + les cartes, pas par des têtes fixes)
-      heads[i].style.borderBottom = smartOn ? '2px solid transparent' : '2px solid '+((i<7)?degColorFor(i):borColorFor());
+      heads[i].style.borderBottom = '2px solid '+((i<7)?degColorFor(i):borColorFor());   // couleurs de degré (statiques = layout), visibles aussi en smart
     }
     if(typeof renderProgViews==='function') renderProgViews();   // les cartes de progression suivent le layout
   }
@@ -953,25 +953,24 @@
 
   // ── Smart Chords — peint les cases compatibles reçues du moteur (la sélection par fonction est faite côté moteur) ──
   var smartOn=false, smartMode='function', _smartBuf=[];
-  var HEATCOL={ resolution:[125,195,225], dominant:[228,138,112], predominant:[158,198,120], deceptive:[240,205,120], color:[190,160,235] };
-  var SMART_LABELS={ resolution:'Resolve', dominant:'Tension', predominant:'Setup', deceptive:'Surprise', color:'Color' };
-  var SMART_ORDER=['resolution','dominant','predominant','deceptive','color'];
-  function buildSmartLegend(){ var el=document.getElementById('smart-legend'); if(!el||el._built)return; el._built=true;
-    var h='',i; for(i=0;i<SMART_ORDER.length;i++){ var k=SMART_ORDER[i],c=HEATCOL[k];
-      h+='<span><i style="background:rgb('+c[0]+','+c[1]+','+c[2]+')"></i>'+SMART_LABELS[k]+'</span>'; }
-    el.innerHTML=h; }
-  function _smartPaint(c,cat,lvl){ var rgb=HEATCOL[cat]||HEATCOL.resolution, r=rgb[0],g=rgb[1],b=rgb[2];
-    var bg=[0,.16,.24,.34][lvl], tx=[0,.85,.95,1][lvl];
-    c.style.backgroundColor='rgba('+r+','+g+','+b+','+bg+')'; c.style.color='rgba('+r+','+g+','+b+','+tx+')';
+  // Légende = échelle de LUMINOSITÉ (la teinte = le degré, déjà lisible sur les têtes). Dépend du MODE,
+  // pas des accords : Function → luminosité = force ; Voice-leading → luminosité = fluidité.
+  function buildSmartLegend(){ var el=document.getElementById('smart-legend'); if(!el)return;
+    var lab=(smartMode==='voiceleading')?'Voice-leading · clair = plus fluide':'Function · clair = plus fort';
+    var al=[.16,.30,.52], dots='', i; for(i=0;i<3;i++) dots+='<i style="background:rgba(237,233,224,'+al[i]+')"></i>';
+    el.innerHTML='<span>'+dots+'&nbsp; '+lab+'</span>'; }
+  // Couleur = le degré (hex passé) ; LUMINOSITÉ = lvl (signal smart : force ou fluidité selon le mode).
+  function _smartPaint(c,hex,lvl){ var bg=[0,.12,.26,.46][lvl], tx=[0,.62,.82,1][lvl];
+    c.style.backgroundColor=hexToRgba(hex,bg); c.style.color=hexToRgba(hex,tx);
     c.style.borderColor='transparent'; c.style.boxShadow=''; }
   function _smartClear(c){ c.style.backgroundColor=''; c.style.color=''; c.style.borderColor=''; c.style.boxShadow=''; }
   function _smartClearAll(){ var cells=document.getElementById('grid').getElementsByClassName('cell'),i; for(i=0;i<cells.length;i++)_smartClear(cells[i]); }
   function _rowOfFn(d,fn){ var arr=cols[d]||[],r; for(r=0;r<arr.length;r++){ if(arr[r].fn===fn) return r; } return -1; }
   function _smartCellAt(col,row){ var cells=document.getElementById('grid').getElementsByClassName('cell'),i;
     for(i=0;i<cells.length;i++){ if(parseInt(cells[i].getAttribute('data-col'))===col && parseInt(cells[i].getAttribute('data-row'))===row) return cells[i]; } return null; }
-  // Layout « Smart » — SIMPLE : on ne touche QUE les cases compatibles (couleur = rôle de transition,
-  // intensité = niveau). Les autres cases d'accord restent au DÉFAUT du device ; tant qu'aucun accord
-  // n'est choisi (_smartBuf vide), tout reste au défaut (cases blanches/normales).
+  // Smart — on ne touche QUE les cases compatibles : TEINTE = le degré (couleurs du layout), LUMINOSITÉ
+  // = lvl (force en Function, fluidité en Voice-leading). Les autres cases restent au défaut ; tant
+  // qu'aucun accord n'est choisi (_smartBuf vide), tout reste au défaut.
   function _smartRender(){
     _smartClearAll();
     if(!smartOn || !_smartBuf.length) return;
@@ -980,7 +979,7 @@
       if(it.kind==='d'){ col=it.d; row=_rowOfFn(it.d,it.fn); } else { col=7; row=it.index; }
       if(row<0) continue;
       if(col===activeCol && row===activeRow) continue;   // l'accord joué = .active, pas une suggestion
-      c=_smartCellAt(col,row); if(c) _smartPaint(c, it.cat, it.lvl);   // compatible → couleur
+      c=_smartCellAt(col,row); if(c) _smartPaint(c, (col<7)?degColorFor(col):borColorFor(), it.lvl);   // teinte = degré, luminosité = lvl
     }
   }
   function _applySmartUI(){
@@ -990,7 +989,7 @@
     if(smartOn) buildSmartLegend();
     var cb=document.getElementById('colorBtn'); if(cb) cb.textContent='LAYOUT · '+SCHEME_NAMES[colorScheme];
     if(!smartOn) _smartClearAll();
-    if(typeof applyScheme==='function') applyScheme();   // têtes neutres si smart, sinon couleurs du layout + cartes de progression
+    if(typeof applyScheme==='function') applyScheme();   // têtes = couleurs de degré (layout) + cartes de progression
   }
 
   function renderConfig(){
@@ -1385,24 +1384,9 @@
   }
   function toggleCapture(){ setCaptureUI(!captureOn); send('capture', captureOn?1:0); }
 
-  // Couleur de degré d'une carte : 0..6 = grille (degColorFor) ; -1 = emprunt (violet).
-  function cardColor(deg){ return (deg>=0 && deg<7) ? degColorFor(deg) : borColorFor(); }
-  // En SMART : couleur de la TRANSITION (carte précédente → carte). Sinon : couleur de degré du
-  // LAYOUT courant → suit dynamiquement le mode de layout. (Miroir de la démo.)
-  function _transType(lastDeg,targetDeg,isBor){
-    if(isBor) return 'color';
-    if(lastDeg===4 && targetDeg===5) return 'deceptive';
-    if(targetDeg===4 || targetDeg===6) return 'dominant';
-    if(targetDeg===1 || targetDeg===3) return 'predominant';
-    return 'resolution';
-  }
+  // Carte de progression : TEINTE = le degré (couleurs du layout), cohérent avec la grille smart.
   function _cardCol(idx){
     var e=prog[idx];
-    if(e && smartOn){
-      if(idx>0){ var prev=prog[idx-1], rgb=HEATCOL[_transType(prev.deg, e.deg, e.deg<0)];
-        if(rgb) return { c:'rgb('+rgb[0]+','+rgb[1]+','+rgb[2]+')', bg:'rgba('+rgb[0]+','+rgb[1]+','+rgb[2]+',.13)' }; }
-      return { c:'rgba(237,233,224,.40)', bg:'rgba(237,233,224,.06)' };   // 1ère carte = ancre (pas de transition entrante)
-    }
     var hex=(e && e.deg>=0 && e.deg<7)?degColorFor(e.deg):borColorFor();
     return { c:hex, bg:hexToRgba(hex,.13) };
   }

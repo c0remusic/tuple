@@ -69,16 +69,13 @@ var theCS = null, theMatrix = null, theMid = null;
 var pressed = {}, pressedPitch = {};
 var colLen = [0,0,0,0,0,0,0], borLen = 0, colTmp = null, borTmp = 0;
 var colFns = [[],[],[],[],[],[],[]], colFnsTmp = null;   // ordre des types par colonne (mapper smartcell fn -> row)
-// SMART (layout intelligent) : pads cohérents colorés par rôle de transition, le reste ÉTEINT.
+// SMART : pads suggérés colorés par DEGRÉ (couleurs du layout), luminosité = lvl ; le reste = blanc/éteint.
 var smartActive = false, smartPads = {};
-// Layout Smart : 5 fonctions × 3 paliers de luminosité (slots 18..32). slot = 18 + fnIndex*3 + (lvl-1).
-var SMART_FN = ["resolution","dominant","predominant","deceptive","color"];
-var SMART_FN_INDEX = { resolution:0, dominant:1, predominant:2, deceptive:3, color:4 };
-var SMART_BASE = 18;
-var SMART_RGB = { resolution:[40,130,240], dominant:[240,70,55], predominant:[70,200,80], deceptive:[250,195,30], color:[175,80,240] };   // couleurs FRANCHES (LED Push), palier 3 = pleine valeur
+// Layout Smart : TEINTE = degré (col 0..6) ou emprunt (col 7), 3 paliers de luminosité par cible.
+// slot = 18 + col*3 + (lvl-1) → 8 cibles × 3 = slots 18..41.
 var SMART_TIER = [0, 0.45, 0.72, 1.0];   // facteur de luminosité par lvl (1..3)
 var WHITEIDX  = 9;   // accord DISPONIBLE mais non suggéré = allumé en BLANC (slot 9 libre)
-function _smartSlot(cat, lvl){ var fi = SMART_FN_INDEX[cat]; if (fi == null) fi = 0; var l = (lvl < 1) ? 1 : (lvl > 3 ? 3 : lvl); return SMART_BASE + fi*3 + (l-1); }
+function _smartSlot(col, lvl){ var l = (lvl < 1) ? 1 : (lvl > 3 ? 3 : lvl); return 18 + col*3 + (l-1); }
 function _scaleRGB(rgb, f){ return [Math.round(rgb[0]*f), Math.round(rgb[1]*f), Math.round(rgb[2]*f)]; }
 
 // Observe device active state — release grab si le device est désactivé.
@@ -194,8 +191,8 @@ function colorscheme(v) { scheme = parseInt(v) % NSCHEMES; L("colorscheme=" + sc
 // SMART : reçus de l'outlet 7 du moteur. smartcell/bor = accords suggérés (colorés) ; accord dispo non suggéré = blanc, pad vide = éteint.
 function smart(v) { smartActive = (parseInt(v) === 1); L("smart=" + smartActive); if (enabled) { applyPalette(); refreshGrid(); } flush(); }
 function smartclear() { smartPads = {}; }
-function smartcell(d, fn, lvl, cat) { var col = parseInt(d), row = (colFns[col]) ? colFns[col].indexOf(String(fn)) : -1; if (row >= 0) { smartPads[col + "_" + row] = { c:String(cat), l:parseInt(lvl) }; } }
-function smartbor(index, lvl, cat) { smartPads["7_" + parseInt(index)] = { c:String(cat), l:parseInt(lvl) }; }
+function smartcell(d, fn, lvl, cat) { var col = parseInt(d), row = (colFns[col]) ? colFns[col].indexOf(String(fn)) : -1; if (row >= 0) { smartPads[col + "_" + row] = parseInt(lvl); } }
+function smartbor(index, lvl, cat) { smartPads["7_" + parseInt(index)] = parseInt(lvl); }
 function smartdone() {
 	var n = 0, k; for (k in smartPads) if (smartPads.hasOwnProperty(k)) n++;
 	L("smartdone: " + n + " pads cohérents (active=" + smartActive + " enabled=" + enabled + " colFns0=" + (colFns[0] ? colFns[0].length : -1) + ")");
@@ -220,10 +217,11 @@ function applyPalette() {
 	var bor = [170, 50, 230];                 // emprunt violet (toutes logiques)
 	setPaletteRGB(BORIDX, bor);
 	setPaletteRGB(BRIGHTBOR, brighten(bor));
-	for (var sfi = 0; sfi < SMART_FN.length; sfi++){
-		var scat = SMART_FN[sfi], sbase = SMART_RGB[scat];
-		for (var sl = 1; sl <= 3; sl++) setPaletteRGB(_smartSlot(scat, sl), _scaleRGB(sbase, SMART_TIER[sl]));   // 3 paliers de luminosité par fonction
+	for (var sc = 0; sc < 7; sc++){
+		var dcol = (scheme < 4) ? PUSH_RGB[scheme][sc] : QUAL_RGB[degQual[sc] || 0];   // couleur du degré dans le schéma courant
+		for (var sl = 1; sl <= 3; sl++) setPaletteRGB(_smartSlot(sc, sl), _scaleRGB(dcol, SMART_TIER[sl]));   // 3 paliers de luminosité par degré
 	}
+	for (var sl2 = 1; sl2 <= 3; sl2++) setPaletteRGB(_smartSlot(7, sl2), _scaleRGB([170, 50, 230], SMART_TIER[sl2]));   // emprunt (col 7) violet
 	setPaletteRGB(WHITEIDX, [200, 200, 205]);   // blanc doux : accord disponible (layout Smart)
 	L("palette RGB appliquée (scheme " + scheme + ")"); flush();
 }
@@ -253,7 +251,7 @@ function refreshGrid() {
 		if (spotlight) {
 			var has = hasChord(c, r);   // ce pad porte-t-il un accord ?
 			if (!has) idx = OFFIDX;                                 // pas d'accord → éteint
-			else { var sp = smartPads[key]; idx = sp ? _smartSlot(sp.c, sp.l) : WHITEIDX; }   // suggéré = couleur + palier de luminosité ; sinon BLANC
+			else { var sp = smartPads[key]; idx = sp ? _smartSlot(c, sp) : WHITEIDX; }   // suggéré = couleur du degré + palier de luminosité ; sinon BLANC
 		}
 		else idx = pressed[key] ? brightIdx(c, r) : normalIdx(c, r);
 		try { theMatrix.call("send_value", c, r, idx); if (idx !== OFFIDX) n++; } catch (e) { if (!firstErr) firstErr = String(e); }
