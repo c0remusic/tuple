@@ -692,7 +692,28 @@ function _sg_common(lastPcs, cellPcs){
 	for (i = 0; i < cellPcs.length; i++) for (j = 0; j < lastPcs.length; j++) if (cellPcs[i] === lastPcs[j]) { shared++; break; }
 	var b = 0.05 * shared; return b > 0.12 ? 0.12 : b;
 }
-function _sg_borrowedBase(cell){ var s = 0.35; if (cell.isSecDom) s += 0.1; return s; }
+var _SG_MODAL_MAJ = {5:0,10:0,8:4,3:3}, _SG_MODAL_MIN = {1:4,7:0,11:0,5:0};
+function _sg_borrowedResolveDeg(pcs, tonicPc, isMin, degByRoot){
+	if (!pcs || !pcs.length) return -1;
+	var R = pcs[0];
+	if (pcs.indexOf((R+4)%12) >= 0 && pcs.indexOf((R+10)%12) >= 0){ var d=degByRoot[(R+5)%12]; return (d!=null)?d:-1; }
+	if (tonicPc < 0) return -1;
+	var semis=(R-tonicPc+12)%12, tgt=(isMin?_SG_MODAL_MIN:_SG_MODAL_MAJ)[semis];
+	return (tgt!=null)?tgt:-1;
+}
+function _sg_borrowedScore(cell, lastDeg, isMin, degByRoot, tonicPc){
+	var tgtDeg = _sg_borrowedResolveDeg(cell.pcs, tonicPc, isMin, degByRoot);
+	if (tgtDeg >= 0) return 0.30 + 0.55 * _sg_base(lastDeg, tgtDeg, isMin);
+	return 0.30;
+}
+// Catégorie de transition (miroir de transitionType) — couleur côté UI device.
+function _sg_transType(lastDeg, targetDeg, isBor){
+	if (isBor) return "color";
+	if (lastDeg === 4 && targetDeg === 5) return "deceptive";
+	if (targetDeg === 4 || targetDeg === 6) return "dominant";
+	if (targetDeg === 1 || targetDeg === 3) return "predominant";
+	return "resolution";
+}
 function _sg_pcs(spec){ var a = [], i; for (i = 0; i < spec.pcs.length; i++) a.push(spec.pcs[i].pc); return a; }
 function _sg_diatonicCell(d, fn){
 	var sp = _vl2_buildSpec(fn, d); if (!sp) return null;
@@ -720,23 +741,36 @@ function _sg_broadcast(){
 	var lastDeg = (last && last.kind === "d") ? last.degree : -1;
 	var d, t, fn, s, lvl;
 	var degMask = SCALE_VALID_DEGREES[scaleName];
+	var degByRoot = {};
+	for (d = 0; d < 7; d++){ if (degMask && !degMask[d]) continue; var rp=(root+scale[d]+1200)%12; if (degByRoot[rp]==null) degByRoot[rp]=d; }
+	// emprunt comme source : dernier accord = emprunt → suggère fortement sa résolution (dom7 OU modal)
+	var tonicPc = ((root % 12) + 12) % 12;
+	var lastResolveDeg = (last && last.kind === "b") ? _sg_borrowedResolveDeg(last.pcs, tonicPc, isMin, degByRoot) : -1;
 	for (d = 0; d < 7; d++){
 		if (degMask && !degMask[d]) continue;
 		for (t = 0; t < GRID_TYPES.length; t++){
 			fn = GRID_TYPES[t];
 			if (!gridTypeValid(d, fn)) continue;
 			var cell = _sg_diatonicCell(d, fn); if (!cell) continue;
-			s = _sg_clamp(_sg_base(lastDeg, d, isMin) + _sg_quality(cell) + _sg_context(cell, isMin) + _sg_common(lastPcs, cell.pcs));
+			var dcat;
+			if (lastResolveDeg >= 0){
+				s = (d === lastResolveDeg ? 0.92 : 0.12) + _sg_quality(cell);
+				dcat = (d === lastResolveDeg) ? "resolution" : _sg_transType(lastResolveDeg, d, false);
+			} else {
+				s = _sg_base(lastDeg, d, isMin) + _sg_quality(cell) + _sg_context(cell, isMin);
+				dcat = _sg_transType(lastDeg, d, false);
+			}
+			s = _sg_clamp(s + _sg_common(lastPcs, cell.pcs));
 			lvl = _sg_level(s);
-			if (lvl > 0) outlet(7, "smartcell", d, fn, lvl);
+			if (lvl > 0) outlet(7, "smartcell", d, fn, lvl, dcat);
 		}
 	}
 	var bl = borrowedFor();
 	for (t = 0; t < bl.length; t++){
 		var bc = _sg_borrowedCell(t, bl[t].semis, bl[t].type);
-		s = _sg_clamp(_sg_borrowedBase(bc) + _sg_common(lastPcs, bc.pcs));
+		s = _sg_clamp(_sg_borrowedScore(bc, lastDeg, isMin, degByRoot, tonicPc) + _sg_common(lastPcs, bc.pcs));
 		lvl = _sg_level(s);
-		if (lvl > 0) outlet(7, "smartbor", t, lvl);
+		if (lvl > 0) outlet(7, "smartbor", t, lvl, "color");
 	}
 	outlet(7, "smartdone");
 }
