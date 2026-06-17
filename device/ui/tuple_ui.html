@@ -345,14 +345,17 @@
   #cap-dock::before{content:'';position:absolute;top:0;left:14px;right:14px;height:1px;
     background:linear-gradient(to right, transparent 0%, rgba(255,255,255,.06) 25%, rgba(255,255,255,.06) 75%, transparent 100%)}
   body.full.dock-open #cap-dock{display:flex}
+  /* À l'ouverture : la barre Progression remonte AU-DESSUS des cartes (= en-tête du tiroir). */
+  body.dock-open #prog-toggle{order:2}
+  body.dock-open #cap-dock{order:3}
   /* TOGGLE bar — toujours visible en bas (full window). Ouvre/ferme le tiroir Progression. */
   #prog-toggle{display:none;position:relative;flex:0 0 auto;align-items:center;justify-content:center;gap:8px;cursor:pointer;height:30px;padding:0 14px}
   body.full #prog-toggle{display:flex}
-  /* séparateur dégradé (comme la grille / les groupes) ; masqué quand le tiroir est ouvert
-     (c'est le séparateur du tiroir qui gère alors le haut) → pas de double trait. */
+  /* séparateur dégradé (comme la grille / les groupes). Ouvert, la barre passe EN HAUT du tiroir :
+     on garde SON filet (il coiffe le tiroir) et on masque celui du tiroir → pas de double trait. */
   #prog-toggle::before{content:'';position:absolute;top:0;left:14px;right:14px;height:1px;
     background:linear-gradient(to right, transparent 0%, rgba(255,255,255,.06) 25%, rgba(255,255,255,.06) 75%, transparent 100%)}
-  body.dock-open #prog-toggle::before{display:none}
+  body.dock-open #cap-dock::before{display:none}
   #prog-toggle:hover .pt-lbl,#prog-toggle:hover .pt-chev{color:var(--txt)}
   #prog-toggle .pt-chev{font-size:9px;color:var(--muted);line-height:1;flex:0 0 12px;text-align:center}
   #prog-toggle::after{content:'';flex:0 0 12px}   /* équilibre le chevron → libellé vraiment centré */
@@ -566,7 +569,7 @@
       <div class="ib-logo">Tuple</div>
       <div class="ib-tag">Max for Live · Harmonic composition tool</div>
       <hr>
-      <div class="ib-row"><div class="ib-label">Version</div><div class="ib-val">1.2.1</div></div>
+      <div class="ib-row"><div class="ib-label">Version</div><div class="ib-val">1.2.2</div></div>
       <div class="ib-row"><div class="ib-label">Creator</div><div class="ib-val">c0re</div></div>
       <div class="ib-row"><div class="ib-label">Contact</div><div class="ib-val"><a href="mailto:c0re_m4l@proton.me">c0re_m4l@proton.me</a></div></div>
       <div class="ib-row"><div class="ib-label">Community</div><div class="ib-val"><a href="https://discord.gg/N52jGhGE">discord.gg/N52jGhGE</a></div></div>
