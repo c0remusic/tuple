@@ -11,16 +11,30 @@ outlets = 2;
 
 var NOTE_NAMES_DBG = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
 
+// Indices = SCALE_NAMES_ARR du moteur (tuple_chord_engine.js). Doit couvrir TOUTES les gammes
+// du moteur, sinon une gamme Live valide (mél. min., locrian, pentatoniques, lyd. dom.) renvoie
+// undefined → l'observateur abandonne et ne synchronise jamais. Miroir de LIVE_SCALE_MAP.
 var SCALE_MAP = {
-	"major":          0,
-	"minor":          1,
-	"natural minor":  1,
-	"dorian":         2,
-	"phrygian":       3,
-	"lydian":         4,
-	"mixolydian":     5,
-	"harmonic minor": 6,
-	"harmminor":      6
+	"major":            0,
+	"minor":            1,
+	"natural minor":    1,
+	"dorian":           2,
+	"phrygian":         3,
+	"lydian":           4,
+	"mixolydian":       5,
+	"harmonic minor":   6,
+	"harmminor":        6,
+	"melodic minor":    7,
+	"melminor":         7,
+	"locrian":          8,
+	"major pentatonic": 9,
+	"pentatonic major": 9,
+	"pentamaj":         9,
+	"minor pentatonic": 10,
+	"pentatonic minor": 10,
+	"pentamin":         10,
+	"lydian dominant":  11,
+	"lydiandom":        11
 };
 
 // .get() peut renvoyer une valeur seule OU un tableau [valeur].

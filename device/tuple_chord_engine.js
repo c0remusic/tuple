@@ -117,6 +117,8 @@ var NOTE_TO_PC = {
 	"C":0,"C#":1,"D":2,"D#":3,"E":4,"F":5,
 	"F#":6,"G":7,"G#":8,"A":9,"A#":10,"B":11
 };
+// Intervalles des accords empruntés (par type) — SOURCE UNIQUE : colorchord + _vl2_buildColorSpec.
+var COLOR_IV = { min:[0,3,7], dim7:[0,3,6,9], maj7:[0,4,7,11], dom7:[0,4,7,10], maj:[0,4,7] };
 
 var root                = 0;
 var scale               = SCALES["major"];
@@ -137,20 +139,26 @@ var strumCurve          = 0;          // Linear par défaut
 var humanizeAmt         = 0;          // 0-100 : 0 = off ; variation vélocité ±55 + timing ±60ms
 var _emitTasks          = [];         // Tasks de notes différées (strum/humanize) en cours
 
-var TUPLE_VERSION = "1.2.0";
+var TUPLE_VERSION = "1.2.1";
 
 var _patcher = null;
 
 // Construit l'URL file:// de l'UI depuis patcher.filepath, multi-plateforme.
-// macOS renvoie un chemin HFS AVEC le nom du volume ("Macintosh HD:/Users/…") → on le retire
-// pour obtenir "/Users/…". Windows "C:/…" (lettre de lecteur) est laissé tel quel. Puis :
-// POSIX/Mac commence par '/' → file:// + chemin ; Windows → file:/// + chemin.
+// macOS renvoie un chemin "Max-style" : "<Volume>:/chemin" (séparateur '/'). Conversion en POSIX :
+//   - volume de DÉMARRAGE (chemin → /Users, /Applications…) : on retire le volume (le boot EST "/").
+//   - autre volume (disque EXTERNE) : "<Vol>:/…" → "/Volumes/<Vol>/…" (point de montage macOS).
+//   - déjà POSIX (commence par '/') : inchangé.
+// Windows "C:/…" (lettre de lecteur) : laissé tel quel. Puis POSIX → file:///… ; Windows → file:///C:/…
 function _uiUrl() {
 	if (!_patcher) return "";
 	var fp = _patcher.filepath;
 	if (!fp || !fp.length) return "";
 	fp = fp.replace(/\\/g, '/');
-	if (!/^[A-Za-z]:\//.test(fp)) { fp = fp.replace(/^[^/:]*:\//, '/'); }
+	if (!/^[A-Za-z]:\//.test(fp) && fp.charAt(0) !== '/') {
+		var vol  = fp.substring(0, fp.indexOf(':'));
+		var rest = fp.replace(/^[^/:]*:\//, '/');
+		fp = /^\/(Users|Applications|Library|System|private|opt|usr|Volumes)\//.test(rest) ? rest : ('/Volumes/' + vol + rest);
+	}
 	var dir = fp.substring(0, fp.lastIndexOf('/') + 1).replace(/ /g, '%20');
 	return 'file://' + (dir.charAt(0) === '/' ? '' : '/') + dir + 'ui/tuple_ui.html';
 }
@@ -202,28 +210,29 @@ function msg_int(v) {
 // la vraie fonction du moteur. Aucune logique harmonique ici — pur routage.
 // (Les messages à 1 seul argument — requestgrid, requeststate, synclive — arrivent
 //  bien comme messages-sélecteurs natifs et n'ont pas besoin de cet adaptateur.)
+// Table de dispatch jweb → moteur. Construite UNE SEULE FOIS (les cibles sont des function
+// declarations, hoisted) au lieu de réallouer ~45 clés à CHAQUE message reçu (chemin chaud).
+var LIST_DISPATCH = {
+	triad: triad, seven: seven, nine: nine, add9: add9, sus2: sus2, sus4: sus4,
+	six: six, sixnine: sixnine, sevensus4: sevensus4, mmaj7: mmaj7,
+	sevenflat9: sevenflat9, sevensharp9: sevensharp9, m7s5: m7s5,
+	colorchord: colorchord, octave: octave, rootidx: rootidx, scaleidx: scaleidx,
+	voicingidx: voicingidx, voiceleading: voiceleading, vlmode: vlmode,
+	voicing: voicing, synclive: synclive, requestgrid: requestgrid,
+	requeststate: requeststate, midinote: midinote, key: key,
+	keynote: keynote, keynoteup: keynoteup, pushmode: pushmode, smart: smart, smartmode: smartmode,
+	colorscheme: colorscheme, strumms: strumms, strumramp: strumramp,
+	strumcurve: strumcurve, humanizeamt: humanizeamt,
+	openurl: openurl, openwindow: openwindow,
+	capture: capture, sendclip: sendclip, clearprog: clearprog, removelast: removelast,
+	removeat: removeat, setcursor: setcursor, playprog: playprog, moveprog: moveprog,
+	captureone: captureone
+};
 function list() {
 	var a = Array.prototype.slice.call(arguments);
 	var sel = String(a[0]);
-	var rest = a.slice(1);
-	var D = {
-		triad: triad, seven: seven, nine: nine, add9: add9, sus2: sus2, sus4: sus4,
-		six: six, sixnine: sixnine, sevensus4: sevensus4, mmaj7: mmaj7,
-		sevenflat9: sevenflat9, sevensharp9: sevensharp9, m7s5: m7s5,
-		colorchord: colorchord, octave: octave, rootidx: rootidx, scaleidx: scaleidx,
-		voicingidx: voicingidx, voiceleading: voiceleading, vlmode: vlmode,
-		voicing: voicing, synclive: synclive, requestgrid: requestgrid,
-		requeststate: requeststate, midinote: midinote, key: key,
-		keynote: keynote, keynoteup: keynoteup, pushmode: pushmode, smart: smart, smartmode: smartmode,
-		colorscheme: colorscheme, strumms: strumms, strumramp: strumramp,
-		strumcurve: strumcurve, humanizeamt: humanizeamt,
-		openurl: openurl, openwindow: openwindow,
-		capture: capture, sendclip: sendclip, clearprog: clearprog, removelast: removelast,
-		removeat: removeat, setcursor: setcursor, playprog: playprog, moveprog: moveprog,
-		captureone: captureone
-	};
-	if (D[sel]) { D[sel].apply(null, rest); }
-	else { post("list: selecteur jweb inconnu '" + sel + "' (" + rest.join(" ") + ")\n"); }
+	if (LIST_DISPATCH[sel]) { LIST_DISPATCH[sel].apply(null, a.slice(1)); }
+	else { post("list: selecteur jweb inconnu '" + sel + "' (" + a.slice(1).join(" ") + ")\n"); }
 }
 
 // =====================================================
@@ -237,13 +246,8 @@ function list() {
 // base C3 = MIDI 48 = MIDI_BASE) :
 //   rangée basse  : z s x d c v g b h n j m   → C3..B3 (48..59)
 //   rangée haute  : q 2 w 3 e r 5 t 6 y 7 u i → C4..C5 (60..72)
-var KEY_TO_MIDI = {
-    122:48, 115:49, 120:50, 100:51,  99:52, 118:53, 103:54,
-     98:55, 104:56, 110:57, 106:58, 109:59,
-    113:60,  50:61, 119:62,  51:63, 101:64, 114:65,  53:66,
-    116:67,  54:68, 121:69,  55:70, 117:71, 105:72
-};
-var KEY_VEL = 100;
+// (KEY_TO_MIDI / KEY_VEL retirés : morts depuis que keynote()/keynoteup() sont des no-op.
+//  Le clavier ORDINATEUR est géré par l'UI jweb — KB_MAP dans tuple_ui.html — qui envoie 'midinote'.)
 
 // [key] (clavier ORDINATEUR interne au device) DÉSACTIVÉ : il faisait DOUBLON avec le « Computer
 // MIDI Keyboard » d'Ableton (→ notein). Quand les deux sont actifs (surtout à des octaves
@@ -456,8 +460,8 @@ function getIntervals(d) {
 	return iv;
 }
 
-function isValid(d, type) {
-	var iv = getIntervals(d);
+function isValid(d, type, iv) {
+	iv = iv || getIntervals(d);
 	switch(type) {
 		case "triad":     return true;
 		case "sus2":      return iv[1] === 2  && iv[4] === 7;
@@ -561,30 +565,30 @@ function borrowedFor() {
 }
 
 // Validité d'une ligne de type à un degré (n'importe quelle qualité)
-function gridTypeValid(d, fn) {
-	var iv = getIntervals(d);
+function gridTypeValid(d, fn, iv) {
+	iv = iv || getIntervals(d);
 	switch(fn) {
 		case "triad":       return true;
 		case "six":         return iv[4]===7 && iv[5]===9;                 // 6 / m6 (6e majeure)
 		case "sixnine":     return iv[4]===7 && iv[5]===9 && iv[8]===2;    // 6/9
-		case "seven":       return isValid(d,"seven");
+		case "seven":       return isValid(d,"seven",iv);
 		case "maj7":        return iv[4]===7 && iv[6]===11;                // maj7 (explicite)
 		case "mmaj7":       return iv[2]===3 && iv[4]===7 && iv[6]===11;   // mineur-majeur 7
 		case "sevensus4":   return iv[3]===5 && iv[4]===7 && iv[6]===10;  // 7sus4
-		case "nine":        return isValid(d,"maj9") || isValid(d,"min9") || isValid(d,"nine");
+		case "nine":        return isValid(d,"maj9",iv) || isValid(d,"min9",iv) || isValid(d,"nine",iv);
 		case "sevenflat9":  return iv[2]!==3 && iv[4]===7 && iv[6]===10 && iv[8]===1;  // 7b9 (dominante)
 		case "sevensharp9": return iv[2]!==3 && iv[4]===7 && iv[6]===10 && iv[8]===3;  // 7#9 (dominante)
 		case "m7s5":        return iv[2]===3 && iv[4]===8 && iv[6]===10;   // m7#5 (alteré)
-		case "add9":        return isValid(d,"add9");
-		case "sus2":        return isValid(d,"sus2");
-		case "sus4":        return isValid(d,"sus4");
+		case "add9":        return isValid(d,"add9",iv);
+		case "sus2":        return isValid(d,"sus2",iv);
+		case "sus4":        return isValid(d,"sus4",iv);
 		default: return false;
 	}
 }
 
 // Nom d'accord affiché pour une case (degré + type)
-function gridLabel(d, fn) {
-	var iv = getIntervals(d);
+function gridLabel(d, fn, iv) {
+	iv = iv || getIntervals(d);
 	var rn = NOTE_NAMES[(root + scale[d]) % 12];
 	if (fn === "triad") {
 		if (iv[2]===3 && iv[4]===6) return rn + "dim";
@@ -602,17 +606,18 @@ function gridLabel(d, fn) {
 	if (fn === "sevenflat9")  return rn + "7b9";
 	if (fn === "sevensharp9") return rn + "7#9";
 	if (fn === "seven") {
-		if (isValid(d,"maj7"))  return rn + "M7";
-		if (isValid(d,"min7"))  return rn + "m7";
-		if (isValid(d,"dom7"))  return rn + "7";
-		if (isValid(d,"dim7"))  return rn + "dim7";
-		if (isValid(d,"hdim7")) return rn + "ø7";
+		if (isValid(d,"maj7",iv))  return rn + "M7";
+		if (isValid(d,"min7",iv))  return rn + "m7";
+		if (isValid(d,"dom7",iv))  return rn + "7";
+		if (isValid(d,"dim7",iv))  return rn + "dim7";
+		if (isValid(d,"hdim7",iv)) return rn + "ø7";
 	}
 	if (fn === "nine") {
-		if (isValid(d,"maj9")) return rn + "M9";
-		if (isValid(d,"min9")) return rn + "m9";
-		if (isValid(d,"nine")) return rn + "9";
+		if (isValid(d,"maj9",iv)) return rn + "M9";
+		if (isValid(d,"min9",iv)) return rn + "m9";
+		if (isValid(d,"nine",iv)) return rn + "9";
 	}
+	if (fn === "m7s5") return rn + "m7#5";   // m7♯5 (quinte augmentée) — sinon la case montrait la fonda nue
 	return rn;
 }
 
@@ -626,7 +631,7 @@ var gBor  = [];
 // Qualité du triade diatonique par degré : 0=majeur 1=mineur 2=diminué 3=augmenté.
 function chordQuality(d) {
 	function semi(step) { return scale[step % 7] + 12 * Math.floor(step / 7); }
-	var root = semi(d), third = semi(d + 2) - root, fifth = semi(d + 4) - root;
+	var rt = semi(d), third = semi(d + 2) - rt, fifth = semi(d + 4) - rt;
 	if (third === 3 && fifth === 6) return 2;
 	if (third === 4 && fifth === 8) return 3;
 	if (third === 3) return 1;
@@ -732,6 +737,10 @@ function _sg_borrowedCell(index, semis, type){
 	var sp = _vl2_buildColorSpec(semis, type);
 	return { kind:"b", index:index, pcs:_sg_pcs(sp), sp:sp };   // emprunts : isDominant/hasSeventh/isSecDom non lus (le score d'emprunt n'utilise que pcs/sp)
 }
+// Registre + centre de sélection — SOURCE UNIQUE (utilisés par _vl2_play ET _sg_fluid) :
+// regBase = plancher d'octave (multiple de 12) ; center = tonique pour classic, C-ancré sinon.
+function _vl2_regBase(){ return 48 + Math.max(-12, Math.min(24, currentOctave * 12)); }
+function _vl2_center(vc){ var rb = _vl2_regBase(); return (vc === "classic") ? (rb + root) : (60 + currentOctave * 12); }
 // Fluidité de voice-leading : coût de mouvement vers la réalisation que l'appareil JOUERAIT
 // (celle dont la moyenne est la plus proche du centre de registre), avec le voicing + l'octave
 // courants. Plus bas = plus fluide. Pur (ne mute pas _vl2_st). Sensible au voicing (≠ ancien
@@ -739,8 +748,8 @@ function _sg_borrowedCell(index, semis, type){
 function _sg_fluid(sp){
 	var ref = (typeof lastChordNotes !== "undefined" && lastChordNotes && lastChordNotes.length) ? lastChordNotes : activeNotes;
 	if (!sp || !ref || !ref.length) return 0;
-	var regBase = 48 + Math.max(-12, Math.min(24, currentOctave * 12));
-	var center = (currentVoicing === "classic") ? (regBase + root) : (60 + currentOctave * 12);
+	var regBase = _vl2_regBase();
+	var center = _vl2_center(currentVoicing);
 	var cands = _vl2_realize(sp, currentVoicing, { regBase:regBase, rootPos:!voiceLeadingEnabled });
 	if (!cands || !cands.length) return 9999;
 	var w = _vl2_pickW(currentVoicing), i, j, sum, m, dev, pick = null, bestDev = 1e9;
@@ -776,27 +785,24 @@ function _sg_broadcast(){
 	var lastResolveDeg = (last && last.kind === "b") ? _sg_borrowedResolveDeg(last.pcs, tonicPc, isMin, degByRoot) : -1;
 	var vl = (smartMode === "voiceleading");
 	var byFn = {}, fnOrder = [];   // par FONCTION de transition (cat) : liste des cases compatibles (sélection harmonique)
-	for (d = 0; d < 7; d++){
-		if (degMask && !degMask[d]) continue;
-		for (t = 0; t < GRID_TYPES.length; t++){
-			fn = GRID_TYPES[t];
-			if (!gridTypeValid(d, fn)) continue;
-			if (lastFn !== "color" && d === lastDegree && fn === lastFn) continue;   // ne pas re-suggérer l'accord qu'on vient de jouer
-			var cell = _sg_diatonicCell(d, fn); if (!cell) continue;
-			var dcat;
-			if (lastResolveDeg >= 0){
-				s = (d === lastResolveDeg ? 0.92 : 0.12) + _sg_quality(cell);
-				dcat = (d === lastResolveDeg) ? "resolution" : _sg_transType(lastResolveDeg, d, false);
-			} else {
-				s = _sg_base(lastDeg, d, isMin) + _sg_quality(cell) + _sg_context(cell, isMin);
-				dcat = _sg_transType(lastDeg, d, false);
-			}
-			s = _sg_clamp(s + _sg_common(lastPcs, cell.pcs));
-			lvl = _sg_level(s);
-			if (lvl <= 0) continue;
-			if (!byFn[dcat]) { byFn[dcat] = []; fnOrder.push(dcat); }
-			byFn[dcat].push({ kind:"d", d:d, fn:fn, lvl:lvl, cat:dcat, s:s, sp:cell.sp });
+	var cells = validGridCells(), ci;   // MÊME forme de grille que broadcastGrid (source unique)
+	for (ci = 0; ci < cells.length; ci++){
+		d = cells[ci].d; fn = cells[ci].fn;
+		if (lastFn !== "color" && d === lastDegree && fn === lastFn) continue;   // ne pas re-suggérer l'accord qu'on vient de jouer
+		var cell = _sg_diatonicCell(d, fn); if (!cell) continue;
+		var dcat;
+		if (lastResolveDeg >= 0){
+			s = (d === lastResolveDeg ? 0.92 : 0.12) + _sg_quality(cell);
+			dcat = (d === lastResolveDeg) ? "resolution" : _sg_transType(lastResolveDeg, d, false);
+		} else {
+			s = _sg_base(lastDeg, d, isMin) + _sg_quality(cell) + _sg_context(cell, isMin);
+			dcat = _sg_transType(lastDeg, d, false);
 		}
+		s = _sg_clamp(s + _sg_common(lastPcs, cell.pcs));
+		lvl = _sg_level(s);
+		if (lvl <= 0) continue;
+		if (!byFn[dcat]) { byFn[dcat] = []; fnOrder.push(dcat); }
+		byFn[dcat].push({ kind:"d", d:d, fn:fn, lvl:lvl, cat:dcat, s:s, sp:cell.sp });
 	}
 	var bl = borrowedFor();
 	for (t = 0; t < bl.length; t++){
@@ -846,23 +852,33 @@ function smartmode(v){
 	if (smartOn) _sg_broadcast();
 }
 
+// Énumère les cellules diatoniques VALIDES (degré × type), dans l'ordre d'affichage. SOURCE UNIQUE
+// de la « forme » de la grille — consommée par broadcastGrid ET _sg_broadcast (fini la double boucle).
+function validGridCells() {
+	var out = [], degMask = SCALE_VALID_DEGREES[scaleName], d, t, fn, iv;
+	for (d = 0; d < 7; d++) {
+		if (degMask && !degMask[d]) continue;
+		iv = getIntervals(d);   // calculé UNE fois par degré (partagé par gridTypeValid + gridLabel)
+		for (t = 0; t < GRID_TYPES.length; t++) {
+			fn = GRID_TYPES[t];
+			if (gridTypeValid(d, fn, iv)) out.push({ d:d, fn:fn, iv:iv });
+		}
+	}
+	return out;
+}
+
 // Diffuse toute la grille à l'UI ET au Push (outlet 7) + reconstruit flatGrid/gCols/gBor
 function broadcastGrid() {
 	flatGrid = [];
 	gCols = [[],[],[],[],[],[],[]];
 	gBor  = [];
 	outlet(7, "gridclear");
-	var degMask = SCALE_VALID_DEGREES[scaleName];
-	for (var d = 0; d < 7; d++) {
-		if (degMask && !degMask[d]) continue;
-		for (var t = 0; t < GRID_TYPES.length; t++) {
-			var fn = GRID_TYPES[t];
-			if (gridTypeValid(d, fn)) {
-				outlet(7, "gridcell", d, fn, gridLabel(d, fn));
-				flatGrid.push({ kind:"d", fn:fn, degree:d });
-				gCols[d].push({ fn:fn });
-			}
-		}
+	var cells = validGridCells(), ci, c2;
+	for (ci = 0; ci < cells.length; ci++) {
+		c2 = cells[ci];
+		outlet(7, "gridcell", c2.d, c2.fn, gridLabel(c2.d, c2.fn, c2.iv));
+		flatGrid.push({ kind:"d", fn:c2.fn, degree:c2.d });
+		gCols[c2.d].push({ fn:c2.fn });
 	}
 	var bl = borrowedFor();
 	for (var i = 0; i < bl.length; i++) {
@@ -1102,6 +1118,10 @@ function drop3Voicing(notes) {
 	return r;
 }
 
+// FILET DE SECOURS uniquement (appelé par sendChord SEULEMENT si _vl2_play ne sort aucun candidat).
+// ⚠️ Ces voicings v1 DIVERGENT de _vl2_T (algos différents) et ne couvrent que 9 des 15 (trap/
+// nuhouse/jazz/trance/funk → close position par défaut). Secours rare, PAS le chemin réel : la
+// vérité du voicing est _vl2_T / _vl2_play. Ne pas y ajouter de logique de jeu.
 function applyVoicing(notes) {
 	switch(currentVoicing) {
 		case "piano":     return pianoVoicing(notes);
@@ -1206,9 +1226,8 @@ function _vl2_buildSpec(fn, d) {
 
 function _vl2_buildColorSpec(semis, type) {
 	var m=function(n){return((n%12)+12)%12;};
-	var IV={min:[0,3,7],dim7:[0,3,6,9],maj7:[0,4,7,11],dom7:[0,4,7,10],maj:[0,4,7]};
 	var ROLES=['root','third','fifth','seventh'];
-	var ivs=IV[type]||IV.maj, rootPc=m(root+semis), pcs=[];
+	var ivs=COLOR_IV[type]||COLOR_IV.maj, rootPc=m(root+semis), pcs=[];
 	for(var i=0;i<ivs.length;i++) pcs.push({pc:m(rootPc+ivs[i]),role:ROLES[i]});
 	return {pcs:pcs, rootPc:rootPc, fn:'color', degree:semis, hasSeventh:ivs.length>3, isDominant:type==='dom7'};
 }
@@ -1252,9 +1271,9 @@ var _vl2_T={
 	prog:function(c,oct){
 		if(c.length<3)return[_vl2_vs(c)];oct=oct||0;
 		var pm=function(n){return((n%12)+12)%12;},rootPc=pm(c[0]),upperPc=c.slice(1).map(pm);
-		var root=48+oct+rootPc,cl=[root],cur=root,i,n;
+		var rt=48+oct+rootPc,cl=[rt],cur=rt,i,n;
 		for(i=0;i<upperPc.length;i++){n=cur+1+pm(upperPc[i]-pm(cur+1));cl.push(n);cur=n;}
-		cl.push(root+12);
+		cl.push(rt+12);
 		return[_vl2_vs(cl).slice(0,6)];
 	},
 	piano:function(c){
@@ -1279,7 +1298,7 @@ var _vl2_T={
 		if(c.length<3)return[_vl2_vs(c)];oct=oct||0;
 		var pm=function(n){return((n%12)+12)%12;},rootPc=pm(c[0]),upperPc=c.slice(1).map(pm);
 		if(upperPc.length>=4)upperPc=upperPc.filter(function(_,i){return i!==1;});
-		var root=48+oct+rootPc,cl=[root],cur=root,i,n;
+		var rt=48+oct+rootPc,cl=[rt],cur=rt,i,n;
 		for(i=0;i<upperPc.length;i++){n=cur+1+pm(upperPc[i]-pm(cur+1));cl.push(n);cur=n;}
 		return[_vl2_vs(cl)];
 	},
@@ -1309,9 +1328,9 @@ var _vl2_T={
 		if(c.length<3)return[_vl2_vs(c)];oct=oct||0;
 		var pm=function(n){return((n%12)+12)%12;},rootPc=pm(c[0]),upperPc=c.slice(1).map(pm);
 		if(upperPc.length>=3)upperPc=upperPc.filter(function(_,i){return i!==1;});
-		var root=48+oct+rootPc,cl=[root],cur=root,i,n;
+		var rt=48+oct+rootPc,cl=[rt],cur=rt,i,n;
 		for(i=0;i<upperPc.length;i++){n=cur+1+pm(upperPc[i]-pm(cur+1));cl.push(n);cur=n;}
-		cl.push(root+12);
+		cl.push(rt+12);
 		return[_vl2_vs(cl).slice(0,6)];
 	},
 	// funk : grip "10e" root-inclus — fonda en bas + 3ce (c[1], ordre des rôles) montée
@@ -1321,10 +1340,10 @@ var _vl2_T={
 	funk:function(c,oct){
 		if(c.length<3)return[_vl2_vs(c)];oct=oct||0;
 		var pm=function(n){return((n%12)+12)%12;},floor=48+oct;
-		var root=floor+pm(c[0]),third=floor+pm(c[1])+12;
+		var rt=floor+pm(c[0]),third=floor+pm(c[1])+12;
 		var rest=[];
-		for(var i=2;i<c.length;i++){var n=floor+pm(c[i]);if(n-root<3)n+=12;rest.push(n);}
-		var notes=_vl2_vs([root].concat(rest).concat([third]))
+		for(var i=2;i<c.length;i++){var n=floor+pm(c[i]);if(n-rt<3)n+=12;rest.push(n);}
+		var notes=_vl2_vs([rt].concat(rest).concat([third]))
 			.filter(function(n,i,a){return i===0||n!==a[i-1];});
 		return[notes];
 	}
@@ -1507,8 +1526,8 @@ function _vl2_play(fn,d,colorSemis,colorType){
 	}
 	// regBase : plancher de l'octave (multiple de 12, invariant).
 	// selCtr  : tonique pour classic (ancrage harmonique), C-ancré pour les autres voicings.
-	var regBase=48+Math.max(-12,Math.min(24,currentOctave*12));
-	var selCtr=(vc==='classic')?(regBase+root):(60+currentOctave*12);
+	var regBase=_vl2_regBase();
+	var selCtr=_vl2_center(vc);
 	var key=_vl2_specKey(spec)+'|'+vc+'|'+selCtr;
 	var cands=_vl2_realize(spec,vc,{regBase:regBase,rootPos:!voiceLeadingEnabled});
 	if(!cands.length)return null;
@@ -1601,7 +1620,8 @@ function sendNoteOff() {
 
 function sendChord(name, notes) {
 	// Voicing TOUJOURS via vl2 (15 voicings) ; le bouton VL ne pilote que le lissage dynamique.
-	// applyVoicing (v1) = simple filet de secours si vl2 ne sort aucun candidat.
+	// ⚠️ La VÉRITÉ = lastFn/lastDegree (posés par chaque fonction d'accord) ; l'argument `notes`
+	// n'est qu'un FILET DE SECOURS (applyVoicing) si vl2 ne sort aucun candidat.
 	var v2 = _vl2_play(lastFn, lastDegree, lastColorSemis, lastColorType);
 	notes = (v2 && v2.length) ? v2 : applyVoicing(notes);
 	sendNoteOff();
@@ -1782,10 +1802,10 @@ function seven(d) {
 	if (!isValid(d, "seven")) { post("seven " + d + " : invalid\n"); return; }
 	var notes = buildNotes(d, [0,2,4,6]);
 	var iv = getIntervals(d);
-	var q = iv[6]===11 ? "maj7"
+	var q = iv[6]===11 ? "M7"
 	      : (iv[2]===3 && iv[4]===6 && iv[6]===10) ? "ø7"
 	      : (iv[2]===3 && iv[4]===6 && iv[6]===9)  ? "dim7"
-	      : (iv[2]===3) ? "m7" : "7";
+	      : (iv[2]===3) ? "m7" : "7";   // M7 (pas "maj7") → identique à la grille (gridLabel)
 	sendChord(noteName(notes[0]) + q, notes);
 }
 
@@ -1796,7 +1816,7 @@ function nine(d) {
 	}
 	var notes = buildNotes(d, [0,2,4,6,8]);
 	var iv = getIntervals(d);
-	var q = iv[6]===11 ? "maj9" : (iv[2]===3) ? "m9" : "9";
+	var q = iv[6]===11 ? "M9" : (iv[2]===3) ? "m9" : "9";   // M9 (pas "maj9") → identique à la grille
 	sendChord(noteName(notes[0]) + q, notes);
 }
 
@@ -1893,14 +1913,7 @@ function colorchord(semis, type) {
 	semis = parseInt(semis);
 	type  = String(type);
 
-	var ivs;
-	switch(type) {
-		case "min":   ivs = [0,3,7];    break;
-		case "dim7":  ivs = [0,3,6,9];  break;
-		case "maj7":  ivs = [0,4,7,11]; break;
-		case "dom7":  ivs = [0,4,7,10]; break;
-		default:      ivs = [0,4,7];    break;  // maj
-	}
+	var ivs = COLOR_IV[type] || COLOR_IV.maj;
 
 	var base  = root + semis + (4 + currentOctave) * 12;
 	var notes = [];
