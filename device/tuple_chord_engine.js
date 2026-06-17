@@ -658,6 +658,12 @@ var SG_MINOR = [
 ];
 function _sg_clamp(v){ return v < 0 ? 0 : (v > 1 ? 1 : v); }
 function _sg_level(s){ if (s >= 0.75) return 3; if (s >= 0.55) return 2; if (s >= 0.40) return 1; return 0; }
+// Rang de fluidité -> palier de luminosité (3 = plus fluide, 1 = moins). Miroir : site/vl2/fluidity.js levelByRank.
+function _sg_fluidLevel(rankIndex, total){
+	if (total <= 1) return 3;
+	var frac = rankIndex / (total - 1);
+	return frac < 0.34 ? 3 : frac < 0.67 ? 2 : 1;
+}
 function _sg_isMinor(){ return chordQuality(0) === 1; }
 function _sg_base(lastDeg, tgt, isMin){
 	if (lastDeg == null || lastDeg < 0 || tgt < 0) return 0;
@@ -726,18 +732,24 @@ function _sg_borrowedCell(index, semis, type){
 	var sp = _vl2_buildColorSpec(semis, type);
 	return { kind:"b", index:index, pcs:_sg_pcs(sp), sp:sp };   // emprunts : isDominant/hasSeventh/isSecDom non lus (le score d'emprunt n'utilise que pcs/sp)
 }
-// Fluidité de voice-leading : coût de mouvement min depuis le dernier accord joué (activeNotes)
-// vers le candidat, avec le voicing + l'octave courants. Plus bas = plus fluide. Tout est pur
-// (_vl2_realize / _vl2_movCost ne mutent pas l'état VL) → ne perturbe pas le jeu.
+// Fluidité de voice-leading : coût de mouvement vers la réalisation que l'appareil JOUERAIT
+// (celle dont la moyenne est la plus proche du centre de registre), avec le voicing + l'octave
+// courants. Plus bas = plus fluide. Pur (ne mute pas _vl2_st). Sensible au voicing (≠ ancien
+// minimum sur ±2 octaves, qui rendait tous les voicings identiques). Miroir : site/vl2/fluidity.js.
 function _sg_fluid(sp){
 	var ref = (typeof lastChordNotes !== "undefined" && lastChordNotes && lastChordNotes.length) ? lastChordNotes : activeNotes;
 	if (!sp || !ref || !ref.length) return 0;
 	var regBase = 48 + Math.max(-12, Math.min(24, currentOctave * 12));
+	var center = (currentVoicing === "classic") ? (regBase + root) : (60 + currentOctave * 12);
 	var cands = _vl2_realize(sp, currentVoicing, { regBase:regBase, rootPos:!voiceLeadingEnabled });
 	if (!cands || !cands.length) return 9999;
-	var w = _vl2_pickW(currentVoicing), best = 1e9, i, c;
-	for (i = 0; i < cands.length; i++){ c = _vl2_movCost(ref, cands[i].notes, w); if (c < best) best = c; }
-	return best;
+	var w = _vl2_pickW(currentVoicing), i, j, sum, m, dev, pick = null, bestDev = 1e9;
+	for (i = 0; i < cands.length; i++){
+		var ns = cands[i].notes; sum = 0; for (j = 0; j < ns.length; j++) sum += ns[j]; m = sum / ns.length;
+		dev = Math.abs(m - center);
+		if (dev < bestDev){ bestDev = dev; pick = ns; }
+	}
+	return _vl2_movCost(ref, pick, w);
 }
 function _sg_remember(){
 	var sp = (lastFn === "color") ? _vl2_buildColorSpec(lastColorSemis, lastColorType) : _vl2_buildSpec(lastFn, lastDegree);
@@ -763,7 +775,7 @@ function _sg_broadcast(){
 	var tonicPc = ((root % 12) + 12) % 12;
 	var lastResolveDeg = (last && last.kind === "b") ? _sg_borrowedResolveDeg(last.pcs, tonicPc, isMin, degByRoot) : -1;
 	var vl = (smartMode === "voiceleading");
-	var byFn = {}, fnOrder = [], fluid;   // par FONCTION de transition (cat) : liste des cases compatibles
+	var byFn = {}, fnOrder = [];   // par FONCTION de transition (cat) : liste des cases compatibles (sélection harmonique)
 	for (d = 0; d < 7; d++){
 		if (degMask && !degMask[d]) continue;
 		for (t = 0; t < GRID_TYPES.length; t++){
@@ -782,9 +794,8 @@ function _sg_broadcast(){
 			s = _sg_clamp(s + _sg_common(lastPcs, cell.pcs));
 			lvl = _sg_level(s);
 			if (lvl <= 0) continue;
-			fluid = vl ? _sg_fluid(cell.sp) : 0;   // fluidité calculée seulement en mode voice-leading (coûteux)
 			if (!byFn[dcat]) { byFn[dcat] = []; fnOrder.push(dcat); }
-			byFn[dcat].push({ kind:"d", d:d, fn:fn, lvl:lvl, cat:dcat, s:s, fluid:fluid });
+			byFn[dcat].push({ kind:"d", d:d, fn:fn, lvl:lvl, cat:dcat, s:s, sp:cell.sp });
 		}
 	}
 	var bl = borrowedFor();
@@ -794,22 +805,30 @@ function _sg_broadcast(){
 		s = _sg_clamp(_sg_borrowedScore(bc, lastDeg, isMin, degByRoot, tonicPc) + _sg_common(lastPcs, bc.pcs));
 		lvl = _sg_level(s);
 		if (lvl <= 0) continue;
-		fluid = vl ? _sg_fluid(bc.sp) : 0;
 		if (!byFn["color"]) { byFn["color"] = []; fnOrder.push("color"); }
-		byFn["color"].push({ kind:"b", index:t, lvl:lvl, cat:"color", s:s, fluid:fluid });
+		byFn["color"].push({ kind:"b", index:t, lvl:lvl, cat:"color", s:s, sp:bc.sp });
 	}
-	// POUR CHAQUE FONCTION (les 5) : trie ses accords par mode, garde le top SG_PER_FN, émet
-	// → plusieurs accords par fonction (et par degré), toutes les fonctions présentes, borné (pas de rangées)
-	var fi, fa, j, n2, x;
+	// Sélection : top SG_PER_FN par fonction, TOUJOURS par score harmonique (les deux modes)
+	// → plusieurs accords par fonction, toutes les fonctions présentes, borné (pas de rangées).
+	var fi, fa, j, n2, emit = [], x;
 	for (fi = 0; fi < fnOrder.length; fi++){
 		fa = byFn[fnOrder[fi]];
-		fa.sort(vl ? function(a,b){ return a.fluid - b.fluid; } : function(a,b){ return b.s - a.s; });
+		fa.sort(function(a,b){ return b.s - a.s; });
 		n2 = (fa.length < SG_PER_FN) ? fa.length : SG_PER_FN;
-		for (j = 0; j < n2; j++){
-			x = fa[j];
-			if (x.kind === "d") outlet(7, "smartcell", x.d, x.fn, x.lvl, x.cat, x.s, x.fluid);
-			else outlet(7, "smartbor", x.index, x.lvl, x.cat, x.s, x.fluid);
-		}
+		for (j = 0; j < n2; j++) emit.push(fa[j]);
+	}
+	// Voice-leading : la LUMINOSITÉ (lvl) = rang de fluidité parmi les cases retenues. Fluidité calculée
+	// SEULEMENT ici (sur les cases émises → peu d'appels). Function : lvl reste le palier harmonique.
+	if (vl){
+		var k, by = emit.slice();
+		for (k = 0; k < by.length; k++) by[k]._f = _sg_fluid(by[k].sp);
+		by.sort(function(a,b){ return a._f - b._f; });
+		for (k = 0; k < by.length; k++) by[k].lvl = _sg_fluidLevel(k, by.length);
+	}
+	for (j = 0; j < emit.length; j++){
+		x = emit[j];
+		if (x.kind === "d") outlet(7, "smartcell", x.d, x.fn, x.lvl, x.cat, x.s, 0);
+		else outlet(7, "smartbor", x.index, x.lvl, x.cat, x.s, 0);
 	}
 	outlet(7, "smartdone");
 }
