@@ -956,7 +956,7 @@
   // Légende = échelle de LUMINOSITÉ (la teinte = le degré, déjà lisible sur les têtes). Dépend du MODE,
   // pas des accords : Function → luminosité = force ; Voice-leading → luminosité = fluidité.
   function buildSmartLegend(){ var el=document.getElementById('smart-legend'); if(!el)return;
-    var lab=(smartMode==='voiceleading')?'Voice-leading · clair = plus fluide':'Function · clair = plus fort';
+    var lab=(smartMode==='voiceleading')?'Voice-leading · brighter = smoother':'Function · brighter = stronger';
     var al=[.16,.30,.52], dots='', i; for(i=0;i<3;i++) dots+='<i style="background:rgba(237,233,224,'+al[i]+')"></i>';
     el.innerHTML='<span>'+dots+'&nbsp; '+lab+'</span>'; }
   // Couleur = le degré (hex passé) ; LUMINOSITÉ = lvl (signal smart : force ou fluidité selon le mode).
