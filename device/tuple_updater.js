@@ -167,6 +167,171 @@ function checkUpdate() {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
+// UPDATE HELPERS
+// ──────────────────────────────────────────────────────────────────────────────
+
+// Recursive sync directory copy.
+function _copyDir(src, dest) {
+  fs.mkdirSync(dest, { recursive: true });
+  var entries = fs.readdirSync(src, { withFileTypes: true });
+  for (var i = 0; i < entries.length; i++) {
+    var e = entries[i];
+    var s = path.join(src, e.name);
+    var d = path.join(dest, e.name);
+    if (e.isDirectory()) { _copyDir(s, d); } else { fs.copyFileSync(s, d); }
+  }
+}
+
+// Recursively delete a directory (silently ignores errors).
+function _rmDir(dir) {
+  try { fs.rmSync(dir, { recursive: true, force: true }); } catch(e) {}
+}
+
+// Copy installDir to a sibling folder named <installDir>-backup-<timestamp>.
+// Returns the backup path, or throws on error.
+function _backup(installDir) {
+  var dest = installDir.replace(/[/\\]$/, '') + '-backup-' + Date.now();
+  _copyDir(installDir.replace(/[/\\]$/, ''), dest);
+  return dest;
+}
+
+// Download url to destPath. Calls onProgress(pct) during download.
+// Follows one redirect (GitHub asset CDN). Returns a Promise.
+function _download(url, destPath, onProgress) {
+  return new Promise(function(resolve, reject) {
+    var file = fs.createWriteStream(destPath);
+    var request = https.get(url, function(res) {
+      if (res.statusCode === 301 || res.statusCode === 302) {
+        file.close();
+        try { fs.unlinkSync(destPath); } catch(e) {}
+        _download(res.headers.location, destPath, onProgress).then(resolve).catch(reject);
+        return;
+      }
+      if (res.statusCode !== 200) {
+        file.close(); reject(new Error('HTTP ' + res.statusCode)); return;
+      }
+      var total    = parseInt(res.headers['content-length'] || '0', 10);
+      var received = 0;
+      res.on('data', function(chunk) {
+        received += chunk.length;
+        if (total > 0 && onProgress) onProgress(Math.round(received / total * 100));
+      });
+      res.pipe(file);
+      file.on('finish', function() { file.close(resolve); });
+      file.on('error', function(e) { file.close(); reject(e); });
+    });
+    request.on('error', function(e) { file.close(); reject(e); });
+    request.setTimeout(60000, function() { request.destroy(); reject(new Error('Download timeout')); });
+  });
+}
+
+// Extract zipPath to destDir using the best available system tool.
+// Falls back on failure: Windows → PowerShell, macOS → unzip.
+function _extract(zipPath, destDir) {
+  return new Promise(function(resolve, reject) {
+    var desc = _unzipCmd(process.platform, zipPath, destDir);
+    var proc = cp.spawn(desc.cmd, desc.args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    proc.on('close', function(code) {
+      if (code === 0) { resolve(); return; }
+      if (process.platform === 'win32') {
+        var ps = cp.spawn('powershell', [
+          '-NoProfile', '-Command',
+          'Expand-Archive -Force -Path "' + zipPath + '" -DestinationPath "' + destDir + '"'
+        ], { stdio: 'inherit' });
+        ps.on('close', function(c2) {
+          if (c2 === 0) resolve(); else reject(new Error('Extract failed (PowerShell): exit ' + c2));
+        });
+      } else {
+        var uz = cp.spawn('unzip', ['-o', zipPath, '-d', destDir], { stdio: 'inherit' });
+        uz.on('close', function(c2) {
+          if (c2 === 0) resolve(); else reject(new Error('Extract failed (unzip): exit ' + c2));
+        });
+      }
+    });
+  });
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// MAIN UPDATE FLOW
+// ──────────────────────────────────────────────────────────────────────────────
+
+var _updating = false;
+
+function doUpdate() {
+  if (_updating) return;
+  if (!_latestAsset) { Max.outlet('update_error', 'No asset URL — run check first.'); return; }
+  _updating = true;
+
+  var installDir = INSTALL_DIR.replace(/[/\\]$/, '');
+  var tmpZip     = path.join(os.tmpdir(), 'tuple-update-' + Date.now() + '.zip');
+  var tmpExtract = path.join(os.tmpdir(), 'tuple-update-extract-' + Date.now());
+  var backup     = null;
+  var oldAmxdBuf = null;
+
+  var amxdPath = path.join(installDir, 'tuple.amxd');
+  try { oldAmxdBuf = fs.readFileSync(amxdPath); } catch(e) {}
+
+  function fail(msg) {
+    _updating = false;
+    if (backup) {
+      try { _copyDir(backup, installDir); _rmDir(backup); } catch(e) {}
+    }
+    try { if (fs.existsSync(tmpZip))     fs.unlinkSync(tmpZip);  } catch(e) {}
+    try { if (fs.existsSync(tmpExtract)) _rmDir(tmpExtract);     } catch(e) {}
+    Max.outlet('update_error', msg);
+  }
+
+  Max.outlet('update_progress', 0);
+
+  _download(_latestAsset, tmpZip, function(pct) {
+    Max.outlet('update_progress', Math.round(pct * 0.7));
+  })
+  .then(function() {
+    if (!_verifyZip(tmpZip)) { fail('Downloaded file is not a valid zip.'); return Promise.reject('handled'); }
+    Max.outlet('update_progress', 72);
+    try { backup = _backup(installDir); } catch(e) { fail('Backup failed: ' + e.message); return Promise.reject('handled'); }
+    Max.outlet('update_progress', 75);
+    fs.mkdirSync(tmpExtract, { recursive: true });
+    return _extract(tmpZip, tmpExtract);
+  })
+  .then(function() {
+    if (!backup) return Promise.reject('handled');
+    Max.outlet('update_progress', 85);
+
+    var extractRoot = tmpExtract;
+    var entries = fs.readdirSync(tmpExtract, { withFileTypes: true });
+    if (entries.length === 1 && entries[0].isDirectory()) {
+      extractRoot = path.join(tmpExtract, entries[0].name);
+    }
+
+    _copyDir(extractRoot, installDir);
+    Max.outlet('update_progress', 98);
+
+    var changedAmxd = false;
+    try {
+      var newAmxdBuf = fs.readFileSync(amxdPath);
+      changedAmxd = oldAmxdBuf ? !oldAmxdBuf.equals(newAmxdBuf) : true;
+    } catch(e) { changedAmxd = true; }
+
+    try { fs.unlinkSync(tmpZip); }  catch(e) {}
+    try { _rmDir(tmpExtract); }     catch(e) {}
+
+    var state = _loadState();
+    if (state.lastBackup) { try { _rmDir(state.lastBackup); } catch(e) {} }
+    state.lastBackup = backup;
+    _saveState(state);
+
+    _updating = false;
+    Max.outlet('update_progress', 100);
+    Max.outlet('update_done', changedAmxd ? 1 : 0);
+    Max.outlet('reload_ui');
+  })
+  .catch(function(e) {
+    if (e !== 'handled') fail(String(e && e.message ? e.message : e));
+  });
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 // MAX MESSAGE HANDLERS
 // ──────────────────────────────────────────────────────────────────────────────
 
