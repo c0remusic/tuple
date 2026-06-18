@@ -362,9 +362,6 @@ Max.addHandlers({
   triggerupdate: function() { doUpdate(); }
 });
 
-// Signal Max that we're ready to receive messages (triggers localversion handshake in the patch)
-Max.outlet('updater_ready');
-
 // ──────────────────────────────────────────────────────────────────────────────
 // EXPORTS for unit tests
 // ──────────────────────────────────────────────────────────────────────────────
