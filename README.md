@@ -1,90 +1,60 @@
-# Tuple
+# tuple
 
-A Max for Live harmonic composition tool for Ableton Live.
+A Max for Live chord-grid instrument for Ableton Live — explore, perform and record harmony: triads, 7ths, borrowed chords, voicings, and voice leading. Push 2 compatible.
 
-**Tuple** gives you instant access to every valid chord for your key and scale — organized in a grid, always one click away. It's not a sequencer. It's a tool for exploring, performing and recording chords in real time.
+![logo](docs/images/logo.svg)
 
-→ **[tuple.live](https://tuple.live)**
+[Homepage](https://tuple.live)
 
----
+![license](https://img.shields.io/badge/license-MIT-blue)
+![stars](https://img.shields.io/github/stars/c0remusic/tuple)
+![issues](https://img.shields.io/github/issues/c0remusic/tuple)
+![version](https://img.shields.io/github/v/release/c0remusic/tuple)
 
-## Quick Start
 
-### Installation (Ableton Live)
+## Table of Contents
+- [About](#about)
+- [Installation](#installation)
+- [Usage](#usage)
+- [Documentation](#documentation)
+- [Contributing](#contributing)
+- [License](#license)
 
-1. Download the latest `.amxd` from [Releases](https://github.com/c0remusic/tuple/releases)
-2. Unzip and keep all files in the same folder
-3. Drag `tuple.amxd` onto a **MIDI track** in Ableton Live, **before an instrument**
+## About
 
-**Requires**: Ableton Live 11+ with Max for Live
+tuple is a Max for Live chord-grid instrument designed for Ableton Live. It helps you explore harmonic possibilities (triads, 7ths, borrowed chords), provides useful voicings and voice-leading tools, and includes Push 2-friendly mappings.
 
-### Development Setup
+## Installation
 
-The **device** is hand-edited — no build step, no dependencies.
+1. Download the latest release (.amxd) or clone this repository:
 
 ```bash
-# Device (Max for Live):
-#   edit device/tuple_chord_engine.js   (harmonic logic, autowatch reloads)
-#   edit device/ui/tuple_ui.html  (jweb UI — reopen the device to reload)
+git clone https://github.com/c0remusic/tuple.git
+cd tuple
 ```
 
-> The website lives in its own repo (`tuple-site`, deployed to Vercel → tuple.live).
+2. Open the Max patch in Ableton Live (Max for Live). Load the instrument on a MIDI track.
 
----
+3. For Push 2 users: open the Push mapping patch or follow the Push section in the manual (/manual).
 
-## Project Structure
+## Usage
 
-```
-device/          → Max for Live device (source of truth)
-  tuple_chord_engine.js   → harmonic logic
-  ui/tuple_ui.html  → active jweb UI (strip + full window)
-  tuple_push2_spike.js    → Push 2 integration (device-only)
-manual/          → user manual (HTML + PDF, ships with the device)
-```
+- Use the grid to select chords and navigate voicings.
+- Switch between triads and seventh modes from the UI.
+- Use the "voice-leading" mode to smooth transitions between chords.
 
-**Git:** this repo tracks the **device** only (`device/`, `manual/`, `README`, `LICENSE`).
-The website has its own repo (`tuple-site`, deployed to Vercel → tuple.live). Local-only
-folders — `site/`, `docs/`, `brand/`, `discord/`, `font/`, `CLAUDE.md` — are gitignored.
+See the manual folder for detailed documentation and mappings.
 
----
+## Documentation
 
-## Key Files
+The repository contains a `manual/` directory with usage notes, Push 2 mappings and examples. Consider adding screenshots or a demo recording in `docs/images/` for a richer README.
 
-| File | Purpose |
-|------|---------|
-| `device/tuple_chord_engine.js` | Harmonic logic (source of truth) |
-| `device/ui/tuple_ui.html` | Active jweb UI (rendering & interaction) |
-| `device/tuple_push2_spike.js` | Push 2 integration |
-| `device/README.md` | Device architecture & dev notes |
+## Contributing
 
----
+See .github/CONTRIBUTING.md for contribution guidelines.
 
-## Features
-
-- **Instant chord access** — grid of all valid chords for your key/scale
-- **Smart Chords** — as you play, the grid lights up where to go next, by harmonic
-  function or by voice leading (brighter = stronger)
-- **Voice leading** — 2 modes (**ANCHOR / FLOW**) for smooth transitions
-- **15 voicings** — Classic, Piano, Open, Spread, House, Prog, Rootless A/B,
-  Drop 2/3, Jazz, Nu-House, Trap, Trance, Funk
-- **Expression** — Strum, Velocity Ramp, Humanize
-- **Borrowed chords** — modal interchange & secondary dominants always visible
-- **Progression → Clip** — capture chords as you play, then drop the whole
-  progression into a MIDI clip (one chord per bar)
-- **Two-window workflow** — compact strip + full grid window (one click away)
-- **Push 2 integration** — grab the pad grid (colored by degree), play, velocity
-- **Ableton Live integration** — SYNC button imports key/scale from Live
-
----
-
-## Support
-
-Tuple is free. If it's useful to you, consider a donation:
-
-☕ [paypal.me/c0remusic](https://www.paypal.com/paypalme/c0remusic)
-
----
+If you'd like to contribute, please open an issue or a pull request.
 
 ## License
 
-MIT
+This project is licensed under the MIT License — see the LICENSE file for details.
