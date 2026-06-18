@@ -1937,38 +1937,6 @@ function colorchord(semis, type) {
 var gridInitTask = new Task(broadcastGrid, this);
 gridInitTask.schedule(700);
 
-// ── Auto-updater bridge ───────────────────────────────────────────────────────
-// node.script (tuple_updater.js) → obj-CE inlet → these functions → outlet 7 → jweb.
-// The existing obj-8→obj-CE signal chain is untouched; updater messages arrive
-// in parallel via obj-UPD→obj-CE.
-function update_available(tag, notes) {
-	outlet(7, 'update_available', tag, notes || '');
-}
-function update_progress(pct) {
-	outlet(7, 'update_progress', pct);
-}
-function update_done(changedAmxd) {
-	outlet(7, 'update_done', changedAmxd);
-}
-function update_error(msg) {
-	outlet(7, 'update_error', msg);
-}
-function reload_ui() {
-	reloadui();
-}
-
-// Called by the patch when tuple_updater.js signals 'reload_ui'.
-// Re-sends the jweb URL to both strip and full windows (cache-busted).
-function reloadui() {
-	try {
-		if (!_patcher) return;
-		var url = _uiUrl(); if (!url) return;
-		var sw = _patcher.getnamed('tuple_strip_jweb');
-		if (sw) sw.message('url', url + '?v=' + TUPLE_VERSION + '&t=' + (new Date()).getTime());
-		_sendFullUrl();
-	} catch(e) { post('reloadui error: ' + e + '\n'); }
-}
-
 // =====================================================
 // SELF-CHECK — confirme que les globals critiques sont initialisés.
 // Visible dans device/max_console.log après (re)chargement.
