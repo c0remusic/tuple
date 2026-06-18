@@ -8,15 +8,19 @@ A Max for Live harmonic composition tool for Ableton Live.
 
 ---
 
+## Install
+
+**Windows** — Download `Tuple-Installer-vX.Y.Z.exe` from [Releases](https://github.com/c0remusic/tuple/releases/latest) and run it. The installer pre-fills your Ableton User Library path — confirm or change it. First run: click **More info → Run anyway** (SmartScreen, unsigned).
+
+**macOS** — Download `tuple.zip`, unzip it, then double-click **`Install Tuple.command`**. First run: right-click → **Open** (Gatekeeper). The script copies Tuple to your Max MIDI Effect folder and removes quarantine automatically.
+
+**Manual (both OS)** — Unzip `tuple.zip`. Move the `Tuple/` folder to `Ableton/User Library/Presets/Max MIDI Effect/`. Restart Ableton.
+
+After install, Tuple appears in Ableton's browser under **Max MIDI Effect**.
+
+---
+
 ## Quick Start
-
-### Installation (Ableton Live)
-
-1. Download the latest `.amxd` from [Releases](https://github.com/c0remusic/tuple/releases)
-2. Unzip and keep all files in the same folder
-3. Drag `tuple.amxd` onto a **MIDI track** in Ableton Live, **before an instrument**
-
-**Requires**: Ableton Live 11+ with Max for Live
 
 ### Development Setup
 
