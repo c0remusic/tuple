@@ -29,7 +29,12 @@ def main():
         print("Install from: https://jrsoftware.org/isdl.php")
         sys.exit(1)
 
-    ver = open(os.path.join(ROOT, "VERSION"), encoding="utf-8").read().strip()
+    if not os.path.isfile(ISS):
+        print("ERROR: installer/tuple.iss not found — run from repo root")
+        sys.exit(1)
+
+    with open(os.path.join(ROOT, "VERSION"), encoding="utf-8") as f:
+        ver = f.read().strip()
     print("Building Tuple-Installer-v%s.exe ..." % ver)
 
     result = subprocess.run([iscc, ISS], capture_output=True, text=True)
