@@ -1,0 +1,49 @@
+name: Test Mac Installer
+
+on:
+  push:
+    paths:
+      - 'device/**'
+      - 'installer/**'
+      - 'build_zip.py'
+  pull_request:
+    paths:
+      - 'device/**'
+      - 'installer/**'
+      - 'build_zip.py'
+
+jobs:
+  test-mac-installer:
+    name: macOS installer mechanics
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build ZIP
+        run: python build_zip.py
+
+      - name: Unzip to temp dir
+        run: |
+          mkdir /tmp/tuple-test
+          cd /tmp/tuple-test && unzip "$GITHUB_WORKSPACE/site/tuple.zip"
+
+      - name: Executable bit on .command
+        run: |
+          test -x "/tmp/tuple-test/Install Tuple.command"
+          echo "Executable bit: OK"
+
+      - name: ZIP layout integrity
+        run: |
+          test -d  "/tmp/tuple-test/Tuple"
+          test -f  "/tmp/tuple-test/Tuple/tuple.amxd"
+          test -f  "/tmp/tuple-test/Tuple/ui/tuple_ui.html"
+          test -f  "/tmp/tuple-test/Tuple/ui/fonts/SpaceGrotesk-Variable.woff2"
+          echo "Layout: OK"
+
+      - name: cp -R and xattr -dr
+        run: |
+          mkdir -p "/tmp/tuple-dest/Presets/Max MIDI Effect"
+          cp -R "/tmp/tuple-test/Tuple" "/tmp/tuple-dest/Presets/Max MIDI Effect/"
+          xattr -dr com.apple.quarantine "/tmp/tuple-dest/Presets/Max MIDI Effect/Tuple" 2>/dev/null || true
+          test -f "/tmp/tuple-dest/Presets/Max MIDI Effect/Tuple/tuple.amxd"
+          echo "cp + xattr: OK"
