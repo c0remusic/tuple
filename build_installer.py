@@ -14,6 +14,8 @@ ISS  = os.path.join(ROOT, "installer", "tuple.iss")
 ISCC_CANDIDATES = [
     r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
     r"C:\Program Files\Inno Setup 6\ISCC.exe",
+    r"C:\Program Files (x86)\Inno Setup 7\ISCC.exe",
+    r"C:\Program Files\Inno Setup 7\ISCC.exe",
 ]
 
 def find_iscc():
