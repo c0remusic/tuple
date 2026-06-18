@@ -139,7 +139,7 @@ var strumCurve          = 0;          // Linear par défaut
 var humanizeAmt         = 0;          // 0-100 : 0 = off ; variation vélocité ±55 + timing ±60ms
 var _emitTasks          = [];         // Tasks de notes différées (strum/humanize) en cours
 
-var TUPLE_VERSION = "1.2.2";
+var TUPLE_VERSION = "1.2.1";
 
 var _patcher = null;
 
@@ -1732,15 +1732,11 @@ function captureone(name, pos) {
 function playprog(i) {
 	i = parseInt(i);
 	if (i < 0 || i >= progression.length) return;
-	var p = progression[i];
-	var notes = p.notes;
+	var notes = progression[i].notes;
 	if (!notes || !notes.length) return;
 	sendNoteOff();
 	activeNotes = notes.slice();
 	_emitNotes(notes);                          // MÊME chemin d'émission que le jeu de la grille (fiable)
-	// Monitor : nom + degré de la carte. APRÈS sendNoteOff (qui émet 'clearnotes' → l'UI vide
-	// activeChordName) et AVANT 'notes' (qui rend le Monitor) — sinon le texte resterait vide.
-	outlet(7, "monitor", p.name, (p.deg == null ? -1 : p.deg));
 	outlet(7, ["notes"].concat(activeNotes));   // clavier moniteur
 	// pas de note-off auto : la note tient jusqu'au relâchement (message 'release', comme la grille)
 }
