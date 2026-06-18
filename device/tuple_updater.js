@@ -25,7 +25,6 @@ try { Max = require('max-api'); } catch(e) {
 // CONFIGURATION — fill in OWNER/REPO before first release
 // ──────────────────────────────────────────────────────────────────────────────
 var REPO      = 'c0remusic/tuple';     // GitHub owner/repo slug
-var API_URL   = 'https://api.github.com/repos/' + REPO + '/releases/latest';
 var CHECK_TTL = 24 * 60 * 60 * 1000;  // 1 day in ms
 
 // Install dir = the folder containing tuple_updater.js (= where tuple.amxd lives).
@@ -196,15 +195,19 @@ function _backup(installDir) {
 }
 
 // Download url to destPath. Calls onProgress(pct) during download.
-// Follows one redirect (GitHub asset CDN). Returns a Promise.
+// Follows redirects recursively (GitHub asset CDN uses 302 → CDN). Returns a Promise.
 function _download(url, destPath, onProgress) {
   return new Promise(function(resolve, reject) {
     var file = fs.createWriteStream(destPath);
     var request = https.get(url, function(res) {
       if (res.statusCode === 301 || res.statusCode === 302) {
-        file.close();
-        try { fs.unlinkSync(destPath); } catch(e) {}
-        _download(res.headers.location, destPath, onProgress).then(resolve).catch(reject);
+        var location = res.headers.location;
+        res.resume();
+        // close() is async — wait for it before unlinking (Windows holds the handle until close)
+        file.close(function() {
+          try { fs.unlinkSync(destPath); } catch(e) {}
+          _download(location, destPath, onProgress).then(resolve).catch(reject);
+        });
         return;
       }
       if (res.statusCode !== 200) {
@@ -274,7 +277,13 @@ function doUpdate() {
   function fail(msg) {
     _updating = false;
     if (backup) {
-      try { _copyDir(backup, installDir); _rmDir(backup); } catch(e) {}
+      try {
+        _copyDir(backup, installDir);
+        _rmDir(backup);
+      } catch(e) {
+        // Restore failed — leave backup on disk so user can recover manually
+        msg = msg + ' (restore failed — backup at: ' + backup + ')';
+      }
     }
     try { if (fs.existsSync(tmpZip))     fs.unlinkSync(tmpZip);  } catch(e) {}
     try { if (fs.existsSync(tmpExtract)) _rmDir(tmpExtract);     } catch(e) {}
