@@ -116,7 +116,8 @@ function checkUpdate() {
   if (state.lastCheck && (Date.now() - state.lastCheck) < CHECK_TTL) {
     if (state.latestTag && _semver(_localVersion, state.latestTag) < 0) {
       if (!state.dismissed || state.dismissed.indexOf(state.latestTag) === -1) {
-        Max.outlet('update_available', state.latestTag, state.latestNotes || '');
+        console.log('TUPLE UPDATER: update_available', state.latestTag);
+        Max.outlet('update_available', state.latestTag);
       }
     }
     return;
@@ -159,7 +160,8 @@ function checkUpdate() {
         if (_semver(_localVersion, tag) < 0) {
           var dismissed = state2.dismissed || [];
           if (dismissed.indexOf(tag) === -1) {
-            Max.outlet('update_available', tag, notes);
+            console.log('TUPLE UPDATER: update_available (fresh)', tag);
+            Max.outlet('update_available', tag);
           }
         }
       } catch(e) {}
