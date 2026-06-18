@@ -27,7 +27,7 @@ try { Max = require('max-api'); } catch(e) {
 var REPO         = 'c0remusic/tuple';     // GitHub owner/repo slug
 var CHECK_TTL    = 24 * 60 * 60 * 1000;  // 1 day in ms
 // Patched by build_zip.py — keep the pattern (var LOCAL_VERSION = ")X.Y.Z(";)
-var LOCAL_VERSION = '1.2.2';
+var LOCAL_VERSION = '1.0.0'; // TEST ONLY — revert to 1.2.2 before release
 
 // Install dir = the folder containing tuple_updater.js (= where tuple.amxd lives).
 // __dirname in Node for Max resolves to the script's actual directory.
