@@ -22,10 +22,12 @@ try { Max = require('max-api'); } catch(e) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// CONFIGURATION — fill in OWNER/REPO before first release
+// CONFIGURATION
 // ──────────────────────────────────────────────────────────────────────────────
-var REPO      = 'c0remusic/tuple';     // GitHub owner/repo slug
-var CHECK_TTL = 24 * 60 * 60 * 1000;  // 1 day in ms
+var REPO         = 'c0remusic/tuple';     // GitHub owner/repo slug
+var CHECK_TTL    = 24 * 60 * 60 * 1000;  // 1 day in ms
+// Patched by build_zip.py — keep the pattern (var LOCAL_VERSION = ")X.Y.Z(";)
+var LOCAL_VERSION = '1.2.2';
 
 // Install dir = the folder containing tuple_updater.js (= where tuple.amxd lives).
 // __dirname in Node for Max resolves to the script's actual directory.
@@ -104,7 +106,7 @@ function _saveState(s) {
 // VERSION CHECK
 // ──────────────────────────────────────────────────────────────────────────────
 
-var _localVersion = '';
+var _localVersion = LOCAL_VERSION;
 var _latestTag    = '';
 var _latestAsset  = '';
 var _latestNotes  = '';
@@ -361,6 +363,11 @@ Max.addHandlers({
   },
   triggerupdate: function() { doUpdate(); }
 });
+
+// Self-trigger the version check after max-api has had time to connect.
+// The patch also sends localversion on loadbang, but Node may not be ready yet —
+// this setTimeout fires in Node's own event loop so it's always safe.
+setTimeout(function() { checkUpdate(); }, 1500);
 
 // ──────────────────────────────────────────────────────────────────────────────
 // EXPORTS for unit tests
