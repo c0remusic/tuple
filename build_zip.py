@@ -73,6 +73,7 @@ print("VERSION (single source) = " + VERSION)
 # self-locates the UI via chord_engine.js's loadbang, which builds a cross-platform
 # file:// URL (Windows C:/… -> file:///C:/… ; macOS /Users/… -> file:///Users/…).
 
+os.makedirs(os.path.dirname(OUT), exist_ok=True)
 with zipfile.ZipFile(OUT, "w", zipfile.ZIP_DEFLATED) as z:
     for arc, src in FILES:
         z.write(os.path.join(ROOT, src), arc)
