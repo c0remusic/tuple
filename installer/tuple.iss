@@ -13,16 +13,26 @@ AppPublisher=c0remusic
 AppPublisherURL=https://tuple.live/
 DefaultDirName={userdocs}\Ableton\User Library\Presets\Max MIDI Effect\Tuple
 DefaultGroupName={#AppName}
-OutputBaseFilename=Tuple-Installer-v{#AppVersion}
+OutputBaseFilename=Tuple-Installer
 OutputDir=..\site
 Compression=lzma2
 SolidCompression=yes
 DisableProgramGroupPage=yes
 DisableReadyMemo=yes
 PrivilegesRequired=lowest
+WizardStyle=modern
+WizardImageFile=wizard_panel.png
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
+
+[Messages]
+WelcomeLabel1=Welcome to the Tuple Installer
+WelcomeLabel2=This will copy Tuple into your Ableton Max MIDI Effect folder.%n%nClose Ableton before continuing, then click Install.
+SelectDirLabel3=If your Ableton User Library is in a different location, click Browse to find it.
+SelectDirBrowseLabel=Tuple will be installed into the folder below.
+FinishedHeadingLabel=Tuple is installed
+FinishedLabel=Restart Ableton to see the device in the Max MIDI Effect tab.%n%nTo update Tuple later, simply run this installer again — it replaces the previous version.
 
 [Files]
 Source: "..\device\tuple.amxd";                DestDir: "{app}";         Flags: ignoreversion
