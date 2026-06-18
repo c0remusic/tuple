@@ -527,6 +527,23 @@
     background:rgba(237,233,224,.06);border:1px solid transparent;border-radius:5px;cursor:pointer;color:var(--muted2);
     transition:background .1s,color .1s}
   #info-box .ib-close:hover{background:rgba(237,233,224,.10);color:var(--txt)}
+  /* ── UPDATE NOTIFICATION ── */
+  #ib-update{padding:10px 12px;border-radius:6px;background:rgba(255,220,130,.09);border:1px solid rgba(255,220,130,.22);display:none;flex-direction:column;gap:6px}
+  #ib-update.visible{display:flex}
+  body.strip #ib-update{padding:7px 10px;gap:4px}
+  .ib-upd-head{font-size:9px;font-weight:700;letter-spacing:.10em;text-transform:uppercase;color:var(--gold)}
+  .ib-upd-msg{font-size:9px;color:var(--muted);display:none}
+  .ib-upd-msg.visible{display:block}
+  .ib-upd-btns{display:flex;gap:5px}
+  .ib-upd-btn{flex:1;height:22px;display:flex;align-items:center;justify-content:center;border-radius:4px;font-size:8.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;cursor:pointer;transition:background .1s}
+  .ib-upd-btn.primary{background:rgba(255,220,130,.80);color:#1a1a1a}
+  .ib-upd-btn.primary:hover{background:var(--gold)}
+  .ib-upd-btn.dim{background:rgba(237,233,224,.07);color:var(--muted)}
+  .ib-upd-btn.dim:hover{background:rgba(237,233,224,.13);color:var(--txt)}
+  #ib-prog{height:3px;background:rgba(237,233,224,.10);border-radius:2px;overflow:hidden;display:none}
+  #ib-prog.visible{display:block}
+  #ib-prog-bar{height:100%;background:var(--gold);width:0%;transition:width .25s;border-radius:2px}
+  #brandLogo.has-update::after{content:'';display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--gold);margin-left:4px;vertical-align:middle;position:relative;top:-1px}
   #info-box .ib-guide{margin-top:2px;height:30px;display:flex;align-items:center;justify-content:center;
     font-size:10px;letter-spacing:.12em;text-transform:uppercase;
     background:var(--gold-dim);border:1px solid transparent;border-radius:5px;cursor:pointer;color:var(--gold);
@@ -575,6 +592,15 @@
       <div class="ib-row"><div class="ib-label">Community</div><div class="ib-val"><a href="https://discord.gg/skn5Np6DdP">discord.gg/skn5Np6DdP</a></div></div>
       <div class="ib-row"><div class="ib-label">Website</div><div class="ib-val"><a href="https://tuple.live">tuple.live</a></div></div>
       <div class="ib-row"><div class="ib-label">Manual</div><div class="ib-val"><a href="https://tuple.live/manual/">tuple.live/manual/</a></div></div>
+      <div id="ib-update">
+        <div class="ib-upd-head">Update — <span id="ib-upd-tag"></span></div>
+        <div class="ib-upd-msg" id="ib-upd-msg"></div>
+        <div class="ib-upd-btns">
+          <div class="ib-upd-btn primary" id="ib-upd-install">Install</div>
+          <div class="ib-upd-btn dim" id="ib-upd-dismiss">Dismiss</div>
+        </div>
+        <div id="ib-prog"><div id="ib-prog-bar"></div></div>
+      </div>
       <div class="ib-guide" id="guideBtn">Replay guide tour</div>
       <div class="ib-close" id="infoClose">Close</div>
     </div>
@@ -756,6 +782,7 @@
   var activeCol = -1, activeRow = -1, activeChordName = '';
   var mode = 'strip';
   var windowOpen = false;
+  var _updTag = '';
 
   var M = (typeof window.max !== 'undefined') ? window.max : null;
 
@@ -1268,6 +1295,39 @@
       windowOpen=(parseInt(v)===1);
       if(mode==='strip') setToggle(windowOpen);
     });
+    M.bindInlet('update_available', function(tag) {
+      _updTag = String(tag);
+      document.getElementById('ib-upd-tag').textContent = 'v' + _updTag;
+      document.getElementById('ib-upd-msg').classList.remove('visible');
+      document.getElementById('ib-upd-install').textContent = 'Install';
+      document.getElementById('ib-upd-install').style.pointerEvents = '';
+      document.getElementById('ib-upd-dismiss').style.display = '';
+      document.getElementById('ib-prog').classList.remove('visible');
+      document.getElementById('ib-update').classList.add('visible');
+      document.getElementById('brandLogo').classList.add('has-update');
+    });
+    M.bindInlet('update_progress', function(pct) {
+      document.getElementById('ib-upd-install').textContent = Math.round(pct) + '%';
+      document.getElementById('ib-upd-install').style.pointerEvents = 'none';
+      document.getElementById('ib-upd-dismiss').style.display = 'none';
+      document.getElementById('ib-prog').classList.add('visible');
+      document.getElementById('ib-prog-bar').style.width = pct + '%';
+    });
+    M.bindInlet('update_done', function() {
+      document.getElementById('ib-prog-bar').style.width = '100%';
+      document.getElementById('ib-upd-install').textContent = 'Done ✓';
+      document.getElementById('ib-upd-install').style.pointerEvents = 'none';
+      document.getElementById('ib-upd-dismiss').style.display = 'none';
+      document.getElementById('brandLogo').classList.remove('has-update');
+    });
+    M.bindInlet('update_error', function(msg) {
+      document.getElementById('ib-upd-msg').textContent = String(msg);
+      document.getElementById('ib-upd-msg').classList.add('visible');
+      document.getElementById('ib-upd-install').textContent = 'Retry';
+      document.getElementById('ib-upd-install').style.pointerEvents = '';
+      document.getElementById('ib-upd-dismiss').style.display = '';
+      document.getElementById('ib-prog').classList.remove('visible');
+    });
   }
 
   // ── CONTROLS ──
@@ -1570,6 +1630,12 @@
   document.getElementById('brandLogo').onmousedown = function(e){ if(e)e.preventDefault(); };
   document.getElementById('brandLogo').onclick = function(){ document.getElementById('info-overlay').classList.add('open'); };
   document.getElementById('infoClose').onclick = function(){ document.getElementById('info-overlay').classList.remove('open'); };
+  document.getElementById('ib-upd-install').onclick = function(){ if(M) M.outlet('triggerupdate'); };
+  document.getElementById('ib-upd-dismiss').onclick = function(){
+    if(_updTag && M) M.outlet('dismissupdate', _updTag);
+    document.getElementById('ib-update').classList.remove('visible');
+    document.getElementById('brandLogo').classList.remove('has-update');
+  };
   document.getElementById('info-overlay').onclick = function(e){ if(e.target===this) this.classList.remove('open'); };
 
   // ── ONBOARDING TOUR (full window only) ──
