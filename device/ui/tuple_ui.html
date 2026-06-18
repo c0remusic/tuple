@@ -560,16 +560,6 @@
   .smart-legend span{ display:inline-flex; align-items:center; gap:5px; font-size:9px; letter-spacing:.06em; color:var(--muted); text-transform:uppercase; font-weight:600; }
   .smart-legend i{ width:8px; height:8px; border-radius:50%; display:inline-block; flex:0 0 auto; }
   /* (têtes : plus d'atténuation en smart — le layout « Smart » les colore par rôle de transition via applyScheme) */
-  /* update badge on brand logo */
-  #brandLogo{ position:relative; display:inline-block; }
-  #update-badge{ display:none; position:absolute; top:0; right:-6px; width:6px; height:6px; background:var(--gold,#FFdc82); border-radius:50%; }
-  /* update banner rows in info-box */
-  .ib-update-row{ display:none; margin-top:2px; }
-  .ib-update-row .ib-update-btn{ display:inline-block; margin-left:6px; font-size:10px; background:var(--gold,#FFdc82); color:#1a1a1a; border:none; border-radius:3px; padding:1px 5px; cursor:pointer; font-family:inherit; }
-  .ib-update-row .ib-dismiss-btn{ margin-left:4px; font-size:10px; background:none; color:rgba(237,233,224,.45); border:none; cursor:pointer; text-decoration:underline; font-family:inherit; }
-  #update-progress-bar-wrap{ background:rgba(237,233,224,.1); border-radius:3px; height:3px; width:100%; margin-top:4px; display:none; }
-  #update-progress-bar{ background:var(--gold,#FFdc82); height:3px; border-radius:3px; width:0%; transition:width .2s; }
-  #update-done-row{ display:none; margin-top:2px; font-size:10px; color:#7BC47F; }
 </style>
 </head>
 <body class="strip">
@@ -580,11 +570,6 @@
       <div class="ib-tag">Max for Live · Harmonic composition tool</div>
       <hr>
       <div class="ib-row"><div class="ib-label">Version</div><div class="ib-val">1.2.2</div></div>
-      <div class="ib-row ib-update-row" id="update-available-row">
-        <div class="ib-val" id="update-available-label">→ <span id="update-tag"></span> available <button class="ib-update-btn" id="update-btn">Update</button><button class="ib-dismiss-btn" id="dismiss-btn">dismiss</button></div>
-      </div>
-      <div id="update-progress-bar-wrap"><div id="update-progress-bar"></div></div>
-      <div id="update-done-row"></div>
       <div class="ib-row"><div class="ib-label">Creator</div><div class="ib-val">c0re</div></div>
       <div class="ib-row"><div class="ib-label">Contact</div><div class="ib-val"><a href="mailto:c0re_m4l@proton.me">c0re_m4l@proton.me</a></div></div>
       <div class="ib-row"><div class="ib-label">Community</div><div class="ib-val"><a href="https://discord.gg/skn5Np6DdP">discord.gg/skn5Np6DdP</a></div></div>
@@ -612,7 +597,7 @@
     <!-- CONFIG -->
     <div class="config">
 
-      <div class="brand" id="brandLogo" title="About Tuple">Tuple<span id="update-badge"></span></div>
+      <div class="brand" id="brandLogo" title="About Tuple">Tuple</div>
 
       <!-- Zone KEY -->
       <div class="zone" id="zTon">
@@ -773,45 +758,6 @@
   var windowOpen = false;
 
   var M = (typeof window.max !== 'undefined') ? window.max : null;
-
-  // ── Auto-updater UI ──────────────────────────────────────────────
-  var _pendingUpdateTag = '';
-
-  function _updShow(id){ var e=document.getElementById(id); if(e) e.style.display=''; }
-  function _updHide(id){ var e=document.getElementById(id); if(e) e.style.display='none'; }
-
-  if(M) M.addHandler('update_available', function(tag, notes){
-    _pendingUpdateTag = String(tag);
-    var el = document.getElementById('update-tag'); if(el) el.textContent = tag;
-    _updShow('update-available-row');
-    _updShow('update-badge');
-  });
-
-  if(M) M.addHandler('update_progress', function(pct){
-    _updHide('update-available-row');
-    _updHide('update-done-row');
-    _updShow('update-progress-bar-wrap');
-    var bar = document.getElementById('update-progress-bar');
-    if(bar) bar.style.width = Math.min(100, pct) + '%';
-  });
-
-  if(M) M.addHandler('update_done', function(changedAmxd){
-    _updHide('update-progress-bar-wrap');
-    _updHide('update-badge');
-    _updShow('update-done-row');
-    var row = document.getElementById('update-done-row');
-    if(row) row.textContent = changedAmxd
-      ? 'Updated — reload the device to finish.'
-      : 'Updated to v' + _pendingUpdateTag + '.';
-    _pendingUpdateTag = '';
-  });
-
-  if(M) M.addHandler('update_error', function(msg){
-    _updHide('update-progress-bar-wrap');
-    _updShow('update-available-row');
-    var lbl = document.getElementById('update-available-label');
-    if(lbl) lbl.innerHTML = 'Update failed: ' + msg;
-  });
 
   // ── UTILS ──
   function el(tag,cls,txt){var e=document.createElement(tag);if(cls)e.className=cls;if(txt!=null)e.textContent=txt;return e;}
@@ -1625,16 +1571,6 @@
   document.getElementById('brandLogo').onclick = function(){ document.getElementById('info-overlay').classList.add('open'); };
   document.getElementById('infoClose').onclick = function(){ document.getElementById('info-overlay').classList.remove('open'); };
   document.getElementById('info-overlay').onclick = function(e){ if(e.target===this) this.classList.remove('open'); };
-  document.getElementById('update-btn').onclick = function(){ if(M) M.outlet('triggerupdate'); };
-  document.getElementById('dismiss-btn').onclick = function(){
-    if(_pendingUpdateTag){
-      if(M) M.outlet('dismissupdate', _pendingUpdateTag);
-      try{ var d=JSON.parse(localStorage.getItem('tupleUpdateDismissed')||'[]'); if(d.indexOf(_pendingUpdateTag)===-1){d.push(_pendingUpdateTag);localStorage.setItem('tupleUpdateDismissed',JSON.stringify(d));} }catch(e){}
-    }
-    _updHide('update-available-row');
-    _updHide('update-badge');
-    _pendingUpdateTag='';
-  };
 
   // ── ONBOARDING TOUR (full window only) ──
   // Surligne chaque zone à tour de rôle (1er lancement) ; rejouable via About.
