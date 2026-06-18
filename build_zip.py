@@ -53,7 +53,7 @@ def sync_version():
     for rel, pat in targets:
         p = os.path.join(ROOT, rel)
         if not os.path.exists(p):
-            print("  SKIP: %s (local-only, not in repo)" % rel)
+            print("  SKIP: %s (not in device repo)" % rel)
             continue
         s = open(p, encoding="utf-8").read()
         ns, n = re.subn(pat, r'\g<1>' + ver + r'\g<2>', s, count=1)
