@@ -10,7 +10,7 @@ autowatch = 1;
 // DEBUG = 0 (release) : post() reste la console Max native — AUCUNE écriture disque,
 // donc le chemin absolu DBG_LOG n'est jamais utilisé (portable sur toute machine).
 var DEBUG = 0;
-var DBG_LOG = "C:/Users/LEETJ/Desktop/CHORD SELECTOR/device/max_console.log";
+var DBG_LOG = "C:/Users/LEETJ/Desktop/Tuple/device/max_console.log";
 var _origPost = post;
 if (DEBUG) {
 	(function _dbgInit(){
@@ -1932,6 +1932,10 @@ function colorchord(semis, type) {
 	           : (type === "maj7") ? "maj7" : (type === "dom7") ? "7" : "";
 	sendChord(noteName(notes[0]) + suffix, notes);
 }
+
+// Auto-updater: update detection + download are handled entirely browser-side in
+// the jweb (checkForUpdates() → fetch GitHub API → openurl). No Max/node.script
+// relay needed — see docs/decisions.md (2026-06-19, node.script abandoned).
 
 // Diffusion initiale de la grille (différée le temps que l'UI charge)
 var gridInitTask = new Task(broadcastGrid, this);
