@@ -1,17 +1,18 @@
+# Pull Request Template
+
 ## Summary
-<!-- What does this PR change, and why? -->
+A short description of the changes and why they're needed.
 
-## Related issue
-<!-- Link the issue this addresses. For changes to device/tuple.amxd, please open an issue first. -->
-Closes #
+## Type of change
+- [ ] Bug fix
+- [ ] New feature
+- [ ] Documentation update
+- [ ] Other (please describe)
 
-## What changed
+## Checklist
+- [ ] I have read the CONTRIBUTING guide
+- [ ] My changes include documentation updates if required
+- [ ] My changes do not break existing functionality
 
-
-## Tested
-- [ ] Tested in Ableton Live (version: ___, OS: Windows / macOS)
-- [ ] Engine JS stays ES5 (no ES6 syntax)
-- [ ] UI and engine logic kept separate
-
-## Notes
-<!-- Anything reviewers should know. -->
+## Additional notes
+Any additional information for the maintainers.
