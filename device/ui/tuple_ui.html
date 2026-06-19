@@ -1298,10 +1298,12 @@
     M.bindInlet('smartbor',  function(index,lvl,cat,score,fluid){ _smartBuf.push({kind:'b',index:parseInt(index),lvl:parseInt(lvl),cat:String(cat),score:parseFloat(score),fluid:parseFloat(fluid)}); });
     M.bindInlet('smartdone', function(){ _smartRender(); });
     M.bindInlet('sync',      function(){ if(!syncClickPending) flash(document.getElementById('sync')); });
-    // ── Updater feedback (forwarded from tuple_dl via the engine outlet 7) ──
-    M.bindInlet('updprogress',function(state){ var st=document.getElementById('ib-upd-status'); if(st){ st.className='ib-upd-status'; st.textContent=String(state||'Working…'); } });
-    M.bindInlet('updone',     function(){ var st=document.getElementById('ib-upd-status'); if(st){ st.className='ib-upd-status ok'; st.textContent='Done — reload the device to apply.'; } var b=document.getElementById('ib-upd-install'); if(b){ b.textContent='Done ✓'; } });
-    M.bindInlet('upderr',     function(msg){ var st=document.getElementById('ib-upd-status'); if(st){ st.className='ib-upd-status err'; st.textContent='Update failed: '+String(msg||'error'); } var b=document.getElementById('ib-upd-install'); if(b){ b.textContent='Retry'; b.style.pointerEvents=''; b.style.opacity=''; } });
+    // ── Updater feedback (single-token messages from tuple_dl, wired in the .amxd) ──
+    var _UPD_PROG = { downloading:'Downloading…', extracting:'Installing…', installer:'Installer launched — restart Ableton when it finishes.' };
+    var _UPD_ERR  = { download:'Download failed — check your connection.', extract:'Install failed.', nopath:"Couldn't find the install folder." };
+    M.bindInlet('updprogress',function(tok){ var st=document.getElementById('ib-upd-status'); if(st){ st.className='ib-upd-status'; st.textContent=_UPD_PROG[String(tok)]||String(tok||'Working…'); } });
+    M.bindInlet('updone',     function(){ var st=document.getElementById('ib-upd-status'); if(st){ st.className='ib-upd-status ok'; st.textContent='Done — reload the device to apply.'; } var b=document.getElementById('ib-upd-install'); if(b){ b.textContent='Done ✓'; b.style.pointerEvents='none'; b.style.opacity='0.6'; } });
+    M.bindInlet('upderr',     function(tok){ var st=document.getElementById('ib-upd-status'); if(st){ st.className='ib-upd-status err'; st.textContent=_UPD_ERR[String(tok)]||'Update failed.'; } var b=document.getElementById('ib-upd-install'); if(b){ b.textContent='Retry'; b.style.pointerEvents=''; b.style.opacity=''; } });
     M.bindInlet('strumms',   function(v){ state.strumMs=parseInt(v)||0; renderExpr(); });
     M.bindInlet('strumramp', function(v){ state.strumRamp=parseInt(v)||0; renderExpr(); });
     M.bindInlet('strumcurve',function(v){ var i=parseInt(v); if(i>=0&&i<3) state.strumCurveIdx=i; renderExpr(); });
