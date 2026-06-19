@@ -22,12 +22,12 @@
     --display:'Syne',var(--sans);
   }
   *{box-sizing:border-box;margin:0;padding:0;-webkit-user-select:none;user-select:none;outline:none}
-  html{height:100%}
+  html{height:100%;overflow:hidden}
   body::before{
     content:'';position:fixed;top:0;left:10px;right:10px;height:2px;z-index:999;pointer-events:none;
     background:linear-gradient(90deg, transparent 0%, rgba(255,255,255,.08) 25%, rgba(255,255,255,.13) 50%, rgba(255,255,255,.08) 75%, transparent 100%);
   }
-  body{width:100vw;height:100vh;overflow:hidden;
+  body{width:100%;height:100vh;overflow:hidden;
     font-family:var(--sans);
     color:var(--txt);
     background-color:#232323;
@@ -56,6 +56,7 @@
     background:linear-gradient(to bottom, transparent 0%, rgba(255,255,255,.06) 30%, rgba(255,255,255,.06) 70%, transparent 100%);
   }
   body.strip .vsep-l{display:none}  /* pas de séparateur gauche en strip (grille cachée) */
+  body.strip .vsep{display:none}    /* masque aussi le séparateur droit (orphelin entre grid et mon) */
   .lbl{font-size:8px;letter-spacing:.14em;color:rgba(255,220,130,.3);text-transform:uppercase;margin-bottom:2px;font-weight:600}
   .lbl-row{display:flex;align-items:center;justify-content:space-between}
   .row{display:flex;gap:5px}
@@ -313,8 +314,8 @@
   .pg-card .pg-ins:hover{background-color:var(--gold-dim);color:var(--gold)}
   .pg-card .pg-del:hover{background-color:rgba(229,139,139,.2);color:#E58B8B}
   /* marqueur d'insertion entre deux cartes (où iront les prochains accords) */
-  .pg-cursor{flex:0 0 auto;width:2px;align-self:stretch;min-height:18px;border-radius:1px;
-    background:var(--gold);box-shadow:0 0 5px rgba(255,220,130,.6)}
+  .pg-cursor{flex:0 0 auto;width:3px;align-self:stretch;min-height:22px;border-radius:2px;
+    background:var(--gold);box-shadow:0 0 8px rgba(255,220,130,.85);animation:dropPulse .7s ease-in-out infinite}
   /* repère de dépôt (pulse) + carte source estompée + fantôme suivant le curseur */
   .pg-dropmark{flex:0 0 auto;width:3px;align-self:stretch;min-height:22px;border-radius:2px;
     background:var(--gold);box-shadow:0 0 8px rgba(255,220,130,.85);animation:dropPulse .7s ease-in-out infinite}
@@ -365,11 +366,12 @@
   #prog-toggle:hover, #prog-toggle.on{background:radial-gradient(62% 135% at 50% 0%, rgba(255,255,255,.035) 0%, rgba(255,255,255,.012) 42%, transparent 72%);background-origin:content-box;background-clip:content-box}
   #prog-toggle .pt-count{position:absolute;right:14px;top:50%;transform:translateY(-50%);font-family:var(--mono);font-size:9px;color:var(--muted2)}
   #cap-dock .cd-head{display:flex;align-items:center;gap:8px;min-width:0}
-  #cap-dock .cd-rec{flex:0 0 auto;display:flex;align-items:center;gap:6px;cursor:pointer;height:26px;
+  #cap-dock .cd-rec{flex:0 0 auto;display:flex;align-items:center;gap:6px;cursor:pointer;height:26px;padding:6px 10px;
+    background:var(--cell);border:1px solid var(--cell-bd);border-radius:5px;transition:all .1s;
     font-size:9px;letter-spacing:.1em;text-transform:uppercase;font-weight:600;color:var(--muted)}
-  #cap-dock .cd-rec:hover{color:var(--txt)}
+  #cap-dock .cd-rec:hover{background-color:rgba(255,255,255,.08);color:var(--txt)}
   #cap-dock .cd-rec .cd-dot{width:8px;height:8px;border-radius:50%;background:var(--muted2)}
-  #cap-dock .cd-rec.on{color:var(--gold)}
+  #cap-dock .cd-rec.on{color:var(--gold);background:var(--gold-dim);border-color:var(--gold-bd)}
   #cap-dock .cd-rec.on .cd-dot{background:var(--gold);animation:rbpulse 1.2s infinite}
   @keyframes rbpulse{0%,100%{opacity:1}50%{opacity:.25}}
   #cap-dock .cd-count{flex:0 1 auto;font-family:var(--mono);font-size:9px;color:var(--muted2);
@@ -397,7 +399,7 @@
      full uniquement → cachés en strip via .devgrp (réglé plus bas). */
   /* margin-bottom négatif : annule le slot space-between fantôme de la lbl-row (Tonality, h:0)
      pour que l'écart logo→KEY corresponde aux autres (≈6px) */
-  body.strip .brand{display:block;font-family:var(--display);font-weight:700;font-size:10px;color:var(--gold);line-height:1;letter-spacing:.01em;margin-bottom:-6px}
+  body.strip .brand{display:block;font-family:var(--display);font-weight:700;font-size:12px;color:var(--gold);line-height:1;letter-spacing:.01em;margin-bottom:-8px}
   body.strip{background-color:#232323}
 
   /* Strip : insets identiques sur les 2 colonnes (8px haut/bas, 6px côtés) +
@@ -777,6 +779,7 @@
   var windowOpen = false;
   var _updTag = '';
   var _updAssetUrl = '';
+  var _updRequiresReinstall = false;
   // Patched by build_zip.py — keep the pattern (var LOCAL_VERSION = "1.2.2";)
   var LOCAL_VERSION = '1.2.2';
 
@@ -1307,7 +1310,7 @@
   function _showUpdateUI(tag) {
     _updTag = String(tag);
     document.getElementById('ib-upd-tag').textContent = 'v' + _updTag;
-    document.getElementById('ib-upd-install').textContent = _isWin ? 'Install' : 'Download';
+    document.getElementById('ib-upd-install').textContent = 'Install';
     document.getElementById('ib-update').classList.add('visible');
     document.getElementById('brandLogo').classList.add('has-update');
   }
@@ -1320,13 +1323,26 @@
     .then(function(data) {
       var tag = String(data.tag_name || '').replace(/^v/, '');
       if (!tag || !_isNewer(LOCAL_VERSION, tag)) return;
-      _updAssetUrl = '';
       var assets = data.assets || [];
-      var _wantAsset = _isWin ? 'Tuple-Installer.exe' : 'tuple.zip';
+      var zipUrl = '', installerUrl = '', versionJsonUrl = '';
       for (var i = 0; i < assets.length; i++) {
-        if (assets[i].name === _wantAsset) { _updAssetUrl = assets[i].browser_download_url; break; }
+        if (assets[i].name === 'tuple.zip')           zipUrl         = assets[i].browser_download_url;
+        if (assets[i].name === 'Tuple-Installer.exe') installerUrl   = assets[i].browser_download_url;
+        if (assets[i].name === 'version.json')        versionJsonUrl = assets[i].browser_download_url;
       }
-      _showUpdateUI(tag);
+      function proceed(requiresReinstall) {
+        _updRequiresReinstall = !!requiresReinstall;
+        // Windows + requires_reinstall → prefer installer; otherwise always use zip (in-place)
+        _updAssetUrl = (_isWin && _updRequiresReinstall && installerUrl) ? installerUrl : (zipUrl || installerUrl);
+        _showUpdateUI(tag);
+      }
+      if (versionJsonUrl) {
+        fetch(versionJsonUrl).then(function(r){ return r.json(); })
+          .then(function(vj){ proceed(vj.requires_reinstall); })
+          .catch(function(){ proceed(false); });
+      } else {
+        proceed(false);
+      }
     })
     .catch(function() {});
   }
@@ -1483,7 +1499,7 @@
         if(cn.indexOf('pg-ins')>=0||cn.indexOf('pg-del')>=0) return;   // viser +/× ne joue pas l'accord
       }
       send('playprog', idx); card.classList.add('pressed');
-      _drag={ kind:'reorder', idx:idx, x:(e?e.clientX:0), y:(e?e.clientY:0), active:false, target:-1 };  // début éventuel d'un glisser (réordonner)
+      _drag={ kind:'reorder', idx:idx, x:(e?e.clientX:0), y:(e?e.clientY:0), active:false, target:-1, lastTarget:null };  // début éventuel d'un glisser (réordonner)
     };
     ins.onmousedown=function(e){ if(e){e.preventDefault();e.stopPropagation();} };
     ins.onclick=function(e){ if(e)e.stopPropagation(); setCursorTo(cursor===idx+1?-1:idx+1); }; // + = insertion APRÈS
@@ -1564,7 +1580,7 @@
   function _cellDown(e, cc, rr, dd){
     if(e&&e.preventDefault)e.preventDefault();
     pressCell(cc,rr,dd);
-    _drag={ kind:'add', name:activeChordName, x:(e?e.clientX:0), y:(e?e.clientY:0), active:false, target:-1 };
+    _drag={ kind:'add', name:activeChordName, x:(e?e.clientX:0), y:(e?e.clientY:0), active:false, target:-1, lastTarget:null };
   }
   document.addEventListener('mousemove', function(e){
     if(!_drag) return;
@@ -1577,16 +1593,15 @@
       _makeGhost(e.clientX,e.clientY);                                           // fantôme qui suit le curseur
     }
     _moveGhost(e.clientX,e.clientY);
-    if(_overProg(e.clientX,e.clientY)){ _drag.target=_dropTargetFor(e.clientX); _placeDropMark(_drag.target); }
+    if(_overProg(e.clientX,e.clientY)){ _drag.target=_dropTargetFor(e.clientX); _drag.lastTarget=_drag.target; _placeDropMark(_drag.target); }
     else { _drag.target=-1; _clearMark(); }
   });
   document.addEventListener('mouseup', function(){
     if(_drag && _drag.active){
       var d=_drag; _clearDrag();
-      if(d.target>=0){
-        if(d.kind==='reorder') send('moveprog', d.idx, d.target);
-        else if(d.kind==='add')  send('captureone', d.name, d.target);
-      }
+      var rtgt=(d.target>=0)?d.target:(d.lastTarget!=null?d.lastTarget:-1);
+      if(d.kind==='reorder'){ if(rtgt>=0) send('moveprog', d.idx, rtgt); }
+      else if(d.kind==='add' && d.target>=0) send('captureone', d.name, d.target);
     }
     _drag=null;
   });
@@ -1633,16 +1648,17 @@
   document.getElementById('infoClose').onclick = function(){ document.getElementById('info-overlay').classList.remove('open'); };
   document.getElementById('ib-upd-install').onclick = function(){
     var url = _updAssetUrl || 'https://github.com/c0remusic/tuple/releases/latest';
-    if (_isWin && M) {
-      var btn = document.getElementById('ib-upd-install');
-      btn.textContent = 'Installing…';
-      btn.style.pointerEvents = 'none';
-      btn.style.opacity = '0.6';
-      send('installupdate', url, 'win');
-    } else if (M) {
-      send('installupdate', url, 'mac');
+    if (!M) { window.open(url); return; }
+    var btn = document.getElementById('ib-upd-install');
+    btn.textContent = 'Installing…';
+    btn.style.pointerEvents = 'none';
+    btn.style.opacity = '0.6';
+    if (_isWin && _updRequiresReinstall) {
+      send('installupdate', url, 'win');          // télécharge + lance l'installeur .exe
+    } else if (_isWin) {
+      send('installupdate', url, 'win-inplace');   // extrait le zip en place (.amxd EBUSY skippé)
     } else {
-      window.open(url);
+      send('installupdate', url, 'mac');            // extrait le zip en place (POSIX)
     }
   };
   document.getElementById('ib-upd-dismiss').onclick = function(){
@@ -1655,13 +1671,14 @@
   // Surligne chaque zone à tour de rôle (1er lancement) ; rejouable via About.
   var TOUR_KEY='tuple_onboarded', _tourSeenMem=false, tourIdx=0, tourEl=null;
   var TOUR_STEPS=[
-    {id:'zTon',   title:'Tonality',      text:'Pick your key and scale here. SYNC pulls the current scale straight from Ableton Live.'},
-    {id:'zStyle', title:'Chord style',   text:'Set the octave, the voicing (how the notes are spread) and Voice Leading for smooth chord-to-chord motion.'},
-    {id:'grid',   title:'The chord grid', text:'Every chord in your scale, one click away — columns I to VII plus a Borrowed column. This is the heart of Tuple.'},
-    {id:'zExpr',  title:'Expression',    text:'Strum turns a chord into an arpeggio; Humanize adds subtle velocity and timing for a livelier, human feel.'},
-    {id:'chord',  title:'Monitor',       text:'The chord you play shows up here with its note names.'},
-    {id:'zDev',   title:'Device',        text:'PUSH mirrors the grid onto your Push 2 pads. LAYOUT cycles the degree colour logic.'},
-    {id:'zWin',   title:'Window',        text:'Keep the window on top, open or close the full view, and find contact and Discord under About.'}
+    {id:'zTon',        title:'Tonality',       text:'Pick your key and scale here. SYNC pulls the current scale straight from Ableton Live.'},
+    {id:'zStyle',      title:'Chord style',    text:'Set the octave, the voicing (how the notes are spread) and Voice Leading for smooth chord-to-chord motion.'},
+    {id:'zExpr',       title:'Expression',     text:'Strum turns a chord into an arpeggio; Humanize adds subtle velocity and timing for a livelier, human feel.'},
+    {id:'grid',        title:'The chord grid', text:'Every chord in your scale, one click away — columns I to VII plus a Borrowed column. This is the heart of Tuple.'},
+    {id:'prog-toggle', title:'Progression',    text:'Turn on CAPTURE to collect the chords you play. Drag the cards to reorder them, then CLIP writes the whole progression to the selected clip.'},
+    {id:'chord',       title:'Monitor',        text:'The chord you play shows up here with its note names.'},
+    {id:'zDev',        title:'Device',         text:'PUSH mirrors the grid onto your Push 2 pads. LAYOUT cycles the degree colour logic.'},
+    {id:'zWin',        title:'Window',         text:'Keep the window on top, open or close the full view, and find contact and Discord under About.'}
   ];
   function tourSeen(){ try{return localStorage.getItem(TOUR_KEY)==='1';}catch(e){return _tourSeenMem;} }
   function tourMarkSeen(){ _tourSeenMem=true; try{localStorage.setItem(TOUR_KEY,'1');}catch(e){} }
