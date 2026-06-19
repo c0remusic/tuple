@@ -1,8 +1,5 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/images/logo-dark.png">
-    <img alt="Tuple" src="docs/images/logo-light.png" width="300">
-  </picture>
+  <img alt="Tuple" src="docs/images/logo.png" width="300">
 </p>
 
 [![version](https://img.shields.io/github/v/release/c0remusic/tuple)](https://github.com/c0remusic/tuple/releases/latest)
