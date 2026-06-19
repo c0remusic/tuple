@@ -421,17 +421,17 @@
 
   /* Strip : insets identiques sur les 2 colonnes (8px haut/bas, 6px côtés) +
      répartition space-between → éléments alignés haut/bas entre colonnes, gaps réguliers. */
-  body.strip .config{width:205px;flex:0 0 205px;padding:0 6px;gap:0;justify-content:space-evenly;background:#232323}
+  body.strip .config{width:205px;flex:0 0 205px;padding:0 6px;gap:4px;justify-content:flex-start;background:#232323}
   body.strip .mon   {flex:1;padding:8px 6px;display:flex;flex-direction:column;gap:0;justify-content:space-between;background:#232323}
   body.strip .cfg-spacer{display:none}   /* space-evenly gère l'espace, pas de spacer */
   body.strip .lbl   {display:none}
   body.strip .zone  {display:contents}
   body.strip .sep   {display:none}
 
-  /* Strip — key row (18px = hauteur STANDARD de tous les contrôles du strip) */
-  body.strip .row          {height:18px;flex:none;display:flex;gap:5px}
-  body.strip .row .csel    {flex:1;padding:4px 7px;font-size:10px}
-  body.strip .lbl-row      {height:18px;flex:none;justify-content:flex-end}
+  /* Strip — contrôles flex:1 → remplissent la hauteur disponible */
+  body.strip .row          {flex:1;display:flex;gap:5px}
+  body.strip .row .csel    {flex:1;padding:0 7px;font-size:10px;align-items:center}
+  body.strip .lbl-row      {flex:0 0 auto;height:18px;justify-content:flex-end}
   body.strip .lbl-row .sync{height:100%;padding:0 6px;width:auto;font-size:9px;letter-spacing:.07em}
   body.strip .lbl-row .acc-btn{height:100%;padding:0 5px;font-size:10px}
   body.strip #zTon + .sep  {display:none}
@@ -439,13 +439,13 @@
   body.strip .krow .csel .cl{font-size:8px}   /* labels KEY/SCALE gardés mais compacts (la sync déplacée a libéré la largeur → la valeur C# tient quand même) */
 
   /* Strip — octave */
-  body.strip .oct          {height:18px;flex:none;display:flex;gap:5px}
+  body.strip .oct          {flex:1;display:flex;gap:5px}
   body.strip .oct span     {padding:0;font-size:8px;display:flex;align-items:center;justify-content:center}
 
   /* Strip — voicing zone */
-  body.strip #voicing      {flex:none;padding:4px 7px;font-size:10px}
-  body.strip #vl           {flex:none;height:18px;padding:0;font-size:8.5px;display:flex;align-items:center;justify-content:center}
-  body.strip #vlmode       {flex:none;padding:4px 7px;font-size:8.5px;display:flex;align-items:center;justify-content:space-between}
+  body.strip #voicing      {flex:1;padding:0 7px;font-size:10px;display:flex;align-items:center}
+  body.strip #vl           {flex:1;padding:0;font-size:8.5px;display:flex;align-items:center;justify-content:center}
+  body.strip #vlmode       {flex:1;padding:0 7px;font-size:8.5px;display:flex;align-items:center;justify-content:space-between}
 
   /* Strip — monitor */
   body.strip .toggle       {height:46px;margin-top:0}
