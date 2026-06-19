@@ -45,6 +45,18 @@
   body.full .bar.win-in  { animation:winIn .18s cubic-bezier(.2,.7,.3,1) both }
   body.full .bar.win-out { animation:winOut .15s ease-in both }
 
+  /* ── GPU keep-alive ──────────────────────────────────────────────────────
+     Max's jweb (CEF) on Windows drops the OS window's GPU present surface after
+     it sits idle with nothing compositing — the window goes black even though the
+     page is perfectly fine (confirmed: page renders, only the present is lost).
+     A 1px, ~invisible element with a perpetual sub-pixel transform keeps the
+     compositor presenting every frame, so the surface is never idled/lost.
+     Invisible + negligible cost; harmless in the browser demo. */
+  @keyframes _gpuKA { from{transform:translateX(0)} to{transform:translateX(1px)} }
+  #_gpuka{position:fixed;left:0;top:0;width:1px;height:1px;z-index:2147483647;
+    pointer-events:none;background:#808080;opacity:.02;will-change:transform;
+    animation:_gpuKA 1.5s linear infinite alternate}
+
   /* ── CONFIG ── */
   .config{
     width:144px;flex:0 0 144px;
@@ -616,6 +628,7 @@
 </style>
 </head>
 <body class="strip">
+<div id="_gpuka" aria-hidden="true"></div>
   <!-- INFO OVERLAY (full mode, bouton ⓘ dans DEVICE) -->
   <div id="info-overlay">
     <div id="info-box">
