@@ -185,6 +185,7 @@
   }
   .head .r{color:var(--gold)} .head .f{color:var(--muted)}
   .col.bor .head{color:var(--blue)}
+  .col.bor{border-left:1px solid rgba(255,255,255,.07);margin-left:6px;padding-left:4px}
   .cell{
     position:relative;background:var(--cell);border:1px solid var(--cell-bd);
     border-radius:5px;padding:0 3px;flex:1;max-height:28px;min-height:18px;
@@ -407,7 +408,9 @@
   body.strip .grid{display:none}
   /* PUSH/COULEURS/ALWAYS ON TOP vivent dans le groupe .devgrp (colonne droite),
      full uniquement → cachés en strip via .devgrp (réglé plus bas). */
-  body.strip .brand{display:block;font-family:var(--display);font-weight:700;font-size:12px;color:var(--gold);line-height:1;letter-spacing:.01em}
+  body.strip .brand{display:block;font-family:var(--display);font-weight:700;font-size:14px;color:var(--gold);line-height:1;letter-spacing:.01em}
+  .brand-hint{display:none}
+  body.strip .brand-hint{display:inline;font-size:7px;vertical-align:super;color:rgba(255,220,130,.45);margin-left:1px;font-family:var(--body);font-weight:600;line-height:1;cursor:pointer}
   body.strip{background-color:#232323}
 
   /* Strip : insets identiques sur les 2 colonnes (8px haut/bas, 6px côtés) +
@@ -660,7 +663,7 @@
     <!-- CONFIG -->
     <div class="config">
 
-      <div class="brand" id="brandLogo" title="About Tuple">Tuple<span id="upd-logo-badge"></span></div>
+      <div class="brand" id="brandLogo" title="About Tuple">Tuple<span class="brand-hint">?</span><span id="upd-logo-badge"></span></div>
 
       <!-- Zone KEY -->
       <div class="zone" id="zTon">
@@ -1827,9 +1830,18 @@
     document.getElementById('ib-about').classList.remove('hidden');
     _closeInfo();
   };
-  // strip: changelog hidden to save height → "Show changelog →" opens the full window
+  // strip: changelog hidden → "Show changelog →" opens the full window and signals it to
+  // display the update panel immediately (via localStorage — same origin, both jwebs share it).
   var _showCl = document.getElementById('upd-show-changelog');
-  if (_showCl) _showCl.onclick = function(){ _closeInfo(); windowOpen = true; setToggle(true); send('openwindow', 'full'); };
+  if (_showCl) _showCl.onclick = function(){
+    try {
+      localStorage.setItem('tuple-pending-upd-tag',       _updTag);
+      localStorage.setItem('tuple-pending-upd-body',      _updChangelog);
+      localStorage.setItem('tuple-pending-upd-reinstall', _updReinstall ? '1' : '0');
+      localStorage.setItem('tuple-pending-upd-url',       _updAssetUrl  || '');
+    } catch(e) {}
+    _closeInfo(); windowOpen = true; setToggle(true); send('openwindow', 'full');
+  };
   document.getElementById('info-overlay').onclick = function(e){ if(e.target===this) this.classList.remove('open'); };
 
   // ── ONBOARDING TOUR (full window only) ──
@@ -1952,6 +1964,27 @@
   }
   else  { setMode('full'); loadDemo(); }
   setTimeout(checkForUpdates, 2000);  // after page settle; works in both Max jweb and demo
+
+  // If the strip's "Show changelog →" signalled us (localStorage), show the update panel
+  // immediately instead of waiting for the 2-second checkForUpdates call.
+  try {
+    var _pendingTag = localStorage.getItem('tuple-pending-upd-tag');
+    if (_pendingTag) {
+      _updTag        = _pendingTag;
+      _updChangelog  = localStorage.getItem('tuple-pending-upd-body')      || '';
+      _updReinstall  = localStorage.getItem('tuple-pending-upd-reinstall') === '1';
+      _updAssetUrl   = localStorage.getItem('tuple-pending-upd-url')       || '';
+      localStorage.removeItem('tuple-pending-upd-tag');
+      localStorage.removeItem('tuple-pending-upd-body');
+      localStorage.removeItem('tuple-pending-upd-reinstall');
+      localStorage.removeItem('tuple-pending-upd-url');
+      setTimeout(function(){
+        _showUpdateUI(_updTag);
+        document.getElementById('info-box').classList.add('vis');
+        document.getElementById('ib-about').classList.remove('hidden');
+      }, 150);
+    }
+  } catch(e) {}
 
   // Debug: ?upd=preview simulates an available update + opens the Download view,
   // so the run-tuple driver can screenshot the updater UI without Max. No-op otherwise.
