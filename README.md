@@ -1,10 +1,17 @@
 # Tuple
 
+![logo](docs/images/logo.svg)
+
+[![version](https://img.shields.io/github/v/release/c0remusic/tuple)](https://github.com/c0remusic/tuple/releases/latest)
+[![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![stars](https://img.shields.io/github/stars/c0remusic/tuple)](https://github.com/c0remusic/tuple/stargazers)
+[![issues](https://img.shields.io/github/issues/c0remusic/tuple)](https://github.com/c0remusic/tuple/issues)
+
 A Max for Live harmonic composition tool for Ableton Live.
 
 **Tuple** gives you instant access to every valid chord for your key and scale — organized in a grid, always one click away. It's not a sequencer. It's a tool for exploring, performing and recording chords in real time.
 
-→ **[tuple.live](https://tuple.live)**
+→ **[tuple.live](https://tuple.live)** &nbsp;·&nbsp; [Manual](https://tuple.live/manual/) &nbsp;·&nbsp; [Releases](https://github.com/c0remusic/tuple/releases)
 
 ---
 

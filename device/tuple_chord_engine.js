@@ -279,11 +279,12 @@ function openurl(u) {
 function installupdate(url, platform) {
 	var ndl = _patcher ? _patcher.getnamed('tuple_dl') : null;
 	if (ndl) {
-		ndl.message('dl', String(url), String(platform));
+		var fp = (_patcher && _patcher.filepath) ? String(_patcher.filepath) : '';
+		ndl.message('dl', String(url), String(platform), fp);
 		post('tuple: installupdate → node.script (platform=' + platform + ')\n');
 	} else {
 		post('tuple: installupdate — tuple_dl not found, fallback to browser\n');
-		max.message('launchbrowser', String(url));
+		openurl(String(url));
 	}
 }
 
