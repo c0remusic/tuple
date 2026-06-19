@@ -362,6 +362,7 @@ function pushUIState() {
 	outlet(7, "root", root);
 	var si = SCALE_NAMES_ARR.indexOf(scaleName);
 	if (si >= 0) outlet(7, "scale", si);
+	outlet(7, "autosync", _autoSync ? 1 : 0);   // keep the SYNC button + KEY/SCALE lock in sync after a jweb reload
 
 	pushConfigState();
 
