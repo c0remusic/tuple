@@ -1,6 +1,6 @@
-# Tuple
-
-![logo](docs/images/logo.svg)
+<p align="center">
+  <img src="docs/images/logo.png" alt="Tuple" width="400">
+</p>
 
 [![version](https://img.shields.io/github/v/release/c0remusic/tuple)](https://github.com/c0remusic/tuple/releases/latest)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
