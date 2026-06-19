@@ -77,6 +77,7 @@ print("VERSION (single source) = " + VERSION)
 # changed structurally (Windows can't replace the locked .amxd in place).
 REQUIRES_REINSTALL = os.environ.get("TUPLE_REQUIRES_REINSTALL", "0") == "1"
 VERSION_JSON = os.path.join(ROOT, "site", "version.json")
+os.makedirs(os.path.dirname(VERSION_JSON), exist_ok=True)  # site/ is local-only (device-only repo) -> absent on CI checkout
 with open(VERSION_JSON, "w", encoding="utf-8") as f:
     json.dump({"version": VERSION, "requires_reinstall": REQUIRES_REINSTALL}, f)
 print("generated " + VERSION_JSON + "  (requires_reinstall=%s)" % REQUIRES_REINSTALL)

@@ -226,7 +226,8 @@ var LIST_DISPATCH = {
 	openurl: openurl, openwindow: openwindow, installupdate: installupdate,
 	capture: capture, sendclip: sendclip, clearprog: clearprog, removelast: removelast,
 	removeat: removeat, setcursor: setcursor, playprog: playprog, moveprog: moveprog,
-	captureone: captureone, autosync: setautosync, progress: handleprogress
+	captureone: captureone, autosync: setautosync, progress: handleprogress,
+	useflats: useflats
 };
 function list() {
 	var a = Array.prototype.slice.call(arguments);
@@ -318,11 +319,17 @@ function _doDl() {
 // NOT a jweb list), so Max calls progress() directly — define it explicitly.
 // (The LIST_DISPATCH entry only covers the jweb-list path, which never fires here.)
 function progress(state) { handleprogress(state); }
+function useflats(v) { outlet(7, 'useflats', parseInt(v) !== 0 ? 1 : 0); }
+
 function handleprogress(state) {
 	if (String(state) === 'done') {
 		_dlUrl = null; _dlPlatform = null; _dlAmxdPath = null; _dlAttempts = 0;
 		outlet(7, 'updatedone');
 		post('tuple: update installed — reload the device to apply\n');
+	} else if (String(state) === 'error') {
+		_dlUrl = null; _dlPlatform = null; _dlAmxdPath = null; _dlAttempts = 0;
+		outlet(7, 'updateerror');
+		post('tuple: update download failed\n');
 	}
 }
 
@@ -1045,6 +1052,7 @@ function playFlatCell(cell) {
 		case "add9":        add9(cell.degree);  break;
 		case "sus2":        sus2(cell.degree);  break;
 		case "sus4":        sus4(cell.degree);  break;
+		case "m7s5":        m7s5(cell.degree);  break;
 	}
 }
 
@@ -1518,8 +1526,9 @@ function _vl2_movCost(prev,cand,w){
 	if(!w)w=_vl2_W;
 	var a=_vl2_vs(prev),b=_vl2_vs(cand),n=Math.min(a.length,b.length);
 	var tot=Math.abs(a.length-b.length)*w.countDiff;
-	var bSet=new Set(b),commons=0;
-	for(var i=0;i<a.length;i++) if(bSet.has(a[i])){tot+=w.common;commons++;}
+	var bObj={},_bi,commons=0;
+	for(_bi=0;_bi<b.length;_bi++) bObj[b[_bi]]=true;
+	for(var i=0;i<a.length;i++) if(bObj[a[i]]){tot+=w.common;commons++;}
 	for(var i=0;i<n;i++){
 		var isTop=i===n-1,isBass=i===0,d=Math.abs(b[i]-a[i]);if(d===0)continue;
 		var wv=w.move*(isTop?w.soprano:isBass?w.bass:1);
@@ -1543,15 +1552,17 @@ function _vl2_harmBonus(prev,cand,opts,w){
 	var ps=opts.prevSpec,sp=opts.spec;if(!ps||!sp||!prev||!prev.length)return 0;
 	if(!w)w=_vl2_W;
 	var a=_vl2_vs(prev),b=_vl2_vs(cand),n=Math.min(a.length,b.length),bonus=0,chrom=0;
-	var apcs=new Set(a.map(_vl2_m)),bpcs=new Set(b.map(_vl2_m));
+	var apcs={},bpcs={},_pc;
+	for(_pc=0;_pc<a.length;_pc++) apcs[_vl2_m(a[_pc])]=true;
+	for(_pc=0;_pc<b.length;_pc++) bpcs[_vl2_m(b[_pc])]=true;
 	if(ps.isDominant){
 		var tri3=null,tri7=null;
 		for(var i=0;i<ps.pcs.length;i++){if(ps.pcs[i].role==='third')tri3=ps.pcs[i];if(ps.pcs[i].role==='seventh')tri7=ps.pcs[i];}
-		if(tri3&&apcs.has(tri3.pc)&&bpcs.has(_vl2_m(tri3.pc+1)))bonus+=w.tendency;
-		if(tri7&&apcs.has(tri7.pc)&&bpcs.has(_vl2_m(tri7.pc-1)))bonus+=w.tendency;
+		if(tri3&&apcs[tri3.pc]&&bpcs[_vl2_m(tri3.pc+1)])bonus+=w.tendency;
+		if(tri7&&apcs[tri7.pc]&&bpcs[_vl2_m(tri7.pc-1)])bonus+=w.tendency;
 		if(_vl2_m(ps.rootPc-sp.rootPc)===7){
 			var thi=null;for(var i=0;i<sp.pcs.length;i++) if(sp.pcs[i].role==='third'){thi=sp.pcs[i];break;}
-			if(tri7&&thi&&apcs.has(tri7.pc)&&bpcs.has(thi.pc)&&!bpcs.has(tri7.pc))bonus+=w.tendency;
+			if(tri7&&thi&&apcs[tri7.pc]&&bpcs[thi.pc]&&!bpcs[tri7.pc])bonus+=w.tendency;
 		}
 	}
 	for(var i=0;i<n&&chrom<2;i++) if(Math.abs(b[i]-a[i])===1){bonus+=w.chromatic;chrom++;}
