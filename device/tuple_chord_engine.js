@@ -223,7 +223,7 @@ var LIST_DISPATCH = {
 	keynote: keynote, keynoteup: keynoteup, pushmode: pushmode, smart: smart, smartmode: smartmode,
 	colorscheme: colorscheme, strumms: strumms, strumramp: strumramp,
 	strumcurve: strumcurve, humanizeamt: humanizeamt,
-	openurl: openurl, openwindow: openwindow,
+	openurl: openurl, openwindow: openwindow, installupdate: installupdate,
 	capture: capture, sendclip: sendclip, clearprog: clearprog, removelast: removelast,
 	removeat: removeat, setcursor: setcursor, playprog: playprog, moveprog: moveprog,
 	captureone: captureone
@@ -274,6 +274,16 @@ function openurl(u) {
 		post('tuple: launchbrowser ' + u + '\n');
 	} catch (e) {
 		post('tuple: openurl error: ' + e + '\n');
+	}
+}
+function installupdate(url, platform) {
+	var ndl = _patcher ? _patcher.getnamed('tuple_dl') : null;
+	if (ndl) {
+		ndl.message('dl', String(url), String(platform));
+		post('tuple: installupdate → node.script (platform=' + platform + ')\n');
+	} else {
+		post('tuple: installupdate — tuple_dl not found, fallback to browser\n');
+		max.message('launchbrowser', String(url));
 	}
 }
 
