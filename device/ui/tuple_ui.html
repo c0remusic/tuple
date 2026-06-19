@@ -419,35 +419,33 @@
   body.full  .brand-hint{display:inline;font-size:9px;vertical-align:super;color:rgba(255,220,130,.38);margin-left:2px;font-family:var(--body);font-weight:600;line-height:1;cursor:pointer}
   body.strip{background-color:#232323}
 
-  /* Strip : insets identiques sur les 2 colonnes (8px haut/bas, 6px côtés) +
-     répartition space-between → éléments alignés haut/bas entre colonnes, gaps réguliers. */
-  body.strip .config{width:205px;flex:0 0 205px;padding:6px 6px;gap:6px;justify-content:flex-start;background:#232323}
+  body.strip .config{width:205px;flex:0 0 205px;padding:6px 6px 6px;gap:0;justify-content:flex-start;background:#232323}
   body.strip .mon   {flex:1;padding:8px 6px;display:flex;flex-direction:column;gap:0;justify-content:space-between;background:#232323}
   body.strip .cfg-spacer{display:none}
   body.strip .lbl   {display:none}
   body.strip .zone  {display:contents}
   body.strip .sep   {display:none}
-  /* logo en bas — order + margin-top:auto le pousse après tout le reste */
-  body.strip .brand {order:999;margin-top:auto;padding-top:4px;flex:0 0 auto}
 
-  /* Strip — contrôles hauteur fixe, tout en haut, gap:6px entre eux */
-  body.strip .row          {flex:0 0 22px;display:flex;gap:5px}
-  body.strip .row .csel    {flex:1;padding:0 7px;font-size:10px;align-items:center}
+  /* contrôles : lbl-row collé en haut, puis gap 6px entre chaque case */
   body.strip .lbl-row      {flex:0 0 18px;justify-content:flex-end}
   body.strip .lbl-row .sync{height:100%;padding:0 6px;width:auto;font-size:9px;letter-spacing:.07em}
   body.strip .lbl-row .acc-btn{height:100%;padding:0 5px;font-size:10px}
   body.strip #zTon + .sep  {display:none}
-  body.strip .krow         {padding-right:0}
-  body.strip .krow .csel .cl{font-size:8px}   /* labels KEY/SCALE gardés mais compacts (la sync déplacée a libéré la largeur → la valeur C# tient quand même) */
 
-  /* Strip — octave */
-  body.strip .oct          {flex:0 0 22px;display:flex;gap:5px}
+  body.strip .row          {flex:0 0 22px;display:flex;gap:5px;margin-top:6px}
+  body.strip .row .csel    {flex:1;padding:0 7px;font-size:10px;align-items:center}
+  body.strip .krow         {padding-right:0}
+  body.strip .krow .csel .cl{font-size:8px}
+
+  body.strip .oct          {flex:0 0 22px;display:flex;gap:5px;margin-top:6px}
   body.strip .oct span     {padding:0;font-size:8px;display:flex;align-items:center;justify-content:center}
 
-  /* Strip — voicing zone */
-  body.strip #voicing      {flex:0 0 22px;padding:0 7px;font-size:10px;display:flex;align-items:center}
-  body.strip #vl           {flex:0 0 22px;padding:0;font-size:8.5px;display:flex;align-items:center;justify-content:center}
-  body.strip #vlmode       {flex:0 0 22px;padding:0 7px;font-size:8.5px;display:flex;align-items:center;justify-content:space-between}
+  body.strip #voicing      {flex:0 0 22px;padding:0 7px;font-size:10px;display:flex;align-items:center;margin-top:6px}
+  body.strip #vl           {flex:0 0 22px;padding:0;font-size:8.5px;display:flex;align-items:center;justify-content:center;margin-top:6px}
+  body.strip #vlmode       {flex:0 0 22px;padding:0 7px;font-size:8.5px;display:flex;align-items:center;justify-content:space-between;margin-top:6px}
+
+  /* logo : order:999 + margin-top:auto le pousse au bas de l'espace libre */
+  body.strip .brand        {order:999;margin-top:auto;flex:0 0 auto;padding-bottom:4px}
 
   /* Strip — monitor */
   body.strip .toggle       {height:46px;margin-top:0}
