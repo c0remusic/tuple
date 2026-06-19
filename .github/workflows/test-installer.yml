@@ -25,7 +25,8 @@ jobs:
       - name: Unzip to temp dir
         run: |
           mkdir /tmp/tuple-test
-          cd /tmp/tuple-test && unzip "$GITHUB_WORKSPACE/site/tuple.zip"
+          # macOS installer = tuple-mac.zip (the .command lives here, not in tuple.zip)
+          cd /tmp/tuple-test && unzip "$GITHUB_WORKSPACE/site/tuple-mac.zip"
 
       - name: Executable bit on .command
         run: |
