@@ -1944,9 +1944,15 @@ function colorchord(semis, type) {
 	sendChord(noteName(notes[0]) + suffix, notes);
 }
 
-// Auto-updater: update detection + download are handled entirely browser-side in
-// the jweb (checkForUpdates() → fetch GitHub API → openurl). No Max/node.script
-// relay needed — see docs/decisions.md (2026-06-19, node.script abandoned).
+// Auto-updater:
+//  - DETECTION is browser-side in the jweb (checkForUpdates() → GitHub API).
+//  - INSTALL goes through tuple_dl (node.script): installupdate() below sends
+//    'dl <url> <platform> <amxdPath>' to it. tuple_dl downloads + extracts
+//    in-place (or launches the installer on Win+requires_reinstall), and
+//    reports back to the jweb via its OWN outlet wired in tuple.amxd
+//    (obj-UPD-dl → strip jweb + s tuple_ui): updprogress/updone/upderr.
+//  This is NOT the old _wire_updater relay (removed in 1c1416b) — just one
+//  node.script + two patchlines. See docs/decisions.md.
 
 // Diffusion initiale de la grille (différée le temps que l'UI charge)
 var gridInitTask = new Task(broadcastGrid, this);
