@@ -21,6 +21,7 @@ FILES = [
     ("Tuple/tuple_live_key_observer.js",           "device/tuple_live_key_observer.js"),
     ("Tuple/tuple_midi_map.js",                    "device/tuple_midi_map.js"),
     ("Tuple/tuple_push2_spike.js",                 "device/tuple_push2_spike.js"),   # Push 2 (tuple_ prefix kills search-path collisions with old copies)
+    ("Tuple/tuple_dl.js",                          "device/tuple_dl.js"),            # Auto-updater download helper (node.script)
     ("Tuple/ui/tuple_ui.html",                     "device/ui/tuple_ui.html"),
     ("Tuple/ui/fonts/SpaceGrotesk-Variable.woff2", "device/ui/fonts/SpaceGrotesk-Variable.woff2"),
     ("Tuple/ui/fonts/Syne-Variable.woff2",         "device/ui/fonts/Syne-Variable.woff2"),

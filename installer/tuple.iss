@@ -41,6 +41,7 @@ Source: "..\device\tuple_init_menus.js";        DestDir: "{app}";         Flags:
 Source: "..\device\tuple_live_key_observer.js"; DestDir: "{app}";         Flags: ignoreversion
 Source: "..\device\tuple_midi_map.js";          DestDir: "{app}";         Flags: ignoreversion
 Source: "..\device\tuple_push2_spike.js";       DestDir: "{app}";         Flags: ignoreversion
+Source: "..\device\tuple_dl.js";               DestDir: "{app}";         Flags: ignoreversion
 Source: "..\device\ui\tuple_ui.html";           DestDir: "{app}\ui";      Flags: ignoreversion
 Source: "..\device\ui\fonts\*";                 DestDir: "{app}\ui\fonts"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\manual\Tuple-Manual.pdf";           DestDir: "{app}";         Flags: ignoreversion skipifsourcedoesntexist

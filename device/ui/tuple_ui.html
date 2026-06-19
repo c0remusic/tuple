@@ -1293,7 +1293,8 @@
     });
   }
 
-  // ── UPDATE CHECK (browser fetch — no node.script dependency) ──
+  // ── UPDATE CHECK ──
+  var _isWin = (typeof navigator !== 'undefined') && (navigator.platform.indexOf('Win') === 0 || navigator.userAgent.indexOf('Windows') !== -1);
   function _isNewer(cur, latest) {
     cur    = String(cur).replace(/^v/,'').split('.').map(Number);
     latest = String(latest).replace(/^v/,'').split('.').map(Number);
@@ -1306,7 +1307,7 @@
   function _showUpdateUI(tag) {
     _updTag = String(tag);
     document.getElementById('ib-upd-tag').textContent = 'v' + _updTag;
-    document.getElementById('ib-upd-install').textContent = 'Download';
+    document.getElementById('ib-upd-install').textContent = _isWin ? 'Install' : 'Download';
     document.getElementById('ib-update').classList.add('visible');
     document.getElementById('brandLogo').classList.add('has-update');
   }
@@ -1321,8 +1322,9 @@
       if (!tag || !_isNewer(LOCAL_VERSION, tag)) return;
       _updAssetUrl = '';
       var assets = data.assets || [];
+      var _wantAsset = _isWin ? 'Tuple-Installer.exe' : 'tuple.zip';
       for (var i = 0; i < assets.length; i++) {
-        if (assets[i].name === 'tuple.zip') { _updAssetUrl = assets[i].browser_download_url; break; }
+        if (assets[i].name === _wantAsset) { _updAssetUrl = assets[i].browser_download_url; break; }
       }
       _showUpdateUI(tag);
     })
@@ -1631,8 +1633,17 @@
   document.getElementById('infoClose').onclick = function(){ document.getElementById('info-overlay').classList.remove('open'); };
   document.getElementById('ib-upd-install').onclick = function(){
     var url = _updAssetUrl || 'https://github.com/c0remusic/tuple/releases/latest';
-    if(M){ send('openurl', url); }
-    else { window.open(url); }
+    if (_isWin && M) {
+      var btn = document.getElementById('ib-upd-install');
+      btn.textContent = 'Installing…';
+      btn.style.pointerEvents = 'none';
+      btn.style.opacity = '0.6';
+      send('installupdate', url, 'win');
+    } else if (M) {
+      send('installupdate', url, 'mac');
+    } else {
+      window.open(url);
+    }
   };
   document.getElementById('ib-upd-dismiss').onclick = function(){
     document.getElementById('ib-update').classList.remove('visible');

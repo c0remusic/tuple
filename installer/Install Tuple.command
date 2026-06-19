@@ -25,4 +25,6 @@ DEST="${DEST%/}"
 rm -rf "$DEST/Tuple"
 cp -R "$PAYLOAD" "$DEST/"
 xattr -dr com.apple.quarantine "$DEST/Tuple" 2>/dev/null || true
-osascript -e "display dialog \"Tuple installé ✓\n\nRedémarre Ableton — le device apparaît dans Max MIDI Effect.\" buttons {\"OK\"} default button \"OK\""
+# Save install path so the in-device auto-updater knows where to copy future updates
+echo "$DEST" > "$HOME/.tuple-install-path"
+osascript -e "display dialog \"Tuple installed ✓\n\nRestart Ableton — the device will appear in Max MIDI Effect.\" buttons {\"OK\"} default button \"OK\""
