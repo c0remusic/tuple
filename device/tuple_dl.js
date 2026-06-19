@@ -15,19 +15,23 @@ var path   = require('path');
 var cp     = require('child_process');
 var zlib   = require('zlib');
 
-// ── UI feedback → jweb (wired in tuple.amxd: tuple_dl outlet → strip jweb + s tuple_ui) ──
-// Single-token args only — a multi-word string breaks the Max atom (see commit bf686b1).
-//   updprogress <downloading|extracting|installer>  ·  updone  ·  upderr <download|extract|nopath>
-function ui(sel, tok) { if (tok === undefined) maxApi.outlet(sel); else maxApi.outlet(sel, tok); }
+// ── feedback → outlet → obj-CE (engine handleprogress) → outlet 7 → jweb ──
+// The engine retries 'dl' up to 6×, so the FIRST one sets _busy and the rest are
+// ignored until the download finishes. done() emits 'progress done', which the
+// engine turns into 'updatedone' for the jweb AND uses to stop its retry loop.
+var _busy = false;
+function done()      { _busy = false; maxApi.outlet('progress', 'done'); }
+function fail(tok)   { _busy = false; maxApi.post('tuple_dl: FAIL ' + tok); maxApi.outlet('progress', 'error'); }
 
 maxApi.addHandler('dl', function(url, platform, amxdPath) {
+    if (_busy) { maxApi.post('tuple_dl: busy — ignoring duplicate dl (engine retry)'); return; }
     platform  = String(platform  || '');
     url       = String(url       || '');
     amxdPath  = String(amxdPath  || '');
     maxApi.post('tuple_dl: platform=' + platform + ' amxdPath=' + amxdPath);
-    if      (platform === 'win')         { dlWin(url); }
-    else if (platform === 'win-inplace') { dlWinInPlace(url, amxdPath); }
-    else if (platform === 'mac')         { dlMac(url, amxdPath); }
+    if      (platform === 'win')         { _busy = true; dlWin(url); }
+    else if (platform === 'win-inplace') { _busy = true; dlWinInPlace(url, amxdPath); }
+    else if (platform === 'mac')         { _busy = true; dlMac(url, amxdPath); }
     else { maxApi.post('tuple_dl: unknown platform ' + platform); }
 });
 
@@ -50,14 +54,14 @@ function download(url, dest, cb) {
 function dlWin(url) {
     var dest = path.join(os.tmpdir(), 'Tuple-Installer.exe');
     maxApi.post('tuple_dl: downloading → ' + dest);
-    ui('updprogress', 'downloading');
+    maxApi.post('tuple_dl: downloading');
     download(url, dest, function(err) {
-        if (err) { maxApi.post('tuple_dl: download error: ' + err.message); ui('upderr', 'download'); return; }
+        if (err) { maxApi.post('tuple_dl: download error: ' + err.message); fail('download'); return; }
         maxApi.post('tuple_dl: launching installer');
         var proc = cp.spawn(dest, [], { detached: true, stdio: 'ignore' });
         proc.unref();
         maxApi.post('tuple_dl: installer launched — restart Ableton when it finishes');
-        ui('updprogress', 'installer');
+        done();   // installer launched
     });
 }
 
@@ -65,20 +69,20 @@ function dlWin(url) {
 function dlWinInPlace(url, amxdPath) {
     var dest = path.join(os.tmpdir(), 'tuple-update.zip');
     maxApi.post('tuple_dl: downloading → ' + dest);
-    ui('updprogress', 'downloading');
+    maxApi.post('tuple_dl: downloading');
     download(url, dest, function(err) {
-        if (err) { maxApi.post('tuple_dl: download error: ' + err.message); ui('upderr', 'download'); return; }
+        if (err) { maxApi.post('tuple_dl: download error: ' + err.message); fail('download'); return; }
         var installDir = amxdPath ? path.dirname(path.dirname(amxdPath)) : '';
         if (!installDir) {
             maxApi.post('tuple_dl: no amxd path — cannot determine install dir');
-            ui('upderr', 'nopath'); return;
+            fail('nopath'); return;
         }
         maxApi.post('tuple_dl: extracting → ' + installDir);
-        ui('updprogress', 'extracting');
+        maxApi.post('tuple_dl: extracting');
         extractZip(dest, installDir, function(e) {
-            if (e) { maxApi.post('tuple_dl: extract error: ' + e); ui('upderr', 'extract'); return; }
+            if (e) { maxApi.post('tuple_dl: extract error: ' + e); fail('extract'); return; }
             maxApi.post('tuple_dl: done — reload device');
-            ui('updone');
+            done();
         });
     });
 }
@@ -87,9 +91,9 @@ function dlWinInPlace(url, amxdPath) {
 function dlMac(url, amxdPath) {
     var tempZip = path.join(os.tmpdir(), 'tuple-update.zip');
     maxApi.post('tuple_dl: downloading → ' + tempZip);
-    ui('updprogress', 'downloading');
+    maxApi.post('tuple_dl: downloading');
     download(url, tempZip, function(err) {
-        if (err) { maxApi.post('tuple_dl: download error: ' + err.message); ui('upderr', 'download'); return; }
+        if (err) { maxApi.post('tuple_dl: download error: ' + err.message); fail('download'); return; }
         // Prefer amxdPath-derived dir; fall back to saved install path file
         var installDir = '';
         if (amxdPath) { installDir = path.dirname(path.dirname(amxdPath)); }
@@ -98,10 +102,10 @@ function dlMac(url, amxdPath) {
         }
         if (!installDir) {
             maxApi.post('tuple_dl: no saved path — reinstall via .command');
-            ui('upderr', 'nopath'); return;
+            fail('nopath'); return;
         }
         maxApi.post('tuple_dl: extracting → ' + installDir);
-        ui('updprogress', 'extracting');
+        maxApi.post('tuple_dl: extracting');
         var tmp = os.tmpdir();
         var q   = function(s) { return '"' + s.replace(/"/g, '\\"') + '"'; };
         var cmd = [
@@ -111,9 +115,9 @@ function dlMac(url, amxdPath) {
             'xattr -dr com.apple.quarantine ' + q(path.join(installDir, 'Tuple'))
         ].join(' && ');
         cp.exec(cmd, function(e) {
-            if (e) { maxApi.post('tuple_dl: install error: ' + e.message); ui('upderr', 'extract'); return; }
+            if (e) { maxApi.post('tuple_dl: install error: ' + e.message); fail('extract'); return; }
             maxApi.post('tuple_dl: done — reload device');
-            ui('updone');
+            done();
         });
     });
 }
