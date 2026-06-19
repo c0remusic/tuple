@@ -583,10 +583,10 @@
   #tour-pop .tp-skip{margin-left:auto;font-size:9px;color:var(--muted2);cursor:pointer;text-decoration:underline}
   #tour-pop .tp-skip:hover{color:var(--txt)}
   /* ── Smart Chords (heat-map) — fond teinté par fonction de transition, intensité = opacité ── */
-  .smart-legend{ display:none; flex-wrap:wrap; gap:6px 14px; padding:7px 14px 3px; }
-  body.smart .smart-legend{ display:flex; }
+  .smart-legend{ display:flex; flex-wrap:wrap; gap:7px 14px; padding:7px 14px 3px; }   /* toujours visible : légende layout (SMART off) ou luminosité (SMART on) ; gridwrap cache en strip */
   .smart-legend span{ display:inline-flex; align-items:center; gap:5px; font-size:9px; letter-spacing:.06em; color:var(--muted); text-transform:uppercase; font-weight:600; }
   .smart-legend i{ width:8px; height:8px; border-radius:50%; display:inline-block; flex:0 0 auto; }
+  .smart-legend i.bar{ width:22px; border-radius:3px; }   /* logiques en échelle/séquence (Spectrum/Tension/Fifths) : barre dégradée */
   /* (têtes : plus d'atténuation en smart — le layout « Smart » les colore par rôle de transition via applyScheme) */
 </style>
 </head>
@@ -987,6 +987,7 @@
       // mode Smart : couleurs de degré DÉSACTIVÉES (le sens est dynamique → porté par les cases + les cartes, pas par des têtes fixes)
       heads[i].style.borderBottom = '2px solid '+((i<7)?degColorFor(i):borColorFor());   // couleurs de degré (statiques = layout), visibles aussi en smart
     }
+    buildLegend();   // pastilles de la légende = layout courant (ou luminosité si smart)
     if(typeof renderProgViews==='function') renderProgViews();   // les cartes de progression suivent le layout
   }
 
@@ -1012,6 +1013,22 @@
     var lab=(smartMode==='voiceleading')?'Voice-leading · brighter = smoother':'Function · brighter = stronger';
     var al=[.16,.30,.52], dots='', i; for(i=0;i<3;i++) dots+='<i style="background:rgba(237,233,224,'+al[i]+')"></i>';
     el.innerHTML='<span>'+dots+'&nbsp; '+lab+'</span>'; }
+  // ── Légende LAYOUT — pastilles informatives par logique couleur (plus besoin du manuel). Miroir démo.
+  //    dot = rond plein (logiques en groupes) · bar = barre dégradée (logiques en échelle/séquence).
+  function _lgDot(hex){ return '<i style="background:'+hex+'"></i>'; }
+  function _lgBar(stops){ return '<i class="bar" style="background:linear-gradient(90deg,'+stops+')"></i>'; }
+  function _lgChip(inner,label){ return '<span>'+inner+'&nbsp; '+label+'</span>'; }
+  function buildLayoutLegend(){ var el=document.getElementById('smart-legend'); if(!el)return; var h='';
+    switch(colorScheme){
+      case 0: h=_lgChip(_lgBar(SCHEMES[0].join(',')),'Scale degree (I → VII)'); break;                  // Spectrum
+      case 1: h=_lgChip(_lgDot('#4F86C8'),'Tonic')+_lgChip(_lgDot('#55B05A'),'Subdominant')+_lgChip(_lgDot('#D05050'),'Dominant'); break;  // Function
+      case 2: h=_lgChip(_lgBar('#4F86C8,#C8BE50,#D05050'),'Home → Tense'); break;                        // Tension
+      case 3: h=_lgChip(_lgBar('#4F86C8,#C8BE50,#D05050'),'Near → Far'); break;                          // Fifths
+      default: h=_lgChip(_lgDot(QUALHEX[0]),'Major')+_lgChip(_lgDot(QUALHEX[1]),'Minor')+_lgChip(_lgDot(QUALHEX[2]),'Dim')+_lgChip(_lgDot(QUALHEX[3]),'Aug');  // Quality
+    }
+    h+=_lgChip(_lgDot(BORCOLOR),'Borrowed');   // emprunt = violet dans toutes les logiques
+    el.innerHTML=h; }
+  function buildLegend(){ if(smartOn) buildSmartLegend(); else buildLayoutLegend(); }
   // Couleur = le degré (hex passé) ; LUMINOSITÉ = lvl (signal smart : force ou fluidité selon le mode).
   function _smartPaint(c,hex,lvl){ var bg=[0,.12,.26,.46][lvl], tx=[0,.62,.82,1][lvl];
     c.style.backgroundColor=hexToRgba(hex,bg); c.style.color=hexToRgba(hex,tx);
@@ -1039,7 +1056,7 @@
     var b=document.getElementById('smartBtn'); if(b) b.className='btn lblbtn'+(smartOn?'':' off');   // grisé quand inactif
     var v=document.getElementById('smartV'); if(v) v.textContent = smartOn ? (smartMode==='function'?'Function':'Voice-leading') : 'Off';
     document.body.classList.toggle('smart',smartOn);
-    if(smartOn) buildSmartLegend();
+    buildLegend();   // smart ON → luminosité ; smart OFF → légende du layout
     var cb=document.getElementById('colorBtn'); if(cb) cb.textContent='LAYOUT · '+SCHEME_NAMES[colorScheme];
     if(!smartOn) _smartClearAll();
     if(typeof applyScheme==='function') applyScheme();   // têtes = couleurs de degré (layout) + cartes de progression
@@ -1252,7 +1269,7 @@
     M.bindInlet('gridclear', function(){ tmpCols=[[],[],[],[],[],[],[]]; tmpBor=[]; });
     M.bindInlet('gridcell',  function(col,fn,label){ if(tmpCols) tmpCols[col].push({label:String(label),fn:String(fn)}); });
     M.bindInlet('gridbor',   function(i,label,semis,type,roman){ if(tmpBor) tmpBor.push({label:String(label),roman:roman?String(roman):'',semis:parseInt(semis),type:String(type)}); });
-    M.bindInlet('griddone',  function(){ if(tmpCols){cols=tmpCols;bor=tmpBor;tmpCols=null;tmpBor=null;renderGrid();} });
+    M.bindInlet('griddone',  function(){ if(tmpCols){cols=tmpCols;bor=tmpBor;tmpCols=null;tmpBor=null;renderGrid();} buildLegend(); });
     M.bindInlet('qualities', function(){ degQual=Array.prototype.slice.call(arguments).map(Number); if(colorScheme===4) applyScheme(); });
     // Layout (logique couleur) changé ailleurs (Push / moteur) → le refléter sur la fenêtre principale.
     M.bindInlet('colorscheme', function(v){
@@ -1816,7 +1833,7 @@
     cols=DEMO.cols.map(function(a){return a.map(function(l){return {label:l};});});
     bor=DEMO.bor.map(function(p){return {label:p[0],roman:p[1]};});
     activeCol=0; activeRow=0; activeChordName='Em7';
-    renderConfig(); renderGrid(); renderNotes([52,55,59,62]);
+    renderConfig(); renderGrid(); buildLegend(); renderNotes([52,55,59,62]);
   }
   function demoHandle(a){ /* no-op — toggle handled in onclick */ }
 
