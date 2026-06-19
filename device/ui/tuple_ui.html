@@ -177,7 +177,7 @@
   body.full .mon-spacer{flex:none}   /* full : supprime le grand gap avant OPEN/CLOSE → espacement cohérent (gap .mon) */
 
   /* ── GRID ── */
-  .grid{flex:1;display:flex;gap:4px;padding:7px 6px;min-width:0}
+  .grid{flex:1;display:flex;gap:4px;padding:7px 6px;min-width:0;position:relative}
   .col{flex:1;display:flex;flex-direction:column;gap:3px;min-width:0}
   .head{
     font-size:8.5px;text-align:center;padding-bottom:3px;
@@ -185,9 +185,9 @@
     background:transparent;border-radius:0 0 3px 3px;
   }
   .head .r{color:var(--gold)} .head .f{color:var(--muted)}
-  .head-sep{position:relative;flex:none;height:0}
-  .head-sep::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;
-    background:linear-gradient(to right,transparent 0%,rgba(255,255,255,.07) 15%,rgba(255,255,255,.07) 85%,transparent 100%);
+  .grid-sep{position:absolute;left:6px;right:6px;height:0;pointer-events:none;z-index:1}
+  .grid-sep::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;
+    background:linear-gradient(to right,transparent 0%,rgba(255,255,255,.07) 10%,rgba(255,255,255,.07) 90%,transparent 100%);
     box-shadow:0 -6px 14px 3px rgba(255,255,255,.05)}
   .col.bor .head{color:var(--blue)}
   .col.bor{margin-left:10px}
@@ -999,7 +999,6 @@
       h.innerHTML='<span class="r">'+hd[0]+'</span> <span class="f">'+hd[1]+'</span>';
       h.style.borderBottom='2px solid '+degColorFor(c); h.style.paddingBottom='2px';
       col.appendChild(h);
-      col.appendChild(el('div','head-sep'));
       (cols[c]||[]).forEach(function(cell,row){
         var d=el('div','cell'+((activeCol===c&&activeRow===row)?' active':''),cellLabel(cell.label));
         d.setAttribute('data-col',c); d.setAttribute('data-row',row);
@@ -1010,7 +1009,6 @@
     }
     var bc=el('div','col bor');
     var bh=el('div','head'); var bd=degOf(7); bh.innerHTML='<span class="r">'+bd[0]+'</span> <span class="f">'+bd[1]+'</span>'; bh.style.borderBottom='2px solid '+borColorFor(); bh.style.paddingBottom='2px'; bc.appendChild(bh);
-    bc.appendChild(el('div','head-sep'));
     bor.forEach(function(cell,i){
       var lab=cellLabel(cell.label);  /* pas de roman dans la case → homogène avec les degrés */
       var d=el('div','cell'+((activeCol===7&&activeRow===i)?' active':''),lab);
@@ -1019,6 +1017,11 @@
       bc.appendChild(d);
     });
     g.appendChild(bc);
+    var _gs=el('div','grid-sep'); g.appendChild(_gs);
+    requestAnimationFrame(function(){
+      var _fh=g.querySelector('.head');
+      if(_fh) _gs.style.top=(_fh.offsetTop+_fh.offsetHeight)+'px';
+    });
   }
 
   // Applique le schéma de couleur courant aux en-têtes (sans reconstruire la grille).
