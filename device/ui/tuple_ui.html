@@ -22,7 +22,7 @@
     --display:'Syne',var(--sans);
   }
   *{box-sizing:border-box;margin:0;padding:0;-webkit-user-select:none;user-select:none;outline:none}
-  html{height:100%;overflow:hidden}
+  html{height:100%;overflow:hidden;background:#232323}
   body::before{
     content:'';position:fixed;top:0;left:10px;right:10px;height:2px;z-index:999;pointer-events:none;
     background:linear-gradient(90deg, transparent 0%, rgba(255,255,255,.08) 25%, rgba(255,255,255,.13) 50%, rgba(255,255,255,.08) 75%, transparent 100%);
@@ -133,6 +133,14 @@
   .sync.flash{background:var(--gold-dim);border-color:var(--gold-bd);color:var(--gold);transition:none}
   .sync.auto{color:var(--gold);border-color:rgba(255,220,130,.38);background:rgba(255,220,130,.09)}  /* auto-sync ON */
   .csel.locked{opacity:.45;pointer-events:none}   /* KEY/SCALE locked while auto-sync follows Live */
+  .acc-btn{
+    flex:0 0 auto;padding:0 6px;display:flex;align-items:center;justify-content:center;
+    cursor:pointer;background:var(--cell);border:1px solid var(--cell-bd);
+    border-radius:5px;color:var(--muted);font-size:11px;font-weight:700;
+    transition:all .1s;user-select:none;letter-spacing:-.5px;height:100%;
+  }
+  .acc-btn:hover{background:rgba(255,255,255,.08)}
+  .acc-btn.flat{color:var(--blue);border-color:rgba(142,204,232,.38);background:rgba(142,204,232,.09)}
   /* OPEN/CLOSE : flash doré bref. Background comme sync (gold-dim), border
      plus opaque que sync (var(--gold) 100%) car le bouton est plus grand —
      1px à 28% alpha est invisible sur un élément large. */
@@ -399,36 +407,36 @@
   body.strip .grid{display:none}
   /* PUSH/COULEURS/ALWAYS ON TOP vivent dans le groupe .devgrp (colonne droite),
      full uniquement → cachés en strip via .devgrp (réglé plus bas). */
-  /* margin-bottom négatif : annule le slot space-between fantôme de la lbl-row (Tonality, h:0)
-     pour que l'écart logo→KEY corresponde aux autres (≈6px) */
-  body.strip .brand{display:block;font-family:var(--display);font-weight:700;font-size:12px;color:var(--gold);line-height:1;letter-spacing:.01em;margin-bottom:-8px}
+  body.strip .brand{display:block;font-family:var(--display);font-weight:700;font-size:12px;color:var(--gold);line-height:1;letter-spacing:.01em}
   body.strip{background-color:#232323}
 
   /* Strip : insets identiques sur les 2 colonnes (8px haut/bas, 6px côtés) +
      répartition space-between → éléments alignés haut/bas entre colonnes, gaps réguliers. */
-  body.strip .config{width:205px;flex:0 0 205px;padding:8px 6px;gap:0;justify-content:space-between;background:rgba(255,255,255,.016)}
-  body.strip .mon   {flex:1;padding:8px 6px;display:flex;flex-direction:column;gap:0;justify-content:space-between;background:rgba(255,255,255,.016)}
-  body.strip .cfg-spacer{display:none}   /* space-between gère l'espace, pas de spacer */
+  body.strip .config{width:205px;flex:0 0 205px;padding:0 6px;gap:0;justify-content:space-evenly;background:#232323}
+  body.strip .mon   {flex:1;padding:8px 6px;display:flex;flex-direction:column;gap:0;justify-content:space-between;background:#232323}
+  body.strip .cfg-spacer{display:none}   /* space-evenly gère l'espace, pas de spacer */
   body.strip .lbl   {display:none}
   body.strip .zone  {display:contents}
-  body.strip .sep   {flex:none;height:1px;margin:0;background:linear-gradient(to right, transparent 0%, rgba(255,255,255,.06) 25%, rgba(255,255,255,.06) 75%, transparent 100%)}
+  body.strip .sep   {display:none}
 
-  /* Strip — key row (20px = hauteur STANDARD de tous les contrôles du strip) */
-  body.strip .row          {height:20px;flex:none;display:flex;gap:5px}
+  /* Strip — key row (18px = hauteur STANDARD de tous les contrôles du strip) */
+  body.strip .row          {height:18px;flex:none;display:flex;gap:5px}
   body.strip .row .csel    {flex:1;height:100%;padding:0 7px;font-size:10px}
-  body.strip .lbl-row      {height:20px;flex:none;justify-content:flex-end}   /* sync sur sa propre ligne au-dessus de KEY/SCALE (comme en full), aligné à droite */
-  body.strip .lbl-row .sync{height:20px;width:26px;font-size:10px}
+  body.strip .lbl-row      {height:18px;flex:none;justify-content:flex-end}
+  body.strip .lbl-row .sync{height:100%;padding:0 6px;width:auto;font-size:9px;letter-spacing:.07em}
+  body.strip .lbl-row .acc-btn{height:100%;padding:0 5px;font-size:10px}
+  body.strip #zTon + .sep  {display:none}
   body.strip .krow         {padding-right:0}
   body.strip .krow .csel .cl{font-size:8px}   /* labels KEY/SCALE gardés mais compacts (la sync déplacée a libéré la largeur → la valeur C# tient quand même) */
 
   /* Strip — octave */
-  body.strip .oct          {height:20px;flex:none;display:flex;gap:5px}
+  body.strip .oct          {height:18px;flex:none;display:flex;gap:5px}
   body.strip .oct span     {padding:0;font-size:8px;display:flex;align-items:center;justify-content:center}
 
   /* Strip — voicing zone */
-  body.strip #voicing      {flex:none;height:20px;padding:0 7px;font-size:10px}
-  body.strip #vl           {flex:none;height:20px;padding:0;font-size:8.5px;display:flex;align-items:center;justify-content:center}
-  body.strip #vlmode       {flex:none;height:20px;padding:0 7px;font-size:8.5px;display:flex;align-items:center;justify-content:space-between}
+  body.strip #voicing      {flex:none;height:18px;padding:0 7px;font-size:10px}
+  body.strip #vl           {flex:none;height:18px;padding:0;font-size:8.5px;display:flex;align-items:center;justify-content:center}
+  body.strip #vlmode       {flex:none;height:18px;padding:0 7px;font-size:8.5px;display:flex;align-items:center;justify-content:space-between}
 
   /* Strip — monitor */
   body.strip .toggle       {height:46px;margin-top:0}
@@ -437,7 +445,7 @@
   body.strip .chord .deg .r{font-size:8px}
   body.strip .chord .deg .f{font-size:7px}
   body.strip .chord .cn    {font-size:13px;font-weight:700;letter-spacing:.01em;line-height:1.1;font-family:var(--sans)}
-  body.strip .chord .ns    {font-size:9px;letter-spacing:.04em;color:var(--muted2);font-family:var(--mono)}
+  body.strip .chord .ns    {font-size:11px;letter-spacing:.04em;color:var(--muted2);font-family:var(--mono)}
   body.strip .keys         {flex:none;height:36px;margin-top:9px}  /* bas du clavier aligné avec le bas de la case VOICING (gauche) */
 
   /* ── FULL MODE ── */
@@ -455,7 +463,9 @@
   body.full .row           {height:32px;flex:none;display:flex;gap:8px}
   body.full .row .csel     {flex:1;height:100%;padding:0 10px;font-size:11px}
   body.full .lbl-row .lbl  {margin-bottom:0}
-  body.full .lbl-row .sync {flex:none;height:24px;width:32px;font-size:11px}
+  body.full .lbl-row .sync {flex:none;height:24px;padding:0 8px;width:auto;font-size:10px;letter-spacing:.07em}
+  body.full .lbl-row .acc-btn{flex:none;height:24px;padding:0 7px;font-size:10px}
+  .ton-btns{display:flex;gap:4px;align-items:center;flex:none}
 
   body.full .oct           {height:32px;flex:none;display:flex;gap:8px}
   body.full .oct span      {font-size:11px;padding:0;display:flex;align-items:center;justify-content:center}
@@ -486,7 +496,7 @@
   body.full .chord .deg .r {font-size:13px}
   body.full .chord .deg .f {font-size:9px}
   body.full .chord .cn     {font-size:32px;font-weight:700;letter-spacing:-.01em;line-height:1;color:var(--gold)}
-  body.full .chord .ns     {font-size:11px;letter-spacing:.06em;color:var(--muted2);font-family:var(--mono)}
+  body.full .chord .ns     {font-size:13px;letter-spacing:.06em;color:var(--muted2);font-family:var(--mono)}
   body.full .keys          {flex:none;height:52px}
   body.full .chord,body.full .keys{border-radius:7px}
 
@@ -656,7 +666,10 @@
       <div class="zone" id="zTon">
         <div class="lbl-row">
           <div class="lbl">Tonality</div>
-          <div class="sync" id="sync">♭<span style="font-size:.72em;vertical-align:super;line-height:0;margin-left:1px">♯</span></div>
+          <div class="ton-btns">
+            <div class="sync" id="sync">SYNC</div>
+            <div class="acc-btn" id="accidental" title="Toggle sharp/flat notation">♭/#</div>
+          </div>
         </div>
         <div class="row krow">
           <div class="csel" id="key" style="flex:1"><span class="cl">KEY</span><span class="cv" id="keyV">E</span></div>
@@ -775,7 +788,12 @@
 <script>
   // ── STATE ──
   var DEG      = [['I','Tonic'],['II','Supertonic'],['III','Mediant'],['IV','Subdominant'],['V','Dominant'],['VI','Submediant'],['VII','Leading']];
-  var KEYS     = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+  var KEYS      = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+  var KEYS_FLAT = ['C','Db','D','Eb','E','F','Gb','G','Ab','A','Bb','B'];
+  var _useFlats = localStorage.getItem('tuple_useFlats') === '1';
+  var _S2F = {'C#':'Db','D#':'Eb','F#':'Gb','G#':'Ab','A#':'Bb'};
+  function _activeKeys(){ return _useFlats ? KEYS_FLAT : KEYS; }
+  function cellLabel(lbl){ return _useFlats ? lbl.replace(/[A-G]#/g, function(m){ return _S2F[m]||m; }) : lbl; }
   var SCALES   = ['Major','Minor','Dorian','Phrygian','Lydian','Mixolydian','Harm.Min','Mel.Min','Locrian','Penta Maj','Penta Min','Lyd. Dom'];
   var VOICINGS = ['Classic','Piano','Open','Spread','House','Prog','Rootless A','Rootless B','Drop 2','Drop 3','Jazz','Nu-House','Trap','Trance','Funk'];
   var VLMODES  = ['ANCHOR','FLOW'];
@@ -806,7 +824,7 @@
   var bor  = [];
   var tmpCols = null, tmpBor = null;
   var state = { root:4, scaleIdx:1, oct:0, voicingIdx:0, vl:false, vlmodeIdx:0, strumMs:0, strumRamp:0, strumCurveIdx:0, humanize:0 };
-  var activeCol = -1, activeRow = -1, activeChordName = '';
+  var activeCol = -1, activeRow = -1, activeChordName = '', _lastNotes = [];
   var mode = 'strip';
   var windowOpen = false;
   var _updTag = '';
@@ -823,7 +841,7 @@
 
   // ── UTILS ──
   function el(tag,cls,txt){var e=document.createElement(tag);if(cls)e.className=cls;if(txt!=null)e.textContent=txt;return e;}
-  function midiToName(n){return KEYS[n%12]+(Math.floor(n/12)-1);}
+  function midiToName(n){return _activeKeys()[n%12]+(Math.floor(n/12)-1);}
   // Libellé de degré : [chiffre romain, nom de fonction]. Col 7 = emprunt. Source unique.
   function degOf(c){ return c===7 ? ['♭','Borrowed'] : DEG[c]; }
 
@@ -973,7 +991,7 @@
       h.style.borderBottom='2px solid '+degColorFor(c); h.style.paddingBottom='2px';
       col.appendChild(h);
       (cols[c]||[]).forEach(function(cell,row){
-        var d=el('div','cell'+((activeCol===c&&activeRow===row)?' active':''),cell.label);
+        var d=el('div','cell'+((activeCol===c&&activeRow===row)?' active':''),cellLabel(cell.label));
         d.setAttribute('data-col',c); d.setAttribute('data-row',row);
         (function(cc,rr,dd){ dd.onmousedown=function(e){ _cellDown(e,cc,rr,dd); }; })(c,row,d);
         col.appendChild(d);
@@ -983,7 +1001,7 @@
     var bc=el('div','col bor');
     var bh=el('div','head'); var bd=degOf(7); bh.innerHTML='<span class="r">'+bd[0]+'</span> <span class="f">'+bd[1]+'</span>'; bh.style.borderBottom='2px solid '+borColorFor(); bh.style.paddingBottom='2px'; bc.appendChild(bh);
     bor.forEach(function(cell,i){
-      var lab=cell.label;  /* pas de roman dans la case → homogène avec les degrés */
+      var lab=cellLabel(cell.label);  /* pas de roman dans la case → homogène avec les degrés */
       var d=el('div','cell'+((activeCol===7&&activeRow===i)?' active':''),lab);
       d.setAttribute('data-col',7); d.setAttribute('data-row',i);
       (function(ii,dd){ dd.onmousedown=function(e){ _cellDown(e,7,ii,dd); }; })(i,d);
@@ -1075,7 +1093,7 @@
   }
 
   function renderConfig(){
-    document.getElementById('keyV').textContent     = KEYS[state.root]||'C';
+    document.getElementById('keyV').textContent     = _activeKeys()[state.root]||'C';
     document.getElementById('scaleV').textContent   = SCALES[state.scaleIdx]||'Minor';
     document.getElementById('voicingV').textContent = VOICINGS[state.voicingIdx]||'Classic';
     var vl=document.getElementById('vl');
@@ -1149,7 +1167,8 @@
 
   function renderNotes(arr){
     var midi=(arr||[]).map(Number).filter(function(n){ return !isNaN(n)&&n>=0&&n<128; });
-    document.getElementById('chordName').textContent = activeChordName||'—';
+    _lastNotes = midi;
+    document.getElementById('chordName').textContent = cellLabel(activeChordName)||'—';
     document.getElementById('noteNames').textContent = midi.map(midiToName).join(' · ');
     var degEl=document.getElementById('degDisplay');
     if(degEl){
@@ -1332,7 +1351,12 @@
       var n=document.getElementById('upd-reload-note'); if(n){ n.classList.add('ok'); n.textContent='Done ✓ — close and reopen the device to apply.'; }
       var b=document.getElementById('ib-upd-install'); if(b){ b.textContent='Done ✓'; b.style.pointerEvents='none'; b.style.opacity='0.6'; }
     });
+    M.bindInlet('updateerror', function(){
+      var n=document.getElementById('upd-reload-note'); if(n){ n.textContent='Download failed — please install manually from tuple.live.'; }
+      var b=document.getElementById('ib-upd-install'); if(b){ b.textContent='Failed ✗'; b.style.pointerEvents=''; b.style.opacity='1'; }
+    });
     // ── Auto-sync: engine echoes the autosync state → reflect on the SYNC button + KEY/SCALE lock ──
+    M.bindInlet('useflats', function(v){ _useFlats=parseInt(v)!==0; localStorage.setItem('tuple_useFlats',_useFlats?'1':'0'); _applyAccidental(); });
     M.bindInlet('autosync', function(v){ _autoOn=parseInt(v)!==0; var btn=document.getElementById('sync'); if(btn){ btn.classList.toggle('auto',_autoOn); btn.title=_autoOn?'Auto-sync ON — follows Live key/scale. Click to disable.':'Sync with Live key/scale'; } updateAutoLock(); });
     M.bindInlet('strumms',   function(v){ state.strumMs=parseInt(v)||0; renderExpr(); });
     M.bindInlet('strumramp', function(v){ state.strumRamp=parseInt(v)||0; renderExpr(); });
@@ -1458,7 +1482,7 @@
 
   document.getElementById('key').onclick = function(e){
     e.stopPropagation();
-    openDrop('key','KEY',KEYS,state.root,3,function(i,name){
+    openDrop('key','KEY',_activeKeys(),state.root,3,function(i,name){
       state.root=i; document.getElementById('keyV').textContent=name; send('rootidx',i);
     });
   };
@@ -1489,10 +1513,27 @@
       apply((getIdx()+(e.deltaY>0?-1:1)+n)%n);
     }, {passive:false});
   }
-  wheelMenu('key',     function(){return KEYS;},     function(){return state.root;},      function(i){ state.root=i;       document.getElementById('keyV').textContent=KEYS[i];        send('rootidx',i); });
+  wheelMenu('key',     function(){return _activeKeys();}, function(){return state.root;}, function(i){ state.root=i; document.getElementById('keyV').textContent=_activeKeys()[i]; send('rootidx',i); });
   wheelMenu('scale',   function(){return SCALES;},   function(){return state.scaleIdx;},   function(i){ state.scaleIdx=i;   document.getElementById('scaleV').textContent=SCALES[i];    send('scaleidx',i); });
   wheelMenu('voicing', function(){return VOICINGS;}, function(){return state.voicingIdx;}, function(i){ state.voicingIdx=i; document.getElementById('voicingV').textContent=VOICINGS[i]; send('voicingidx',i); });
   wheelMenu('vlmode',  function(){return VLMODES;},  function(){return state.vlmodeIdx;},  function(i){ state.vlmodeIdx=i;  renderConfig(); send('vlmode',VLMODE_MSG[i]); });
+
+  // ── ♯/♭ toggle ───────────────────────────────────────────────────────────────
+  function _applyAccidental(){
+    var btn=document.getElementById('accidental'); if(!btn) return;
+    btn.classList.toggle('flat', _useFlats);
+    renderConfig();
+    renderGrid();
+    renderNotes(_lastNotes);
+  }
+  document.getElementById('accidental').onclick = function(e){
+    e.stopPropagation();
+    _useFlats = !_useFlats;
+    localStorage.setItem('tuple_useFlats', _useFlats ? '1' : '0');
+    if(M) send('useflats', _useFlats ? 1 : 0);   // engine relays to both jwebs
+    else _applyAccidental();                        // demo: no engine
+  };
+  _applyAccidental();   // init button icon (re-render driven by engine echo on boot)
 
   // Feedback OPEN/CLOSE : flash doré bref au mousedown, identique au sync.
   document.getElementById('toggleBtn').onmousedown = function(){ pressFlash(this); };
@@ -1906,6 +1947,7 @@
   if(location.search.indexOf('full')!==-1) setMode('full');
   if(M){
     bind(); renderConfig(); renderNotes([]);
+    send('useflats', _useFlats ? 1 : 0);   // bootstrap: sync pref to engine → both jwebs apply
     send('requeststate'); send('requestgrid'); send('capture',0);   // une seule fois, APRÈS bind()
   }
   else  { setMode('full'); loadDemo(); }
