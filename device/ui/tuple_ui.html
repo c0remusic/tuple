@@ -131,6 +131,8 @@
   }
   .sync:hover{background:rgba(255,255,255,.08)}
   .sync.flash{background:var(--gold-dim);border-color:var(--gold-bd);color:var(--gold);transition:none}
+  .sync.auto{color:var(--gold);border-color:rgba(255,220,130,.38);background:rgba(255,220,130,.09)}  /* auto-sync ON */
+  .csel.locked{opacity:.45;pointer-events:none}   /* KEY/SCALE locked while auto-sync follows Live */
   /* OPEN/CLOSE : flash doré bref. Background comme sync (gold-dim), border
      plus opaque que sync (var(--gold) 100%) car le bouton est plus grand —
      1px à 28% alpha est invisible sur un élément large. */
@@ -531,30 +533,34 @@
     transition:background .1s,color .1s}
   #info-box .ib-close:hover{background:rgba(237,233,224,.10);color:var(--txt)}
   /* ── UPDATE / DOWNLOAD VIEW (replaces About when an update is available) ── */
-  #ib-update-view{display:flex;flex-direction:column;gap:12px}
-  .ib-upd-headline{font-family:var(--display);font-weight:700;font-size:16px;color:var(--txt);line-height:1.1}
-  .ib-upd-ver{display:flex;align-items:baseline;gap:8px;font-size:13px;font-weight:600;color:var(--gold);margin-top:-6px}
-  .ib-upd-ver .ib-upd-cur{font-size:9px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:var(--muted2)}
-  .ib-upd-notes{max-height:200px;overflow-y:auto;font-size:11px;line-height:1.55;color:rgba(237,233,224,.82);
-    background:rgba(0,0,0,.18);border:1px solid rgba(237,233,224,.08);border-radius:6px;padding:10px 12px;
-    white-space:pre-wrap;word-break:break-word;-webkit-user-select:text;user-select:text}
-  .ib-upd-notes b{color:var(--gold);font-weight:700}
-  .ib-upd-status{font-size:10px;color:var(--muted);min-height:12px;text-align:center}
-  .ib-upd-status.ok{color:var(--gold)}
-  .ib-upd-status.err{color:#E88E8E}
-  .ib-upd-btn{height:34px;display:flex;align-items:center;justify-content:center;border-radius:6px;
-    font-size:10px;font-weight:700;letter-spacing:.10em;text-transform:uppercase;cursor:pointer;transition:background .1s,opacity .1s}
+  #ib-about{display:flex;flex-direction:column;gap:14px}
+  #ib-about.hidden{display:none}
+  #ib-update-view{display:none;flex-direction:column;gap:12px}
+  #ib-update-view.active{display:flex}
+  body.strip #ib-about{gap:2px}
+  .ib-upd-version{font-size:12px;color:var(--muted)}
+  .ib-upd-version .upd-new-tag{color:var(--gold);font-weight:700}
+  #upd-changelog{font-size:10.5px;line-height:1.6;color:var(--muted);max-height:160px;overflow-y:auto;padding:2px 0;white-space:pre-wrap;-webkit-user-select:text;user-select:text}
+  .ib-upd-btns{display:flex;gap:5px}
+  .ib-upd-btn{flex:1;height:30px;display:flex;align-items:center;justify-content:center;border-radius:6px;
+    font-size:9.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;cursor:pointer;transition:background .1s,opacity .1s}
   .ib-upd-btn.primary{background:rgba(255,220,130,.85);color:#1a1a1a}
   .ib-upd-btn.primary:hover{background:var(--gold)}
-  .ib-upd-ignore{font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);text-align:center;cursor:pointer;transition:color .1s}
-  .ib-upd-ignore:hover{color:var(--txt)}
-  /* strip = short window : compact update view */
-  body.strip #ib-update-view{gap:7px}
-  body.strip .ib-upd-headline{font-size:13px}
-  body.strip .ib-upd-ver{font-size:11px;margin-top:-3px}
-  body.strip .ib-upd-notes{max-height:84px;font-size:10px;padding:7px 9px}
-  body.strip .ib-upd-btn{height:26px;font-size:9px}
-  #brandLogo.has-update::after{content:'';display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--gold);margin-left:4px;vertical-align:middle;position:relative;top:-1px}
+  .ib-upd-btn.dim{background:rgba(237,233,224,.07);color:var(--muted)}
+  .ib-upd-btn.dim:hover{background:rgba(237,233,224,.13);color:var(--txt)}
+  #upd-reload-note{font-size:9px;color:var(--muted2);text-align:center;letter-spacing:.03em;line-height:1.4;display:none}
+  #ib-update-view.active #upd-reload-note{display:block}
+  #upd-reload-note.ok{color:var(--gold)}
+  #upd-reload-note.err{color:#E88E8E}
+  #upd-show-changelog{display:none}
+  body.strip #upd-changelog{display:none}
+  body.strip #ib-update-view{gap:6px}
+  body.strip #ib-update-view hr{display:none}
+  body.strip #upd-show-changelog{display:flex;align-items:center;justify-content:center;font-size:8.5px;color:var(--muted);cursor:pointer;letter-spacing:.04em;text-decoration:underline;text-decoration-color:rgba(237,233,224,.18);margin-top:2px}
+  body.strip #upd-show-changelog:hover{color:var(--txt)}
+  /* Logo update marker — text pill "↑ vX.Y.Z" (more visible than a dot) */
+  #upd-logo-badge{display:none;margin-left:6px;background:rgba(255,220,130,.18);border:1px solid rgba(255,220,130,.38);border-radius:3px;padding:1px 5px;font-size:8px;font-weight:700;letter-spacing:.06em;color:var(--gold);font-family:var(--sans);vertical-align:middle;position:relative;top:-1px}
+  #brandLogo.has-update #upd-logo-badge{display:inline}
   #info-box .ib-guide{margin-top:2px;height:30px;display:flex;align-items:center;justify-content:center;
     font-size:10px;letter-spacing:.12em;text-transform:uppercase;
     background:var(--gold-dim);border:1px solid transparent;border-radius:5px;cursor:pointer;color:var(--gold);
@@ -595,7 +601,7 @@
   <div id="info-overlay">
     <div id="info-box">
       <!-- ABOUT VIEW (default) -->
-      <div id="ib-about-view">
+      <div id="ib-about">
         <div class="ib-logo">Tuple</div>
         <div class="ib-tag">Max for Live · Harmonic composition tool</div>
         <hr>
@@ -608,16 +614,21 @@
         <div class="ib-guide" id="guideBtn">Replay guide tour</div>
         <div class="ib-close" id="infoClose">Close</div>
       </div>
-      <!-- UPDATE / DOWNLOAD VIEW (shown when an update is available) -->
-      <div id="ib-update-view" style="display:none">
-        <div class="ib-logo">Tuple</div>
-        <div class="ib-upd-headline">New version available</div>
-        <div class="ib-upd-ver"><span id="ib-upd-tag"></span><span class="ib-upd-cur">you have v<span id="ib-upd-cur"></span></span></div>
-        <div class="ib-upd-notes" id="ib-upd-notes"></div>
-        <div class="ib-upd-status" id="ib-upd-status"></div>
-        <div class="ib-upd-btn primary" id="ib-upd-install">Install</div>
-        <div class="ib-upd-ignore" id="ib-upd-ignore">Ignore this version</div>
-        <div class="ib-close" id="infoCloseUpd">Close</div>
+      <!-- UPDATE / DOWNLOAD VIEW (replaces About when an update is available) -->
+      <div id="ib-update-view">
+        <div class="ib-logo" style="font-size:17px">Update available</div>
+        <div class="ib-upd-version"><span id="upd-cur"></span> → <span id="upd-new" class="upd-new-tag"></span></div>
+        <hr>
+        <div id="upd-changelog"></div>
+        <div class="ib-upd-btns">
+          <div class="ib-upd-btn primary" id="ib-upd-install">Install</div>
+        </div>
+        <div class="ib-upd-btns">
+          <div class="ib-upd-btn dim" id="ib-upd-ignore">Ignore this version</div>
+          <div class="ib-upd-btn dim" id="ib-upd-later">Later</div>
+        </div>
+        <div id="upd-reload-note">Reload the device after installing to apply all changes.</div>
+        <div id="upd-show-changelog">Show changelog →</div>
       </div>
     </div>
   </div>
@@ -639,7 +650,7 @@
     <!-- CONFIG -->
     <div class="config">
 
-      <div class="brand" id="brandLogo" title="About Tuple">Tuple</div>
+      <div class="brand" id="brandLogo" title="About Tuple">Tuple<span id="upd-logo-badge"></span></div>
 
       <!-- Zone KEY -->
       <div class="zone" id="zTon">
@@ -800,10 +811,9 @@
   var windowOpen = false;
   var _updTag = '';
   var _updAssetUrl = '';
-  var _updRequiresReinstall = false;
-  var _updNotes = '';
-  var _updAvailable = false;
-  var _UPD_SKIP_KEY = 'tuple_skip_version';
+  var _updReinstall = false;   // true = .amxd changed → installer ; false = JS/HTML → in-place
+  var _updChangelog = '';
+  var _autoOn = false;         // SYNC auto-follow Live key/scale (toggle), locks KEY/SCALE
   // Patched by build_zip.py — keep the pattern (var LOCAL_VERSION = "1.2.2";)
   var LOCAL_VERSION = '1.2.1'; // TEST ONLY — restore to 1.2.2 after testing
 
@@ -1315,12 +1325,13 @@
     M.bindInlet('smartbor',  function(index,lvl,cat,score,fluid){ _smartBuf.push({kind:'b',index:parseInt(index),lvl:parseInt(lvl),cat:String(cat),score:parseFloat(score),fluid:parseFloat(fluid)}); });
     M.bindInlet('smartdone', function(){ _smartRender(); });
     M.bindInlet('sync',      function(){ if(!syncClickPending) flash(document.getElementById('sync')); });
-    // ── Updater feedback (single-token messages from tuple_dl, wired in the .amxd) ──
-    var _UPD_PROG = { downloading:'Downloading…', extracting:'Installing…', installer:'Installer launched — restart Ableton when it finishes.' };
-    var _UPD_ERR  = { download:'Download failed — check your connection.', extract:'Install failed.', nopath:"Couldn't find the install folder." };
-    M.bindInlet('updprogress',function(tok){ var st=document.getElementById('ib-upd-status'); if(st){ st.className='ib-upd-status'; st.textContent=_UPD_PROG[String(tok)]||String(tok||'Working…'); } });
-    M.bindInlet('updone',     function(){ var st=document.getElementById('ib-upd-status'); if(st){ st.className='ib-upd-status ok'; st.textContent='Done — reload the device to apply.'; } var b=document.getElementById('ib-upd-install'); if(b){ b.textContent='Done ✓'; b.style.pointerEvents='none'; b.style.opacity='0.6'; } });
-    M.bindInlet('upderr',     function(tok){ var st=document.getElementById('ib-upd-status'); if(st){ st.className='ib-upd-status err'; st.textContent=_UPD_ERR[String(tok)]||'Update failed.'; } var b=document.getElementById('ib-upd-install'); if(b){ b.textContent='Retry'; b.style.pointerEvents=''; b.style.opacity=''; } });
+    // ── Updater: engine confirms install via 'updatedone' (tuple_dl → obj-CE → outlet 7) ──
+    M.bindInlet('updatedone', function(){
+      var n=document.getElementById('upd-reload-note'); if(n){ n.classList.add('ok'); n.textContent='Done ✓ — close and reopen the device to apply.'; }
+      var b=document.getElementById('ib-upd-install'); if(b){ b.textContent='Done ✓'; b.style.pointerEvents='none'; b.style.opacity='0.6'; }
+    });
+    // ── Auto-sync: engine echoes the autosync state → reflect on the SYNC button + KEY/SCALE lock ──
+    M.bindInlet('autosync', function(v){ _autoOn=parseInt(v)!==0; var btn=document.getElementById('sync'); if(btn){ btn.classList.toggle('auto',_autoOn); btn.title=_autoOn?'Auto-sync ON — follows Live key/scale. Click to disable.':'Sync with Live key/scale'; } updateAutoLock(); });
     M.bindInlet('strumms',   function(v){ state.strumMs=parseInt(v)||0; renderExpr(); });
     M.bindInlet('strumramp', function(v){ state.strumRamp=parseInt(v)||0; renderExpr(); });
     M.bindInlet('strumcurve',function(v){ var i=parseInt(v); if(i>=0&&i<3) state.strumCurveIdx=i; renderExpr(); });
@@ -1355,34 +1366,31 @@
     return false;
   }
   // Render GitHub release notes (markdown) into the notes box — minimal + safe (escape first).
-  function _renderNotes(md) {
-    var s = String(md || '').replace(/\r/g, '');
-    s = s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');  // escape HTML
-    s = s.replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');           // **bold**
-    s = s.replace(/^[ \t]*#{1,6}[ \t]*/gm, '');               // strip heading markers
-    s = s.replace(/^[ \t]*[-*][ \t]+/gm, '• ');               // bullets -> •
-    return s;
+  // Changelog (GitHub release body, markdown) → plain text (the box is pre-wrap).
+  function _fmtChangelog(md) {
+    return String(md || '')
+      .replace(/\r/g, '')
+      .replace(/^#{1,3}\s+/gm, '')
+      .replace(/\*\*([^*]+)\*\*/g, '$1')
+      .replace(/`([^`]+)`/g, '$1')
+      .replace(/^- /gm, '• ')
+      .trim();
   }
   function _ignoredVersion() {
-    try { return localStorage.getItem(_UPD_SKIP_KEY) || ''; } catch(e) { return ''; }
-  }
-  // Switch the About overlay between the normal About card and the Download view.
-  function _setInfoView(showUpdate) {
-    document.getElementById('ib-about-view').style.display  = showUpdate ? 'none' : '';
-    document.getElementById('ib-update-view').style.display = showUpdate ? 'flex' : 'none';
+    try { return localStorage.getItem('tuple-ignored-version') || ''; } catch(e) { return ''; }
   }
   function _showUpdateUI(tag) {
     _updTag = String(tag);
-    _updAvailable = true;
-    document.getElementById('ib-upd-tag').textContent = 'v' + _updTag;
-    document.getElementById('ib-upd-cur').textContent = LOCAL_VERSION;
-    var notesEl = document.getElementById('ib-upd-notes');
-    if (notesEl) notesEl.innerHTML = _updNotes ? _renderNotes(_updNotes) : 'See the changelog on GitHub.';
-    var inst = document.getElementById('ib-upd-install');
-    inst.textContent = 'Install';
-    inst.style.pointerEvents = ''; inst.style.opacity = '';
-    var st = document.getElementById('ib-upd-status');
-    st.textContent = ''; st.className = 'ib-upd-status';
+    document.getElementById('upd-cur').textContent = LOCAL_VERSION;
+    document.getElementById('upd-new').textContent = 'v' + _updTag;
+    document.getElementById('ib-upd-install').textContent = _updReinstall ? 'Download' : 'Install';
+    document.getElementById('ib-upd-install').style.pointerEvents = '';
+    document.getElementById('ib-upd-install').style.opacity = '';
+    document.getElementById('ib-upd-ignore').textContent = 'Ignore v' + _updTag;
+    document.getElementById('upd-changelog').textContent = _fmtChangelog(_updChangelog) || 'See the changelog on GitHub.';
+    document.getElementById('upd-reload-note').textContent = 'Reload the device after installing to apply all changes.';
+    document.getElementById('upd-reload-note').style.display = _updReinstall ? 'none' : '';
+    document.getElementById('upd-logo-badge').textContent = '↑ v' + _updTag;
     document.getElementById('brandLogo').classList.add('has-update');
   }
   function checkForUpdates() {
@@ -1391,16 +1399,13 @@
     fetch('https://api.github.com/repos/c0remusic/tuple/releases/latest', {
       headers: { 'User-Agent': 'Tuple/' + LOCAL_VERSION }
     })
-    .then(function(r) {
-      console.log('[tuple upd] github status=' + r.status);
-      return r.json();
-    })
+    .then(function(r) { console.log('[tuple upd] github status=' + r.status); return r.json(); })
     .then(function(data) {
       var tag = String(data.tag_name || '').replace(/^v/, '');
       console.log('[tuple upd] tag=' + tag + ' newer=' + _isNewer(LOCAL_VERSION, tag));
       if (!tag || !_isNewer(LOCAL_VERSION, tag)) return;
-      if (tag === _ignoredVersion()) { console.log('[tuple upd] version ' + tag + ' ignored by user'); return; }
-      _updNotes = data.body || '';
+      if (tag === _ignoredVersion()) { console.log('[tuple upd] version ' + tag + ' ignored'); return; }
+      _updChangelog = String(data.body || '');
       var assets = data.assets || [];
       var zipUrl = '', installerUrl = '', versionJsonUrl = '';
       for (var i = 0; i < assets.length; i++) {
@@ -1408,30 +1413,45 @@
         if (assets[i].name === 'Tuple-Installer.exe') installerUrl   = assets[i].browser_download_url;
         if (assets[i].name === 'version.json')        versionJsonUrl = assets[i].browser_download_url;
       }
-      console.log('[tuple upd] zip=' + !!zipUrl + ' installer=' + !!installerUrl + ' versionJson=' + !!versionJsonUrl);
       function proceed(requiresReinstall) {
-        _updRequiresReinstall = !!requiresReinstall;
-        _updAssetUrl = (_isWin && _updRequiresReinstall && installerUrl) ? installerUrl : (zipUrl || installerUrl);
-        console.log('[tuple upd] reinstall=' + _updRequiresReinstall + ' url=' + _updAssetUrl);
+        _updReinstall = !!requiresReinstall;
+        // reinstall+Win → installer .exe ; otherwise the zip (in-place)
+        _updAssetUrl = (_isWin && _updReinstall && installerUrl) ? installerUrl : (zipUrl || installerUrl);
+        console.log('[tuple upd] reinstall=' + _updReinstall + ' url=' + _updAssetUrl);
         _showUpdateUI(tag);
       }
       if (versionJsonUrl) {
         fetch(versionJsonUrl).then(function(r){ return r.json(); })
           .then(function(vj){ proceed(vj.requires_reinstall); })
           .catch(function(e){ console.log('[tuple upd] version.json err: ' + e); proceed(false); });
-      } else {
-        proceed(false);
-      }
+      } else { proceed(false); }
     })
     .catch(function(e) { console.log('[tuple upd] fetch error: ' + e); });
   }
 
   // ── CONTROLS ──
-  // mousedown (pas click) → feedback + action au moment de l'appui, sans latence.
-  document.getElementById('sync').onmousedown = function(){
-    syncClickPending=true;
-    setTimeout(function(){ syncClickPending=false; },400);
-    pressFlash(this); send('synclive');
+  // SYNC = auto-follow toggle (like Tupline). ON → engine observes Live key/scale
+  // and re-syncs on every change; KEY/SCALE are locked (they follow Live).
+  function updateAutoLock(){
+    var k=document.getElementById('key'), s=document.getElementById('scale');
+    if(!k||!s) return;
+    if(_autoOn){ k.classList.add('locked'); s.classList.add('locked'); }
+    else       { k.classList.remove('locked'); s.classList.remove('locked'); }
+  }
+  document.getElementById('sync').onmousedown = function(e){
+    if(e) e.preventDefault();
+    var btn = document.getElementById('sync');
+    _autoOn = !_autoOn;
+    btn.classList.toggle('auto', _autoOn);
+    btn.title = _autoOn ? 'Auto-sync ON — follows Live key/scale. Click to disable.' : 'Sync with Live key/scale';
+    updateAutoLock();
+    if(_autoOn){
+      send('autosync', 1);
+      syncClickPending=true; setTimeout(function(){ syncClickPending=false; },400);
+      pressFlash(btn); send('synclive');
+    } else {
+      send('autosync', 0);
+    }
   };
 
   document.getElementById('key').onclick = function(e){
@@ -1724,36 +1744,49 @@
   // About = clic sur le logo (le bouton About dédié a été retiré, redondant)
   document.getElementById('brandLogo').onmousedown = function(e){ if(e)e.preventDefault(); };
   document.getElementById('brandLogo').onclick = function(){
-    _setInfoView(_updAvailable);                 // update available → Download view, else normal About
     document.getElementById('info-overlay').classList.add('open');
+    // update available → show the Download view in place of About; else the About card
+    if (_updTag) {
+      document.getElementById('ib-about').classList.add('hidden');
+      document.getElementById('ib-update-view').classList.add('active');
+    } else {
+      document.getElementById('ib-about').classList.remove('hidden');
+      document.getElementById('ib-update-view').classList.remove('active');
+    }
   };
   function _closeInfo(){ document.getElementById('info-overlay').classList.remove('open'); }
-  document.getElementById('infoClose').onclick    = _closeInfo;
-  document.getElementById('infoCloseUpd').onclick = _closeInfo;
+  document.getElementById('infoClose').onclick = _closeInfo;
   document.getElementById('ib-upd-install').onclick = function(){
     var url = _updAssetUrl || 'https://github.com/c0remusic/tuple/releases/latest';
     if (!M) { window.open(url); return; }
-    var btn = document.getElementById('ib-upd-install');
-    btn.textContent = 'Installing…';
-    btn.style.pointerEvents = 'none';
-    btn.style.opacity = '0.6';
-    var st = document.getElementById('ib-upd-status');
-    st.className = 'ib-upd-status'; st.textContent = 'Downloading…';
-    if (_isWin && _updRequiresReinstall) {
-      send('installupdate', url, 'win');          // télécharge + lance l'installeur .exe
-    } else if (_isWin) {
-      send('installupdate', url, 'win-inplace');   // extrait le zip en place (.amxd EBUSY skippé)
-    } else {
-      send('installupdate', url, 'mac');            // extrait le zip en place (POSIX)
+    // reinstall (.amxd changed): Win → auto installer ; Mac → releases page (.command)
+    if (_updReinstall) {
+      if (!_isWin) { send('openurl', 'https://github.com/c0remusic/tuple/releases/latest'); _closeInfo(); return; }
+      var b0 = document.getElementById('ib-upd-install'); b0.textContent='Installing…'; b0.style.pointerEvents='none'; b0.style.opacity='0.6';
+      document.getElementById('upd-reload-note').textContent = 'Installer launched — restart Ableton when it finishes.';
+      send('installupdate', url, 'win');
+      return;
     }
+    // in-place (JS/HTML only)
+    var btn = document.getElementById('ib-upd-install');
+    btn.textContent = 'Installing…'; btn.style.pointerEvents = 'none'; btn.style.opacity = '0.6';
+    document.getElementById('upd-reload-note').textContent = 'Downloading… keep Ableton open.';
+    send('installupdate', url, _isWin ? 'win-inplace' : 'mac');
   };
+  document.getElementById('ib-upd-later').onclick = function(){ _closeInfo(); };
   // "Ignore this version" — remember the tag so we stop notifying for it.
   document.getElementById('ib-upd-ignore').onclick = function(){
-    try { localStorage.setItem(_UPD_SKIP_KEY, _updTag); } catch(e) {}
-    _updAvailable = false;
+    try { localStorage.setItem('tuple-ignored-version', _updTag); } catch(e) {}
+    _updTag = '';
     document.getElementById('brandLogo').classList.remove('has-update');
-    _setInfoView(false);   // fall back to the normal About card
+    document.getElementById('upd-logo-badge').textContent = '';
+    document.getElementById('ib-update-view').classList.remove('active');
+    document.getElementById('ib-about').classList.remove('hidden');
+    _closeInfo();
   };
+  // strip: changelog hidden to save height → "Show changelog →" opens the full window
+  var _showCl = document.getElementById('upd-show-changelog');
+  if (_showCl) _showCl.onclick = function(){ _closeInfo(); windowOpen = true; setToggle(true); send('openwindow', 'full'); };
   document.getElementById('info-overlay').onclick = function(e){ if(e.target===this) this.classList.remove('open'); };
 
   // ── ONBOARDING TOUR (full window only) ──
@@ -1883,10 +1916,12 @@
       try { tourMarkSeen(); } catch(e) {}
       var tov = document.getElementById('tour-ov'); if (tov) tov.classList.remove('open');
       var tp  = document.getElementById('tour-pop'); if (tp) tp.style.display = 'none';
-      _updNotes = '## Tuple v1.3.0\n\n- **Auto-updater**: in-app download & install\n- New Download window with release notes\n- "Ignore this version" option\n- Strum & Humanize expression controls\n- Progression drawer → write to clip';
+      _updChangelog = '## Tuple v1.3.0\n\n- Auto-updater: in-app download & install\n- New Download window with release notes\n- "Ignore this version" option\n- Strum & Humanize expression controls\n- Progression drawer → write to clip';
       _updAssetUrl = 'https://example.com/tuple.zip';
+      _updReinstall = false;
       _showUpdateUI('1.3.0');
-      _setInfoView(true);
+      document.getElementById('ib-about').classList.add('hidden');
+      document.getElementById('ib-update-view').classList.add('active');
       document.getElementById('info-overlay').classList.add('open');
     };
     _previewUpd();

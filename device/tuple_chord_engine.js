@@ -226,7 +226,7 @@ var LIST_DISPATCH = {
 	openurl: openurl, openwindow: openwindow, installupdate: installupdate,
 	capture: capture, sendclip: sendclip, clearprog: clearprog, removelast: removelast,
 	removeat: removeat, setcursor: setcursor, playprog: playprog, moveprog: moveprog,
-	captureone: captureone
+	captureone: captureone, autosync: setautosync, progress: handleprogress
 };
 function list() {
 	var a = Array.prototype.slice.call(arguments);
@@ -261,7 +261,11 @@ function keynoteup(ascii) { }
 // pour le moteur : on les avale pour ne pas polluer la console Max.
 function onbeforeload() {}
 function onloadstart()  {}
-function onloadend()    {}
+function onloadend()    {
+	// jweb finished loading — safe to init the LiveAPI auto-sync observers now.
+	if (typeof Task !== 'undefined') { var t = new Task(function(){ _initAutoSync(); }, this); t.schedule(300); }
+	else { _initAutoSync(); }
+}
 function url()          {}
 function title()        {}
 
@@ -276,15 +280,49 @@ function openurl(u) {
 		post('tuple: openurl error: ' + e + '\n');
 	}
 }
+// ── Auto-updater install (node.script tuple_dl) ──────────────────────────────
+// The node.script boots its Node process lazily — the FIRST 'dl' message hits
+// "Node script not ready can't handle message dl". So: kick the script, then
+// RETRY 'dl' up to 6× (1.5 s apart) until Node answers. tuple_dl's _busy lock
+// ignores the duplicate 'dl' once a download is running (→ a single download).
+// handleprogress('done') clears _dlUrl, which makes the next _doDl tick stop the
+// retry loop. THIS retry/kick is what made the in-app install actually work.
+var _dlUrl = null, _dlPlatform = null, _dlAmxdPath = null, _dlAttempts = 0;
 function installupdate(url, platform) {
 	var ndl = _patcher ? _patcher.getnamed('tuple_dl') : null;
-	if (ndl) {
-		var fp = (_patcher && _patcher.filepath) ? String(_patcher.filepath) : '';
-		ndl.message('dl', String(url), String(platform), fp);
-		post('tuple: installupdate → node.script (platform=' + platform + ')\n');
-	} else {
+	if (!ndl) {
 		post('tuple: installupdate — tuple_dl not found, fallback to browser\n');
 		openurl(String(url));
+		return;
+	}
+	if (_dlUrl) { post('tuple: installupdate — already pending, ignoring\n'); return; }
+	post('tuple: installupdate → starting node.script (platform=' + platform + ')\n');
+	_dlUrl = String(url); _dlPlatform = String(platform);
+	_dlAmxdPath = _patcher ? String(_patcher.filepath) : '';
+	_dlAttempts = 0;
+	ndl.message('script', 'start');   // kick the Node.js process (no-op if already running)
+	var t = new Task(_doDl); t.schedule(1500);
+}
+function _doDl() {
+	if (!_dlUrl) return;              // cleared by handleprogress('done') → stops the retry
+	_dlAttempts++;
+	var ndl = _patcher ? _patcher.getnamed('tuple_dl') : null;
+	if (!ndl) { post('tuple: _doDl — tuple_dl gone\n'); _dlUrl = null; _dlPlatform = null; _dlAmxdPath = null; _dlAttempts = 0; return; }
+	post('tuple: _doDl attempt ' + _dlAttempts + '\n');
+	ndl.message('dl', _dlUrl, _dlPlatform, _dlAmxdPath);
+	if (_dlAttempts < 6) { var t = new Task(_doDl); t.schedule(1500); }
+	else { post('tuple: _doDl — gave up after 6 attempts\n'); _dlUrl = null; _dlPlatform = null; _dlAmxdPath = null; _dlAttempts = 0; }
+}
+// tuple_dl reports back via its outlet → obj-CE (this js) → handleprogress.
+// The message arrives as the SELECTOR 'progress <state>' (node.script outlet,
+// NOT a jweb list), so Max calls progress() directly — define it explicitly.
+// (The LIST_DISPATCH entry only covers the jweb-list path, which never fires here.)
+function progress(state) { handleprogress(state); }
+function handleprogress(state) {
+	if (String(state) === 'done') {
+		_dlUrl = null; _dlPlatform = null; _dlAmxdPath = null; _dlAttempts = 0;
+		outlet(7, 'updatedone');
+		post('tuple: update installed — reload the device to apply\n');
 	}
 }
 
@@ -364,10 +402,38 @@ function synclive() {
 		if (LIVE_SCALE_MAP[sn] !== undefined) setscale(SCALE_NAMES_ARR[LIVE_SCALE_MAP[sn]]);
 
 		pushUIState();
+		outlet(7, "sync", 1);   // flash the SYNC button in the jweb
 		post("SYNC → " + NOTE_NAMES[root] + " " + scaleName + "\n");
 	} catch(e) {
 		post("SYNC erreur : " + e + "\n");
 	}
+}
+
+// ── Auto-sync : observe Live's root_note + scale_name, re-sync on every change ──
+// Same pattern as Tupline: the observers are ALWAYS attached; the callback checks
+// the _autoSync flag before acting. The SYNC button toggles _autoSync via 'autosync'
+// and locks KEY/SCALE in the UI while ON.
+var _liveSyncApiRoot  = null;
+var _liveSyncApiScale = null;
+var _autoSync = false;
+function _taskDefer(fn) {
+	if (typeof Task !== 'undefined') { var t = new Task(fn, this); t.schedule(1); }
+	else { fn(); }
+}
+function setautosync(v) {
+	_autoSync = parseInt(v) !== 0;
+	post('tuple: auto-sync ' + (_autoSync ? 'ON' : 'OFF') + '\n');
+	if (_autoSync) _taskDefer(synclive);   // immediate sync on enable
+}
+function _initAutoSync() {
+	if (typeof LiveAPI === 'undefined') return;
+	try {
+		_liveSyncApiRoot  = new LiveAPI(function(){ if (_autoSync) _taskDefer(synclive); }, 'live_set');
+		_liveSyncApiRoot.property  = 'root_note';
+		_liveSyncApiScale = new LiveAPI(function(){ if (_autoSync) _taskDefer(synclive); }, 'live_set');
+		_liveSyncApiScale.property = 'scale_name';
+		post('tuple: auto-sync observers ready\n');
+	} catch(e) { post('tuple: auto-sync init error: ' + e + '\n'); }
 }
 
 // Reçoit un index int (0-11) depuis live.menu
@@ -1957,6 +2023,10 @@ function colorchord(semis, type) {
 // Diffusion initiale de la grille (différée le temps que l'UI charge)
 var gridInitTask = new Task(broadcastGrid, this);
 gridInitTask.schedule(700);
+
+// Auto-sync observers — init at global scope too so autowatch reloads recreate them.
+var _autoSyncInitTask = new Task(_initAutoSync, this);
+_autoSyncInitTask.schedule(800);
 
 // =====================================================
 // SELF-CHECK — confirme que les globals critiques sont initialisés.
