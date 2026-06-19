@@ -1,11 +1,13 @@
 name: Test Mac Installer
 
 on:
+  workflow_dispatch:
   push:
     paths:
       - 'device/**'
       - 'installer/**'
       - 'build_zip.py'
+      - '.github/workflows/test-installer.yml'
   pull_request:
     paths:
       - 'device/**'
