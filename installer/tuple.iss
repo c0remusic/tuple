@@ -3,7 +3,7 @@
 ; #define AppVersion is patched by build_zip.py sync_version() — do not edit by hand.
 
 #define AppName "Tuple"
-#define AppVersion "1.2.2"
+#define AppVersion "1.3.0"
 
 [Setup]
 AppId={{B2A4C8D0-3E5F-4A2B-C6D8-1F3E5A7C9B2D}

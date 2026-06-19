@@ -6,6 +6,7 @@ Then deploy site/tuple.zip via the tuple-site worktree (see CLAUDE.md).
 
 Keep the device files validated in Max BEFORE rebuilding + deploying.
 """
+import json
 import os
 import re
 import zipfile
@@ -70,6 +71,16 @@ def sync_version():
 VERSION = sync_version()
 print("VERSION (single source) = " + VERSION)
 
+# version.json — uploaded as a separate release asset next to tuple.zip. The device
+# UI fetches it (checkForUpdates) to decide in-place update vs installer.
+# requires_reinstall defaults to False; flip it to True for a release whose .amxd
+# changed structurally (Windows can't replace the locked .amxd in place).
+REQUIRES_REINSTALL = os.environ.get("TUPLE_REQUIRES_REINSTALL", "0") == "1"
+VERSION_JSON = os.path.join(ROOT, "site", "version.json")
+with open(VERSION_JSON, "w", encoding="utf-8") as f:
+    json.dump({"version": VERSION, "requires_reinstall": REQUIRES_REINSTALL}, f)
+print("generated " + VERSION_JSON + "  (requires_reinstall=%s)" % REQUIRES_REINSTALL)
+
 # Distribution = UNFROZEN .amxd + loose .js + ui/ folder (kept together). The device
 # self-locates the UI via chord_engine.js's loadbang, which builds a cross-platform
 # file:// URL (Windows C:/… -> file:///C:/… ; macOS /Users/… -> file:///Users/…).
@@ -78,6 +89,8 @@ os.makedirs(os.path.dirname(OUT), exist_ok=True)
 with zipfile.ZipFile(OUT, "w", zipfile.ZIP_DEFLATED) as z:
     for arc, src in FILES:
         z.write(os.path.join(ROOT, src), arc)
+    # version.json inside the bundle too — lets the installed device know its own version
+    z.writestr("Tuple/version.json", json.dumps({"version": VERSION, "requires_reinstall": REQUIRES_REINSTALL}))
     # .command at ZIP root — executable bit must survive macOS Archive Utility
     zi = zipfile.ZipInfo("Install Tuple.command")
     zi.external_attr = 0o755 << 16
