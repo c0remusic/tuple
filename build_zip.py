@@ -12,7 +12,8 @@ import re
 import zipfile
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-OUT = os.path.join(ROOT, "site", "tuple.zip")
+OUT     = os.path.join(ROOT, "site", "tuple.zip")
+OUT_MAC = os.path.join(ROOT, "site", "tuple-mac.zip")
 
 # (name inside the zip, source path relative to repo root)
 FILES = [
@@ -87,19 +88,31 @@ print("generated " + VERSION_JSON + "  (requires_reinstall=%s)" % REQUIRES_REINS
 # file:// URL (Windows C:/… -> file:///C:/… ; macOS /Users/… -> file:///Users/…).
 
 os.makedirs(os.path.dirname(OUT), exist_ok=True)
+VERSION_JSON_CONTENT = json.dumps({"version": VERSION, "requires_reinstall": REQUIRES_REINSTALL})
+
+# tuple.zip — plain device files only (auto-updater included, no installer scripts)
 with zipfile.ZipFile(OUT, "w", zipfile.ZIP_DEFLATED) as z:
     for arc, src in FILES:
         z.write(os.path.join(ROOT, src), arc)
-    # version.json inside the bundle too — lets the installed device know its own version
-    z.writestr("Tuple/version.json", json.dumps({"version": VERSION, "requires_reinstall": REQUIRES_REINSTALL}))
-    # .command at ZIP root — executable bit must survive macOS Archive Utility
+    z.writestr("Tuple/version.json", VERSION_JSON_CONTENT)
+
+print("built " + OUT)
+with zipfile.ZipFile(OUT) as z:
+    for info in z.infolist():
+        print("  %8d  %s" % (info.file_size, info.filename))
+
+# tuple-mac.zip — macOS installer: Install Tuple.command + Tuple/ folder
+with zipfile.ZipFile(OUT_MAC, "w", zipfile.ZIP_DEFLATED) as z:
+    for arc, src in FILES:
+        z.write(os.path.join(ROOT, src), arc)
+    z.writestr("Tuple/version.json", VERSION_JSON_CONTENT)
     zi = zipfile.ZipInfo("Install Tuple.command")
     zi.external_attr = 0o755 << 16
     zi.compress_type = zipfile.ZIP_DEFLATED
     with open(CMD_SRC, "rb") as f:
         z.writestr(zi, f.read())
 
-print("built " + OUT)
-with zipfile.ZipFile(OUT) as z:
+print("built " + OUT_MAC)
+with zipfile.ZipFile(OUT_MAC) as z:
     for info in z.infolist():
         print("  %8d  %s" % (info.file_size, info.filename))
