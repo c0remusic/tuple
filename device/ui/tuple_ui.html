@@ -363,7 +363,7 @@
   body.dock-open #prog-toggle{order:2}
   body.dock-open #cap-dock{order:3}
   /* TOGGLE bar — toujours visible en bas (full window). Ouvre/ferme le tiroir Progression. */
-  #prog-toggle{display:none;position:relative;flex:0 0 auto;align-items:center;justify-content:center;gap:8px;cursor:pointer;height:30px;padding:0 14px}
+  #prog-toggle{display:none;position:relative;flex:0 0 auto;align-items:center;justify-content:center;gap:8px;cursor:pointer;height:30px;padding:0 14px;margin-top:6px}
   body.full #prog-toggle{display:flex}
   /* séparateur dégradé (comme la grille / les groupes). Ouvert, la barre passe EN HAUT du tiroir :
      on garde SON filet (il coiffe le tiroir) et on masque celui du tiroir → pas de double trait. */
@@ -410,7 +410,7 @@
   body.strip .grid{display:none}
   /* PUSH/COULEURS/ALWAYS ON TOP vivent dans le groupe .devgrp (colonne droite),
      full uniquement → cachés en strip via .devgrp (réglé plus bas). */
-  body.strip .brand{display:block;font-family:var(--display);font-weight:700;font-size:14px;color:var(--gold);line-height:1;letter-spacing:.01em}
+  body.strip .brand{display:block;font-family:var(--display);font-weight:700;font-size:16px;color:var(--gold);line-height:1;letter-spacing:.01em}
   .brand-hint{display:none}
   body.strip .brand-hint{display:inline;font-size:7px;vertical-align:super;color:rgba(255,220,130,.45);margin-left:1px;font-family:var(--body);font-weight:600;line-height:1;cursor:pointer}
   body.full  .brand-hint{display:inline;font-size:9px;vertical-align:super;color:rgba(255,220,130,.38);margin-left:2px;font-family:var(--body);font-weight:600;line-height:1;cursor:pointer}
@@ -418,7 +418,7 @@
 
   /* Strip : insets identiques sur les 2 colonnes (8px haut/bas, 6px côtés) +
      répartition space-between → éléments alignés haut/bas entre colonnes, gaps réguliers. */
-  body.strip .config{width:205px;flex:0 0 205px;padding:2px 6px 6px;gap:0;justify-content:space-between;background:#232323}
+  body.strip .config{width:205px;flex:0 0 205px;padding:0 6px;gap:0;justify-content:space-evenly;background:#232323}
   body.strip .mon   {flex:1;padding:8px 6px;display:flex;flex-direction:column;gap:0;justify-content:space-between;background:#232323}
   body.strip .cfg-spacer{display:none}   /* space-evenly gère l'espace, pas de spacer */
   body.strip .lbl   {display:none}
