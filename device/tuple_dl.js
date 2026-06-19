@@ -38,10 +38,8 @@ function dlWin(url) {
     maxApi.post('tuple_dl: downloading → ' + dest);
     download(url, dest, function(err) {
         if (err) { maxApi.post('tuple_dl: download error: ' + err.message); return; }
-        maxApi.post('tuple_dl: launching /VERYSILENT');
-        var proc = cp.spawn(dest, ['/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'], {
-            detached: true, stdio: 'ignore'
-        });
+        maxApi.post('tuple_dl: launching installer');
+        var proc = cp.spawn(dest, [], { detached: true, stdio: 'ignore' });
         proc.unref();
         maxApi.post('tuple_dl: done — restart Ableton when installer finishes');
         maxApi.outlet('progress', 'done');
