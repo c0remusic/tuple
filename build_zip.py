@@ -51,6 +51,7 @@ def sync_version():
         ("device/ui/tuple_ui.html", r'(<div class="ib-label">Version</div><div class="ib-val">)[^<]*(</div>)'),
         ("site/index.html",         r'(&middot; v)[0-9][0-9.]*(</span>)'),
         ("site/index.html",         r'("softwareVersion": ")[^"]*(",)'),
+        ("site/manual/index.html",  r'(<div>Version<b>v)[0-9][0-9.]*(</b></div>)'),
         ("installer/tuple.iss",     r'(#define AppVersion ")[^"]*(")')
     ]
     for rel, pat in targets:
