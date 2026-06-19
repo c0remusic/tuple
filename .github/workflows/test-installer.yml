@@ -15,20 +15,37 @@ on:
       - 'build_zip.py'
 
 jobs:
-  test-mac-installer:
-    name: macOS installer mechanics
-    runs-on: macos-latest
+  # Build the mac zip on WINDOWS — that's the real release machine. zipfile defaults
+  # create_system to 0 (FAT) on Windows, which makes macOS drop the .command exec bit.
+  # Building here (not on macOS) is what reproduces the actual shipping artifact.
+  build-mac-zip-on-windows:
+    name: Build mac zip on Windows
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Build ZIP
+      - name: Build ZIP (build_zip.py self-guards the exec bit)
         run: python build_zip.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tuple-mac-zip
+          path: site/tuple-mac.zip
+
+  test-mac-installer:
+    name: macOS installer mechanics
+    needs: build-mac-zip-on-windows
+    runs-on: macos-latest
+    steps:
+      - name: Download the Windows-built zip
+        uses: actions/download-artifact@v4
+        with:
+          name: tuple-mac-zip
+          path: dist
 
       - name: Unzip to temp dir
         run: |
           mkdir /tmp/tuple-test
-          # macOS installer = tuple-mac.zip (the .command lives here, not in tuple.zip)
-          cd /tmp/tuple-test && unzip "$GITHUB_WORKSPACE/site/tuple-mac.zip"
+          # Extract the WINDOWS-built tuple-mac.zip on macOS — the exact user scenario.
+          cd /tmp/tuple-test && unzip "$GITHUB_WORKSPACE/dist/tuple-mac.zip"
 
       - name: Executable bit on .command
         run: |

@@ -107,7 +107,11 @@ with zipfile.ZipFile(OUT_MAC, "w", zipfile.ZIP_DEFLATED) as z:
         z.write(os.path.join(ROOT, src), arc)
     z.writestr("Tuple/version.json", VERSION_JSON_CONTENT)
     zi = zipfile.ZipInfo("Install Tuple.command")
-    zi.external_attr = 0o755 << 16
+    # create_system MUST be 3 (Unix) or macOS ignores the mode bits and the .command
+    # extracts WITHOUT the exec bit -> "could not be executed: access privileges".
+    # On Windows, zipfile defaults create_system to 0 (FAT) -> the 0o755 is silently dropped.
+    zi.create_system = 3                        # Unix host
+    zi.external_attr = (0o100755) << 16         # S_IFREG | rwxr-xr-x
     zi.compress_type = zipfile.ZIP_DEFLATED
     with open(CMD_SRC, "rb") as f:
         z.writestr(zi, f.read())
@@ -116,3 +120,14 @@ print("built " + OUT_MAC)
 with zipfile.ZipFile(OUT_MAC) as z:
     for info in z.infolist():
         print("  %8d  %s" % (info.file_size, info.filename))
+    # Hard guard: the .command must extract as executable on macOS, whatever OS built the
+    # zip. Fail loudly here (on the build machine — often Windows) rather than shipping a
+    # broken installer that only fails on the user's Mac.
+    _cmd = next(i for i in z.infolist() if i.filename == "Install Tuple.command")
+    if _cmd.create_system != 3 or not ((_cmd.external_attr >> 16) & 0o111):
+        raise SystemExit(
+            "FATAL: 'Install Tuple.command' is not executable in tuple-mac.zip "
+            "(create_system=%d, mode=%s). macOS would refuse to run it."
+            % (_cmd.create_system, oct((_cmd.external_attr >> 16) & 0o7777))
+        )
+    print("  guard OK: Install Tuple.command is Unix-executable (create_system=3, +x)")
