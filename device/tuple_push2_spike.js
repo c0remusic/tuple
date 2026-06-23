@@ -75,7 +75,7 @@ var smartActive = false, smartPads = {};
 var SMART_TIER = [0, 0.45, 0.72, 1.0];   // facteur de luminosité par lvl (1..3)
 var WHITEIDX  = 9;   // accord DISPONIBLE mais non suggéré = allumé en BLANC (slot 9 libre)
 var CAP_ON_IDX = 42, CAP_OFF_IDX = 43;   // pad CAPTURE (ligne vide) : rouge vif (on) / blanc vif (off). Slots libres (smart = 18-41).
-var MODE_IDX = 44;                        // pad MODE-cycle (ligne vide, col 2) : couleur FIXE de FONCTION (hors palette d'accords) — cyan.
+var MODE_IDX = 44, MODE_PRESS_IDX = 45;  // pad MODE-cycle (col 2) : BLANC (fonction, fixe) ; GRIS en feedback d'appui (cycle).
 function _smartSlot(col, lvl){ var l = (lvl < 1) ? 1 : (lvl > 3 ? 3 : lvl); return 18 + col*3 + (l-1); }
 function _scaleRGB(rgb, f){ return [Math.round(rgb[0]*f), Math.round(rgb[1]*f), Math.round(rgb[2]*f)]; }
 
@@ -241,7 +241,8 @@ function applyPalette() {
 	setPaletteRGB(WHITEIDX, [200, 200, 205]);   // blanc doux : accord disponible (layout Smart)
 	setPaletteRGB(CAP_ON_IDX, [255, 25, 25]);   // CAPTURE on = rouge vif
 	setPaletteRGB(CAP_OFF_IDX, [255, 255, 255]); // CAPTURE off = blanc vif
-	setPaletteRGB(MODE_IDX, [0, 190, 200]);      // MODE = cyan fixe (couleur de fonction, pas un accord)
+	setPaletteRGB(MODE_IDX, [255, 255, 255]);    // MODE = blanc (fonction, fixe)
+	setPaletteRGB(MODE_PRESS_IDX, [120, 120, 120]); // MODE pressé = gris (feedback de cycle)
 	L("palette RGB appliquée (scheme " + scheme + ")"); flush();
 }
 
@@ -358,9 +359,10 @@ function onMatrixProg(vel, col, row) {
 		return;
 	}
 	if (row === 6) {                                          // ligne vide : CAPTURE (col 0) · espacement (col 1) · MODE-cycle (col 2)
-		if (vel > 0) {
-			if (col === 0) { L("PROG capturetoggle"); flush(); outlet(0, "capturetoggle"); }
-			else if (col === 2) { L("PROG progmodecycle"); flush(); outlet(0, "progmodecycle"); }
+		if (col === 0 && vel > 0) { L("PROG capturetoggle"); flush(); outlet(0, "capturetoggle"); }
+		else if (col === 2) {                                 // MODE : cycle + feedback gris tenu (blanc au relâché)
+			if (vel > 0) { L("PROG progmodecycle"); flush(); outlet(0, "progmodecycle"); try { theMatrix.call("send_value", 2, 6, MODE_PRESS_IDX); } catch (e) {} }
+			else { try { theMatrix.call("send_value", 2, 6, MODE_IDX); } catch (e) {} }
 		}
 		return;
 	}
