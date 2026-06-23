@@ -76,6 +76,7 @@ var SMART_TIER = [0, 0.45, 0.72, 1.0];   // facteur de luminosité par lvl (1..3
 var WHITEIDX  = 9;   // accord DISPONIBLE mais non suggéré = allumé en BLANC (slot 9 libre)
 var CAP_ON_IDX = 42, CAP_OFF_IDX = 43;   // pad CAPTURE (ligne vide) : rouge vif (on) / blanc vif (off). Slots libres (smart = 18-41).
 var MODE_IDX = 44, MODE_PRESS_IDX = 45;  // pad MODE-cycle (col 2) : BLANC (fonction, fixe) ; GRIS en feedback d'appui (cycle).
+var PROG_IDX = 46;                       // pad PROG (col 1) : VERT (prog actif) — appui = sort du mode.
 function _smartSlot(col, lvl){ var l = (lvl < 1) ? 1 : (lvl > 3 ? 3 : lvl); return 18 + col*3 + (l-1); }
 function _scaleRGB(rgb, f){ return [Math.round(rgb[0]*f), Math.round(rgb[1]*f), Math.round(rgb[2]*f)]; }
 
@@ -243,6 +244,7 @@ function applyPalette() {
 	setPaletteRGB(CAP_OFF_IDX, [255, 255, 255]); // CAPTURE off = blanc vif
 	setPaletteRGB(MODE_IDX, [255, 255, 255]);    // MODE = blanc (fonction, fixe)
 	setPaletteRGB(MODE_PRESS_IDX, [120, 120, 120]); // MODE pressé = gris (feedback de cycle)
+	setPaletteRGB(PROG_IDX, [40, 210, 90]);      // PROG actif = vert
 	L("palette RGB appliquée (scheme " + scheme + ")"); flush();
 }
 
@@ -301,7 +303,8 @@ function refreshProg() {
 	for (c = 0; c < 8; c++) { grid[c] = []; for (phys = 0; phys < 8; phys++) grid[c][phys] = OFFIDX; }
 	for (c = 0; c < progSteps.length && c < 8; c++) grid[c][7] = _progStepIdx(progSteps[c], c === progSelIdx);   // étapes (bas)
 	grid[0][6] = progCapture ? CAP_ON_IDX : CAP_OFF_IDX;                                                          // CAPTURE (ligne vide, col 0)
-	grid[2][6] = MODE_IDX;                                                                                        // MODE-cycle (col 2 ; col 1 = espacement vide) — couleur fixe de fonction
+	grid[1][6] = PROG_IDX;                                                                                        // PROG (col 1) actif = vert (appui sort du mode)
+	grid[2][6] = MODE_IDX;                                                                                        // MODE-cycle (col 2) — couleur fixe de fonction
 	for (k = 0; k < progOpts.length; k++) {                                                                       // options de l'étape sélectionnée, bottom-up
 		var o = progOpts[k];
 		if (o.idx < 0 || o.idx >= 48) continue;
@@ -358,8 +361,9 @@ function onMatrixProg(vel, col, row) {
 		}
 		return;
 	}
-	if (row === 6) {                                          // ligne vide : CAPTURE (col 0) · espacement (col 1) · MODE-cycle (col 2)
+	if (row === 6) {                                          // ligne contrôle : CAPTURE (col 0) · PROG (col 1) · MODE-cycle (col 2)
 		if (col === 0 && vel > 0) { L("PROG capturetoggle"); flush(); outlet(0, "capturetoggle"); }
+		else if (col === 1 && vel > 0) { L("PROG progtoggle"); flush(); outlet(0, "progtoggle"); }   // sort du mode prog
 		else if (col === 2) {                                 // MODE : cycle + feedback gris tenu (blanc au relâché)
 			if (vel > 0) { L("PROG progmodecycle"); flush(); outlet(0, "progmodecycle"); try { theMatrix.call("send_value", 2, 6, MODE_PRESS_IDX); } catch (e) {} }
 			else { try { theMatrix.call("send_value", 2, 6, MODE_IDX); } catch (e) {} }

@@ -230,7 +230,7 @@ var LIST_DISPATCH = {
 	useflats: useflats, preview: preview, previewcolor: previewcolor, previewprog: previewprog, extended: extended,
 	chordify: chordify,
 	progmode: progmode, progmodecycle: progmodecycle, selprog: selprog, selopt: selopt,
-	capturetoggle: capturetoggle
+	capturetoggle: capturetoggle, progtoggle: progtoggle
 };
 function list() {
 	var a = Array.prototype.slice.call(arguments);
@@ -2319,6 +2319,7 @@ function _optName(opt){
 function _cellFor(o){ return (o.fn === "color") ? { kind:"b", semis:o.colorSemis, type:o.colorType } : { kind:"d", fn:o.fn, degree:o.deg }; }
 
 function progmode(v){ progPushOn = (parseInt(v) === 1); if (progPushOn) progSel = 0; outlet(7, "progmode", progPushOn ? 1 : 0); if (progPushOn) broadcastProgPush(); }   // entrée : sélection par défaut = 1re étape
+function progtoggle(){ progmode(progPushOn ? 0 : 1); }   // bascule prog on/off (pad PROG du Push, row 6 col 1)
 function progmodecycle(){ progMode = (progMode + 1) % 3; outlet(7, "progmodeui", progMode); if (progPushOn) broadcastProgPush(); }
 // Sélection d'une étape (rangée 0 du Push) : la sélectionne + l'écoute (réutilise playprog).
 function selprog(col){
