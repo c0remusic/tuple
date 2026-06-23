@@ -1770,13 +1770,14 @@ function _vl2_realize(spec,voicing,opts){
 	if(vc==='upper'&&!spec.isDominant){fallback=vc;vc='classic';}   // upper n'a de sens que sur les dominantes
 	if(vc==='drop3'&&spec.pcs.length<4){fallback=vc;vc='drop2';}
 	if(vc==='drop2'&&spec.pcs.length<4){fallback=fallback||vc;vc='classic';}
-	// classic VL off : tonique de la gamme en bas, tous les degrés strictement au-dessus.
-	// tonicPos = regBase + root (root de la tonique dans ce registre).
-	// cr      = tonicPos + m(pc - root) -> chaque degré placé au-dessus de la tonique.
-	if(vc==='classic'&&opts&&opts.rootPos){
+	// classic = TOUJOURS position fondamentale (root en basse, empilé au-dessus), jamais de renversement,
+	// indépendamment du VL. C'est le voicing « par défaut » de chaque accord. tonicPos = regBase + root ;
+	// cr = tonicPos + m(pc - root) -> chaque degré placé au-dessus de la tonique. (Le VL n'inverse pas classic.)
+	if(vc==='classic'){
 		var tonicPos=regBase+root;
 		var cr=tonicPos+_vl2_m(spec.rootPc-root);
 		var cn=_vl2_vs(_vl2_closeFrom(spec,cr)).slice(0,6);
+		if(_vl2_FOLD.has(vc))cn=_vl2_compactFloatingTop(cn);   // 13e flottante (EXT) repliée → jouable 1 main (comme le general loop)
 		if(Math.min.apply(null,cn)<24||Math.max.apply(null,cn)>108)return[];
 		if(_vl2_checkIdentity(vc,cn,spec).length)return[];
 		return[{notes:cn,voicing:vc,fallback:fallback,canonical:true}];
