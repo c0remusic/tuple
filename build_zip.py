@@ -131,4 +131,13 @@ with zipfile.ZipFile(OUT_MAC) as z:
             "(create_system=%d, mode=%s). macOS would refuse to run it."
             % (_cmd.create_system, oct((_cmd.external_attr >> 16) & 0o7777))
         )
-    print("  guard OK: Install Tuple.command is Unix-executable (create_system=3, +x)")
+    # CRLF guard: a Windows-style \r in the shebang line makes macOS bash fail with
+    # "bad interpreter: /bin/bash^M". .gitattributes (eol=lf) normally prevents it, but
+    # guard the actual bytes too — if .gitattributes ever changes, fail here, not on a Mac.
+    _cmd_bytes = z.read("Install Tuple.command")
+    if b"\r" in _cmd_bytes:
+        raise SystemExit(
+            "FATAL: 'Install Tuple.command' contains CR (CRLF) bytes — macOS bash would "
+            "fail with 'bad interpreter: /bin/bash^M'. Re-checkout with LF (see .gitattributes)."
+        )
+    print("  guard OK: Install Tuple.command is Unix-executable (create_system=3, +x) and LF-only")
