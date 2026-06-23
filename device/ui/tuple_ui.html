@@ -828,6 +828,10 @@
   var SCALES   = ['Major','Minor','Dorian','Phrygian','Lydian','Mixolydian','Harm.Min','Mel.Min','Locrian','Penta Maj','Penta Min','Lyd. Dom'];
   // ⚠️ Labels d'AFFICHAGE (index-alignés avec VOICING_NAMES côté engine). 'New Jazz' = clé interne nuhouse, 'Clav' = clé interne jamiroquai (renommés à l'affichage seulement).
   var VOICINGS = ['Classic','Piano','Open','Spread','House','Prog','Rootless A','Rootless B','Rootless','Drop 2','Drop 3','Jazz','New Jazz','Trance','Funk','Quartal','Upper','Organ','French Touch','Broken','Deep Tech','Detroit','Soul','Clav','Rave','Sus','Wide','Power'];
+  // Ordre d'AFFICHAGE par FAMILLE (basiques → rootless/jazz → genres) — cohérent avec le Push (_VOIC_ORDER).
+  // Le menu affiche dans cet ordre ; FAM_IDX[pos] = l'index réel (VOICINGS) → les index/valeurs ne bougent pas.
+  var VOIC_FAM = ['Classic','Piano','Open','Spread','Drop 2','Drop 3','Rootless','Rootless A','Rootless B','Jazz','New Jazz','Quartal','Upper','Sus','House','Prog','Trance','Funk','Organ','French Touch','Broken','Deep Tech','Detroit','Soul','Clav','Rave','Wide','Power'];
+  var FAM_IDX  = VOIC_FAM.map(function(l){ return VOICINGS.indexOf(l); });
   var VLMODES  = ['ANCHOR','FLOW'];
   var VLMODE_MSG = ['anchored','flow'];
   var STRUM_CURVES = ['Linear','Accel','Decel'];   // libellés du cycler Curve
@@ -855,7 +859,7 @@
   var cols = [[],[],[],[],[],[],[]];
   var bor  = [];
   var tmpCols = null, tmpBor = null;
-  var state = { root:4, scaleIdx:1, oct:0, voicingIdx:0, vl:false, vlmodeIdx:0, strumMs:0, strumRamp:0, strumCurveIdx:0, humanize:0 };
+  var state = { root:0, scaleIdx:0, oct:0, voicingIdx:0, vl:false, vlmodeIdx:0, strumMs:0, strumRamp:0, strumCurveIdx:0, humanize:0 };   // défaut C Major = aligné sur le moteur (root=0, "major") ET la démo
   var activeCol = -1, activeRow = -1, activeChordName = '', _lastNotes = [];
   var mode = 'strip';
   var windowOpen = false;
@@ -1563,8 +1567,8 @@
   };
   document.getElementById('voicing').onclick = function(e){
     e.stopPropagation();
-    openDrop('voicing','VOICING',VOICINGS,state.voicingIdx,mode==='strip'?3:2,function(i,name){
-      state.voicingIdx=i; document.getElementById('voicingV').textContent=name; send('voicingidx',i);
+    openDrop('voicing','VOICING',VOIC_FAM,FAM_IDX.indexOf(state.voicingIdx),mode==='strip'?3:2,function(p,name){
+      var ri=FAM_IDX[p]; state.voicingIdx=ri; document.getElementById('voicingV').textContent=VOICINGS[ri]; send('voicingidx',ri);
     });
   };
 
@@ -1585,7 +1589,7 @@
   }
   wheelMenu('key',     function(){return _activeKeys();}, function(){return state.root;}, function(i){ state.root=i; document.getElementById('keyV').textContent=_activeKeys()[i]; send('rootidx',i); });
   wheelMenu('scale',   function(){return SCALES;},   function(){return state.scaleIdx;},   function(i){ state.scaleIdx=i;   document.getElementById('scaleV').textContent=SCALES[i];    send('scaleidx',i); });
-  wheelMenu('voicing', function(){return VOICINGS;}, function(){return state.voicingIdx;}, function(i){ state.voicingIdx=i; document.getElementById('voicingV').textContent=VOICINGS[i]; send('voicingidx',i); });
+  wheelMenu('voicing', function(){return VOIC_FAM;}, function(){return FAM_IDX.indexOf(state.voicingIdx);}, function(p){ var ri=FAM_IDX[p]; state.voicingIdx=ri; document.getElementById('voicingV').textContent=VOICINGS[ri]; send('voicingidx',ri); });
   wheelMenu('vlmode',  function(){return VLMODES;},  function(){return state.vlmodeIdx;},  function(i){ state.vlmodeIdx=i;  renderConfig(); send('vlmode',VLMODE_MSG[i]); });
 
   // ── ♯/♭ toggle ───────────────────────────────────────────────────────────────
@@ -1853,10 +1857,11 @@
   // l'active (écran + Push via « smart 1 »), en sortir le coupe. Les autres layouts → colorscheme au Push.
   // LAYOUT = schéma de couleurs des degrés, INDÉPENDANT du mode SMART (qui marche dans tous les layouts).
   document.getElementById('colorBtn').onmousedown = function(e){ if(e)e.preventDefault(); };
-  document.getElementById('colorBtn').onclick = function(){
-    colorScheme=(colorScheme+1)%SCHEME_NAMES.length;
-    document.getElementById('colorV').textContent=SCHEME_NAMES[colorScheme];
-    applyScheme(); send('colorscheme', colorScheme);   // têtes : neutres si smart on, sinon couleurs du layout
+  document.getElementById('colorBtn').onclick = function(e){
+    if(e)e.stopPropagation();
+    openDrop('colorBtn','LAYOUT',SCHEME_NAMES,colorScheme,2,function(i,name){   // dropdown (cohérent avec key/scale/voicing) ; la molette cycle toujours
+      colorScheme=i; document.getElementById('colorV').textContent=name; applyScheme(); send('colorscheme', colorScheme);
+    });
   };
   document.getElementById('colorBtn').addEventListener('wheel', function(e){
     e.preventDefault(); e.stopPropagation();
