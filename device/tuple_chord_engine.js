@@ -1650,11 +1650,15 @@ var _vl2_T={
 	// FIX REGISTRE (audit Loi 1 D) : placement par pitch-class dans une octave fixe (méthode house),
 	// AU LIEU d'empiler en montant depuis le plancher (qui faisait flotter le registre selon les pc).
 	// Registre borné à [floor,floor+11] → cohérent entre degrés/tonalités. Identité (cluster brillant) intacte.
+	// organ — St Germain "What's New" : pad Hammond OUVERT/aéré (sustained, qui respire), brillant. Rootless,
+	// pc-placement [60,71] puis OPEN (2e voix du haut −1 octave) → distinct du cluster FERMÉ dense de broken
+	// (Dego/Kaidi). Opposition open↔closed, pas juste le registre.
 	organ:function(c,oct){
 		if(c.length<3)return[_vl2_vs(c)];
 		var pm=function(n){return((n%12)+12)%12;},pcs=c.slice(1).map(pm),floor=60+(oct||0);
-		var cl=pcs.map(function(pc){return floor+pm(pc);}).sort(function(a,b){return a-b;}).filter(function(n,i,a){return i===0||n!==a[i-1];});
-		return _vl2_rotOf(_vl2_vs(cl).slice(0,5));
+		var cl=pcs.map(function(pc){return floor+pm(pc);}).sort(function(a,b){return a-b;}).filter(function(n,i,a){return i===0||n!==a[i-1];}).slice(0,5);
+		if(cl.length>=2){var r=_vl2_vs(cl);r[r.length-2]-=12;cl=_vl2_vs(r);}   // OPEN : aère le voicing
+		return _vl2_rotOf(cl);
 	},
 	// frenchtouch — Daft Punk "Something About Us" : Rhodes chaud, FONDA INCLUSE + reste de
 	// l'accord empilé serré au-dessus, registre médium fixe (C3). La 9e (présente dans c en
