@@ -494,7 +494,7 @@ function voicing(v) {
 }
 
 // Reçoit un index int (0-12) depuis live.menu
-var VOICING_NAMES = ["classic","piano","open","spread","house","prog","rootlessa","rootlessb","rootless","drop2","drop3","jazz","nuhouse","trap","trance","funk","quartal","upper","organ","frenchtouch","broken","deeptech","detroit","soul","jamiroquai","rave","sus","wide","power"];
+var VOICING_NAMES = ["classic","piano","open","spread","house","prog","rootlessa","rootlessb","rootless","drop2","drop3","jazz","nuhouse","trance","funk","quartal","upper","organ","frenchtouch","broken","deeptech","detroit","soul","jamiroquai","rave","sus","wide","power"];
 function voicingidx(v) {
 	currentVoicing = VOICING_NAMES[parseInt(v)] || "classic";
 	_vl2_reset();
@@ -856,7 +856,7 @@ function _vl2_center(vc){ var rb = _vl2_regBase(); return (vc === "classic") ? (
 // FIX SAUT FALLBACK : quand un voicing retombe sur classic (trap sur triade…), centrer au registre MAISON
 // du voicing (pas la tonique) → la triade fallback se pose au même étage que ses grips de 7e. Miroir engine.js.
 // (N.B. classic refuse de voicer trop grave via la règle low-interval → marche pour les planchers ~48, partiel pour trap.)
-var _vl2_FB_HOME = { trap:42, jazz:54, house:54, nuhouse:54, quartal:54, sus:54, rootlessa:54, rootlessb:54, rootless:54, upper:54, drop2:54, drop3:54 };
+var _vl2_FB_HOME = { jazz:54, house:54, nuhouse:54, quartal:54, sus:54, rootlessa:54, rootlessb:54, rootless:54, upper:54, drop2:54, drop3:54 };
 function _vl2_selCtr(cands){
 	var realized = cands[0].voicing, fb = cands[0].fallback;
 	if (fb && _vl2_FB_HOME[fb] != null) return _vl2_FB_HOME[fb] + (_vl2_regBase() - 48);
@@ -1355,7 +1355,6 @@ function _vl2_checkIdentity(voicing, notes, spec) {
 	else if (voicing==='jazz'||voicing==='nuhouse'||voicing==='house'||voicing==='quartal'||voicing==='upper'||voicing==='rootless'||voicing==='organ'||voicing==='broken'||voicing==='deeptech') { if (pcs.has(spec.rootPc)) v.push('rootless:fondamentale présente'); }
 	else if (voicing==='sus') { var t=null,ti; for(ti=0;ti<spec.pcs.length;ti++)if(spec.pcs[ti].role==='third'){t=spec.pcs[ti];break;} if(t&&pcs.has(t.pc))v.push('sus:3ce présente'); }
 	else if (voicing==='power') { var fp=m(spec.rootPc+7),pi; for(pi=0;pi<ns.length;pi++)if(m(ns[pi])!==spec.rootPc&&m(ns[pi])!==fp){v.push('power:note hors root/5te');break;} }
-	else if (voicing==='trap') { if(pcs.has(spec.rootPc))v.push('trap:fondamentale présente (808)'); }
 	else if (voicing==='drop2'||voicing==='drop3') {
 		if (ns.length < 4) { v.push('dropN:<4 voix'); }
 		else {
@@ -1478,8 +1477,8 @@ function _vl2_closeFrom(spec,rootMidi){
 	for(var i=1;i<ord.length;i++){var n=last+1;n+=_vl2_m(ord[i].pc-_vl2_m(n));out.push(n);last=n;}
 	return out;
 }
-var _vl2_STRUCT=new Set(['piano','rootlessa','rootlessb','rootless','drop2','drop3','house','prog','jazz','nuhouse','trap','trance','funk','quartal','upper','organ','frenchtouch','broken','deeptech','detroit','soul','jamiroquai','rave','sus','wide','power']);
-var _vl2_ABSOLUTE=new Set(['house','prog','jazz','nuhouse','trap','trance','funk','quartal','upper','organ','frenchtouch','broken','deeptech','detroit','soul','jamiroquai','rave','sus','wide','power']);
+var _vl2_STRUCT=new Set(['piano','rootlessa','rootlessb','rootless','drop2','drop3','house','prog','jazz','nuhouse','trance','funk','quartal','upper','organ','frenchtouch','broken','deeptech','detroit','soul','jamiroquai','rave','sus','wide','power']);
+var _vl2_ABSOLUTE=new Set(['house','prog','jazz','nuhouse','trance','funk','quartal','upper','organ','frenchtouch','broken','deeptech','detroit','soul','jamiroquai','rave','sus','wide','power']);
 // Replie une extension qui flotte tout en haut (EXT : la 13e empilée une octave au-dessus → span 2 octaves,
 // injouable d'une main). Voir realizer.js compactFloatingTop. FOLD = voicings SERRÉS uniquement (les
 // open/spread/funk/prog/trance/nuhouse/drop/piano/upper gardent leur déplacement d'octave voulu).
@@ -1603,20 +1602,6 @@ var _vl2_T={
 	},
 	drop2:function(c){var r=_vl2_vs(c);r[r.length-2]-=12;return[_vl2_vs(r)];},
 	drop3:function(c){var r=_vl2_vs(c);r[r.length-3]-=12;return[_vl2_vs(r)];},
-	// trap : son 808. La 808 tient la fondamentale -> on la DROP (rootless). Guide tones +
-	// extensions, SANS la 5te (anti-boue), ancrés GRAVE (C2) = sombre. ABSOLUTE. Triades -> fallback.
-	// trap : ROOTLESS (le 808 joue la fonda — règle basse séparée), grave/dark, plancher 36.
-	// 7e+ : guide tones sans la 5te (3-7). Sans 7e (triade/sus) : fallback MAISON grave = pc-placement
-	// des notes hors-fonda (3ce+5te) à son propre plancher — PAS de retombée sur classic (fini le saut).
-	trap:function(c,oct){
-		if(c.length<3)return[_vl2_vs(c)];
-		var pm=function(n){return((n%12)+12)%12;},floor=36+(oct||0);
-		var u=c.slice(1).map(_vl2_m);
-		if(c.length>=4)u=u.filter(function(_,i){return i!==1;});   // 7e+ : lâche la 5te (guide tones)
-		// FIX REGISTRE : pc-placement (méthode house) borné [36,47] = C2 grave/dark
-		var cl=u.map(function(pc){return floor+pm(pc-floor);}).sort(function(a,b){return a-b;}).filter(function(n,i,a){return i===0||n!==a[i-1];});
-		return _vl2_rotOf(_vl2_vs(cl));
-	},
 	// nuhouse : rootless OUVERT aéré (2e voix +octave), 1 main, ancré C3, suit OCT.
 	nuhouse:function(c,oct){
 		if(c.length<3)return[_vl2_vs(c)];oct=oct||0;
@@ -1779,7 +1764,7 @@ function _vl2_realize(spec,voicing,opts){
 	var octShift=regBase-48;
 	var want=(opts&&opts.targetVoices!=null)?opts.targetVoices:null;
 	var vc=voicing,fallback=null;
-	if((vc==='rootlessa'||vc==='rootlessb'||vc==='jazz'||vc==='nuhouse'||vc==='house')&&!spec.hasSeventh){fallback=vc;vc='classic';}   // rootless (dont house/jazz) : triade = classic (l'accord TEL QUEL). trap a SON fallback grave (dyade root+5).
+	if((vc==='rootlessa'||vc==='rootlessb')&&!spec.hasSeventh){fallback=vc;vc='classic';}   // rootlessa/b : triade rootless = 2 notes trop maigres (besoin de ≥3 via rootlessClose) → fallback classic. jazz/house/nuhouse font LEUR triade rootless (cohérent avec leur 7e, fini le saut fonda-présente↔rootless).
 	if(vc==='quartal'&&(!spec.hasSeventh||!spec.scalePcs)){fallback=vc;vc='classic';}   // quartal a besoin de la 7e + la gamme
 	if(vc==='sus'&&!spec.scalePcs){fallback=vc;vc='classic';}   // sus a besoin de la gamme (le 2)
 	if(vc==='upper'&&!spec.isDominant){fallback=vc;vc='classic';}   // upper n'a de sens que sur les dominantes
@@ -2629,9 +2614,9 @@ _autoSyncInitTask.schedule(800);
 (function _selfCheck(){
 	try {
 		var okSt = (typeof _vl2_st !== 'undefined' && _vl2_st && _vl2_st.recall);
-		// VOICING_NAMES doit avoir 29 entrées (classic..power). Si on en ajoute sans
+		// VOICING_NAMES doit avoir 28 entrées (classic..power, trap supprimé). Si on en ajoute/retire sans
 		// mettre à jour l'UI (VOICINGS dans tuple_ui.html + VOICEKEYS dans demo.html + le live.menu du .amxd), le mapping par index diverge.
-		var vcOk = VOICING_NAMES.length === 29;
+		var vcOk = VOICING_NAMES.length === 28;
 		post("tuple selfcheck: Set=" + (typeof Set !== 'undefined') +
 		     " Map=" + (typeof Map !== 'undefined') +
 		     " _vl2_st=" + (okSt ? "ok" : "KO") +
