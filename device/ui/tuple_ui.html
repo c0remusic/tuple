@@ -516,9 +516,12 @@
   body.full .mon-head      {display:block;flex:none;margin-top:32px}
   body.full .mon-head .lbl {margin-bottom:0}
   body.full .cfg-spacer    {display:block;flex:1;min-height:0}
-  /* full : OPEN/CLOSE = bouton confortable épinglé en bas (le spacer garde l'espace au-dessus). */
-  body.full .toggle        {height:72px;margin-top:0}
-  body.full .chord         {flex:none;height:auto;min-height:74px;padding:0;flex-direction:column;align-items:flex-start;justify-content:center;gap:6px;background:transparent;border:none}  /* hauteur réservée (degré+nom+notes) : éviter que l'affichage de l'accord pousse DEVICE/WINDOW vers le bas */
+  /* full : OPEN/CLOSE = bouton confortable épinglé en bas (le spacer garde l'espace au-dessus).
+     58px (pas 72) : la fenêtre full est de hauteur FIXE (580) et la colonne est top-packée ;
+     le monitor réserve désormais 2 lignes de notes (chord = 88px), donc on rend ces 14px ici
+     pour que le bas de CLOSE garde son espacement de 18px avec le bord (sinon il colle au bord). */
+  body.full .toggle        {height:58px;margin-top:0}
+  body.full .chord         {flex:none;height:88px;min-height:88px;padding:0;flex-direction:column;align-items:flex-start;justify-content:center;gap:6px;background:transparent;border:none}  /* hauteur FIXE (constante vide↔accord) : les notes d'un accord large/5+ notes passent sur 2 lignes — 88px les réserve pour que l'affichage ne pousse JAMAIS DEVICE/WINDOW vers le bas */
   body.full .chord .deg    {display:flex;gap:5px}
   body.full .chord .deg .r {font-size:13px}
   body.full .chord .deg .f {font-size:9px}
