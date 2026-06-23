@@ -826,7 +826,8 @@
   function _activeKeys(){ return _useFlats ? KEYS_FLAT : KEYS; }
   function cellLabel(lbl){ return _useFlats ? lbl.replace(/[A-G]#/g, function(m){ return _S2F[m]||m; }) : lbl; }
   var SCALES   = ['Major','Minor','Dorian','Phrygian','Lydian','Mixolydian','Harm.Min','Mel.Min','Locrian','Penta Maj','Penta Min','Lyd. Dom'];
-  var VOICINGS = ['Classic','Piano','Open','Spread','House','Prog','Rootless A','Rootless B','Rootless','Drop 2','Drop 3','Jazz','Nu-House','Trance','Funk','Quartal','Upper','Organ','French Touch','Broken','Deep Tech','Detroit','Soul','Jamiroquai','Rave','Sus','Wide','Power'];
+  // ⚠️ Labels d'AFFICHAGE (index-alignés avec VOICING_NAMES côté engine). 'New Jazz' = clé interne nuhouse, 'Clav' = clé interne jamiroquai (renommés à l'affichage seulement).
+  var VOICINGS = ['Classic','Piano','Open','Spread','House','Prog','Rootless A','Rootless B','Rootless','Drop 2','Drop 3','Jazz','New Jazz','Trance','Funk','Quartal','Upper','Organ','French Touch','Broken','Deep Tech','Detroit','Soul','Clav','Rave','Sus','Wide','Power'];
   var VLMODES  = ['ANCHOR','FLOW'];
   var VLMODE_MSG = ['anchored','flow'];
   var STRUM_CURVES = ['Linear','Accel','Decel'];   // libellés du cycler Curve
