@@ -1770,10 +1770,10 @@ function _vl2_realize(spec,voicing,opts){
 	if(vc==='upper'&&!spec.isDominant){fallback=vc;vc='classic';}   // upper n'a de sens que sur les dominantes
 	if(vc==='drop3'&&spec.pcs.length<4){fallback=vc;vc='drop2';}
 	if(vc==='drop2'&&spec.pcs.length<4){fallback=fallback||vc;vc='classic';}
-	// classic = TOUJOURS position fondamentale (root en basse, empilé au-dessus), jamais de renversement,
-	// indépendamment du VL. C'est le voicing « par défaut » de chaque accord. tonicPos = regBase + root ;
-	// cr = tonicPos + m(pc - root) -> chaque degré placé au-dessus de la tonique. (Le VL n'inverse pas classic.)
-	if(vc==='classic'){
+	// classic VL off : position fondamentale (root en basse, empilé au-dessus). VL ON : la boucle générale
+	// génère les renversements et le VL invertit pour lisser — MAIS à froid (1er accord / hover) le sélecteur
+	// VERROUILLE la canonique (= position fondamentale, cf. cold-lock classic dans _vl2_select). Défaut = root, VL peut inverser.
+	if(vc==='classic'&&opts&&opts.rootPos){
 		var tonicPos=regBase+root;
 		var cr=tonicPos+_vl2_m(spec.rootPc-root);
 		var cn=_vl2_vs(_vl2_closeFrom(spec,cr)).slice(0,6);
@@ -1892,7 +1892,7 @@ function _vl2_select(cands,opts){
 	for(var ci=0;ci<cands.length;ci++){
 		var c=cands[ci],cost;
 		// ABSOLUTE (registre fixe) : à froid on VERROUILLE la forme canonique signature (sinon la proximité-centre choisirait une rotation/octave secondaire et casserait l'identité). Les candidats ne servent qu'au VL chaud.
-		if(first){cost=(c.canonical?(opts.absolute?-1000:0):3)+Math.abs(mean(c.notes)-center);}
+		if(first){cost=(c.canonical?((opts.absolute||opts.voicing==='classic')?-1000:0):3)+Math.abs(mean(c.notes)-center);}   // classic : à froid = position fondamentale (canonique verrouillée) ; le VL chaud peut inverser
 		else{
 			cost=_vl2_movCost(st.voices,c.notes,w)+_vl2_harmBonus(st.voices,c.notes,opts,w);
 			if(mode==='flow'){
