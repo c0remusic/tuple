@@ -599,12 +599,11 @@ var BORROWED_MINOR = [
 	{ roman:"V/iv", semis:0,  type:"dom7", suf:"7"    },
 	{ roman:"V/VI", semis:3,  type:"dom7", suf:"7"    }
 ];
-// Emprunts melodic minor : V7 (dominante naturelle) + bVII dominant (Lydian dominant)
+// Emprunts melodic minor : bVII7 (Lydian dominant) + bII (Napolitain). V7 et IV RETIRÉS (audit Loi 1 E :
+// ils sont DIATONIQUES au mélodique mineur → déjà offerts par la grille, pas des emprunts).
 var BORROWED_MELMINOR = [
-	{ roman:"V7",    semis:7,  type:"dom7", suf:"7"    },
 	{ roman:"bVII7", semis:10, type:"dom7", suf:"7"    },
-	{ roman:"bII",   semis:1,  type:"maj",  suf:""     },
-	{ roman:"IV",    semis:5,  type:"maj",  suf:""     }
+	{ roman:"bII",   semis:1,  type:"maj",  suf:""     }
 ];
 var BORROWED_LYDIANDOM = [
 	{ roman:"iv",   semis:5,  type:"min",  suf:"m"    },
@@ -854,8 +853,13 @@ function _vl2_center(vc){ var rb = _vl2_regBase(); return (vc === "classic") ? (
 // SOURCE UNIQUE du centre de sélection — utilisée par _vl2_play ET _sg_fluid (sinon la heat-map VL
 // et le playback divergent → sauts d'octave). cands = sortie de _vl2_realize ; cands[0] = forme canonique.
 // ABSOLUTE : centre = poche d'origine du grip (moyenne de la canonique), sinon _vl2_center (classic/piano/C4).
+// FIX SAUT FALLBACK : quand un voicing retombe sur classic (trap sur triade…), centrer au registre MAISON
+// du voicing (pas la tonique) → la triade fallback se pose au même étage que ses grips de 7e. Miroir engine.js.
+// (N.B. classic refuse de voicer trop grave via la règle low-interval → marche pour les planchers ~48, partiel pour trap.)
+var _vl2_FB_HOME = { trap:42, jazz:54, house:54, nuhouse:54, quartal:54, sus:54, rootlessa:54, rootlessb:54, rootless:54, upper:54, drop2:54, drop3:54 };
 function _vl2_selCtr(cands){
-	var realized = cands[0].voicing;
+	var realized = cands[0].voicing, fb = cands[0].fallback;
+	if (fb && _vl2_FB_HOME[fb] != null) return _vl2_FB_HOME[fb] + (_vl2_regBase() - 48);
 	if (_vl2_ABSOLUTE.has(realized)){ var ns = cands[0].notes, s = 0, i; for (i = 0; i < ns.length; i++) s += ns[i]; return s / ns.length; }
 	return _vl2_center(realized);
 }
@@ -1348,7 +1352,7 @@ function _vl2_checkIdentity(voicing, notes, spec) {
 	}
 	if (voicing==='rootlessa'){if(pcs.has(spec.rootPc))v.push('rootless:fondamentale présente');var t3=null;for(var ii=0;ii<spec.pcs.length;ii++)if(spec.pcs[ii].role==='third'){t3=spec.pcs[ii];break;}if(t3&&m(ns[0])!==t3.pc)v.push('rootlessa:3ce absente du bas');}
 	else if (voicing==='rootlessb'){if(pcs.has(spec.rootPc))v.push('rootless:fondamentale présente');var t7=null;for(var ji=0;ji<spec.pcs.length;ji++)if(spec.pcs[ji].role==='seventh'){t7=spec.pcs[ji];break;}if(t7&&m(ns[0])!==t7.pc)v.push('rootlessb:7e absente du bas');}
-	else if (voicing==='jazz'||voicing==='nuhouse'||voicing==='house'||voicing==='quartal'||voicing==='upper'||voicing==='rootless'||voicing==='organ'||voicing==='broken'||voicing==='deeptech'||voicing==='frenchtouch') { if (pcs.has(spec.rootPc)) v.push('rootless:fondamentale présente'); }
+	else if (voicing==='jazz'||voicing==='nuhouse'||voicing==='house'||voicing==='quartal'||voicing==='upper'||voicing==='rootless'||voicing==='organ'||voicing==='broken'||voicing==='deeptech') { if (pcs.has(spec.rootPc)) v.push('rootless:fondamentale présente'); }
 	else if (voicing==='sus') { var t=null,ti; for(ti=0;ti<spec.pcs.length;ti++)if(spec.pcs[ti].role==='third'){t=spec.pcs[ti];break;} if(t&&pcs.has(t.pc))v.push('sus:3ce présente'); }
 	else if (voicing==='power') { var fp=m(spec.rootPc+7),pi; for(pi=0;pi<ns.length;pi++)if(m(ns[pi])!==spec.rootPc&&m(ns[pi])!==fp){v.push('power:note hors root/5te');break;} }
 	else if (voicing==='trap') { if(pcs.has(spec.rootPc))v.push('trap:fondamentale présente (808)'); }
@@ -1475,7 +1479,7 @@ function _vl2_closeFrom(spec,rootMidi){
 	return out;
 }
 var _vl2_STRUCT=new Set(['piano','rootlessa','rootlessb','rootless','drop2','drop3','house','prog','jazz','nuhouse','trap','trance','funk','quartal','upper','organ','frenchtouch','broken','deeptech','detroit','soul','jamiroquai','rave','sus','wide','power']);
-var _vl2_ABSOLUTE=new Set(['house','prog','jazz','nuhouse','trap','trance','funk','quartal','upper','organ','broken','deeptech','detroit','soul','jamiroquai','rave','sus','wide','power']);
+var _vl2_ABSOLUTE=new Set(['house','prog','jazz','nuhouse','trap','trance','funk','quartal','upper','organ','frenchtouch','broken','deeptech','detroit','soul','jamiroquai','rave','sus','wide','power']);
 // Replie une extension qui flotte tout en haut (EXT : la 13e empilée une octave au-dessus → span 2 octaves,
 // injouable d'une main). Voir realizer.js compactFloatingTop. FOLD = voicings SERRÉS uniquement (les
 // open/spread/funk/prog/trance/nuhouse/drop/piano/upper gardent leur déplacement d'octave voulu).
@@ -1593,8 +1597,10 @@ var _vl2_T={
 	// extensions, SANS la 5te (anti-boue), ancrés GRAVE (C2) = sombre. ABSOLUTE. Triades -> fallback.
 	trap:function(c,oct){
 		if(c.length<4)return[_vl2_vs(c)];
-		var u=c.slice(1).map(_vl2_m).filter(function(_,i){return i!==1;});
-		return _vl2_rotOf(_vl2_stackFromFloor(u,36+(oct||0)));   // C2 grave/dark ; rotations → le Selector stabilise au registre
+		var pm=function(n){return((n%12)+12)%12;},u=c.slice(1).map(_vl2_m).filter(function(_,i){return i!==1;}),floor=36+(oct||0);
+		// FIX REGISTRE : pc-placement (méthode house) borné [36,47] = C2 grave/dark au lieu d'empiler en montant (qui dérivait)
+		var cl=u.map(function(pc){return floor+pm(pc-floor);}).sort(function(a,b){return a-b;}).filter(function(n,i,a){return i===0||n!==a[i-1];});
+		return _vl2_rotOf(_vl2_vs(cl));
 	},
 	// nuhouse : rootless OUVERT aéré (2e voix +octave), 1 main, ancré C3, suit OCT.
 	nuhouse:function(c,oct){
@@ -1608,14 +1614,11 @@ var _vl2_T={
 	jazz:function(c,oct,spec){
 		if(c.length<3)return[_vl2_vs(c)];oct=oct||0;
 		var pm=function(n){return((n%12)+12)%12;};
-		var pcs=c.slice(1).map(pm),floor=48+oct,cluster=[],cur=floor;
+		var pcs=c.slice(1).map(pm),floor=48+oct;
 		if(pcs.length>=3)pcs=pcs.filter(function(p,k){return k!==1;});   // 7e+ : SHELL (lâche la 5te) → 3-7(-9) ; QUE les notes de l'accord, ≠ rootless
-		for(var i=0;i<pcs.length;i++){
-			var n=cur+pm(pcs[i]-pm(cur));
-			if(cluster.length&&n<=cluster[cluster.length-1])n+=12;
-			cluster.push(n);cur=n;
-		}
-		return _vl2_rotOf(_vl2_vs(cluster));
+		// FIX REGISTRE : pc-placement (méthode house) borné [floor,floor+11] au lieu d'empiler en montant (qui dérivait selon les pc)
+		var cl=pcs.map(function(pc){return floor+pm(pc-floor);}).sort(function(a,b){return a-b;}).filter(function(n,i,a){return i===0||n!==a[i-1];});
+		return _vl2_rotOf(_vl2_vs(cl));
 	},
 	// trance : anthem 1 main — fonda + 3ce (+7e) + fonda doublée à l'octave au sommet ;
 	// lâche la 5te sur les 7e (son power). Root-inclus, centré, suit OCT.
@@ -1644,23 +1647,37 @@ var _vl2_T={
 		return[notes];   // grip "10e" root-inclus = registre FIXE (cohérence > mouvement)
 	},
 	// ─── NOUVEAUX VOICINGS (miroir vl2, 1res versions à affiner à l'oreille) ───
+	// FIX REGISTRE (audit Loi 1 D) : placement par pitch-class dans une octave fixe (méthode house),
+	// AU LIEU d'empiler en montant depuis le plancher (qui faisait flotter le registre selon les pc).
+	// Registre borné à [floor,floor+11] → cohérent entre degrés/tonalités. Identité (cluster brillant) intacte.
 	organ:function(c,oct){
 		if(c.length<3)return[_vl2_vs(c)];
-		var pm=function(n){return((n%12)+12)%12;},pcs=c.slice(1).map(pm),floor=60+(oct||0),cl=[],cur=floor-1,i,n;
-		for(i=0;i<pcs.length;i++){n=cur+1+pm(pcs[i]-pm(cur+1));cl.push(n);cur=n;}
+		var pm=function(n){return((n%12)+12)%12;},pcs=c.slice(1).map(pm),floor=60+(oct||0);
+		var cl=pcs.map(function(pc){return floor+pm(pc);}).sort(function(a,b){return a-b;}).filter(function(n,i,a){return i===0||n!==a[i-1];});
 		return _vl2_rotOf(_vl2_vs(cl).slice(0,5));
 	},
-	frenchtouch:function(c,oct,spec){return _vl2_rootlessClose(c,spec);},
-	broken:function(c,oct){
+	// frenchtouch — Daft Punk "Something About Us" : Rhodes chaud, FONDA INCLUSE + reste de
+	// l'accord empilé serré au-dessus, registre médium fixe (C3). La 9e (présente dans c en
+	// EXTENDED seulement) se pose au sommet = la couleur Rhodes ; en NORMAL = 7e propre root-
+	// inclusive (Loi 1 stricte). Distinct de rootless (garde la fonda), de prog/rave (pas de
+	// doublage de fonda), de jamiroquai (ancré C3, pas C#3+). ABSOLUTE, 1 forme.
+	frenchtouch:function(c,oct){
 		if(c.length<3)return[_vl2_vs(c)];
-		var pm=function(n){return((n%12)+12)%12;},pcs=c.slice(1).map(pm),floor=48+(oct||0),cl=[],cur=floor-1,i,n;
-		for(i=0;i<pcs.length;i++){n=cur+1+pm(pcs[i]-pm(cur+1));cl.push(n);cur=n;}
+		var pm=function(n){return((n%12)+12)%12;},floor=48+(oct||0);
+		var root=floor+pm(c[0]),cur=root,up=[],i,n;
+		for(i=1;i<c.length;i++){n=cur+1+pm(pm(c[i])-pm(cur+1));up.push(n);cur=n;}
+		return[_vl2_vs([root].concat(up)).slice(0,6)];
+	},
+	broken:function(c,oct){   // FIX REGISTRE : placement par pitch-class (méthode house), registre borné [48,59]
+		if(c.length<3)return[_vl2_vs(c)];
+		var pm=function(n){return((n%12)+12)%12;},pcs=c.slice(1).map(pm),floor=48+(oct||0);
+		var cl=pcs.map(function(pc){return floor+pm(pc);}).sort(function(a,b){return a-b;}).filter(function(n,i,a){return i===0||n!==a[i-1];});
 		return _vl2_rotOf(_vl2_vs(cl).slice(0,6));
 	},
-	deeptech:function(c,oct){
+	deeptech:function(c,oct){   // FIX REGISTRE : placement par pitch-class, registre grave borné [40,51]. floor 40 n'est PAS multiple de 12 → pm(pc-floor) (pas pm(pc)).
 		if(c.length<3)return[_vl2_vs(c)];
-		var pm=function(n){return((n%12)+12)%12;},pcs=c.slice(1).map(pm),floor=40+(oct||0),cl=[],cur=floor-1,i,n;
-		for(i=0;i<pcs.length;i++){n=cur+1+pm(pcs[i]-pm(cur+1));cl.push(n);cur=n;}
+		var pm=function(n){return((n%12)+12)%12;},pcs=c.slice(1).map(pm),floor=40+(oct||0);
+		var cl=pcs.map(function(pc){return floor+pm(pc-floor);}).sort(function(a,b){return a-b;}).filter(function(n,i,a){return i===0||n!==a[i-1];});
 		return _vl2_rotOf(_vl2_vs(cl).slice(0,4));
 	},
 	detroit:function(c,oct){
@@ -1669,11 +1686,20 @@ var _vl2_T={
 		for(i=0;i<keep.length;i++){m=cur+1+pm(pm(keep[i])-pm(cur+1));cl.push(m);cur=m;}
 		return[_vl2_vs(cl)];
 	},
+	// soul — D'Angelo (neo-soul / gospel) : cluster DENSE root-inclus qui GARDE les frottements
+	// de 2de (pas d'anti-boue), avec la 9e posée juste au-dessus de la fonda = le frottement
+	// gospel signature. 9e ajoutée par DESIGN (tension du mode, comme sus/quartal/power) → en
+	// NORMAL aussi. En EXTENDED, les tensions de c (9/11/13) s'empilent serré = la boue voulue.
+	// ABSOLUTE, 1 forme. Distinct de funk (grip 10e ouvert) et de jamiroquai (close depuis C#3).
 	soul:function(c,oct){
 		if(c.length<3)return[_vl2_vs(c)];
-		var pm=function(n){return((n%12)+12)%12;},floor=48+(oct||0),hasSev=c.length>=4,root=floor+pm(c[0]),third=floor+pm(c[1])+12,rest=[],i,n;
-		for(i=2;i<c.length;i++){if(i===2&&hasSev)continue;n=floor+pm(c[i]);if(n-root<3)n+=12;rest.push(n);}
-		return[_vl2_vs([root].concat(rest).concat([third])).filter(function(x,j,a){return j===0||x!==a[j-1];})];
+		var pm=function(n){return((n%12)+12)%12;},floor=48+(oct||0);
+		var root=floor+pm(c[0]),isMaj=pm(c[1]-c[0])===4,up=[],cur=isMaj?(root+2):root,i,n;
+		for(i=1;i<c.length;i++){n=cur+1+pm(pm(c[i])-pm(cur+1));up.push(n);cur=n;}
+		// 9e gospel en frottement BAS (root+2) sur accord MAJEUR (cluster propre, tons entiers) ; PAS sur mineur
+		// (le root+2 y tomberait en ♭9 grave sous la 3ce mineure → boue, audit Loi 1 B). Pas de remontée de registre.
+		var base=isMaj?[root,root+2]:[root];
+		return[_vl2_vs(base.concat(up)).filter(function(x,j,a){return j===0||x!==a[j-1];}).slice(0,6)];
 	},
 	jamiroquai:function(c,oct){
 		if(c.length<3)return[_vl2_vs(c)];
