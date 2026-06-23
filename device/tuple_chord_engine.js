@@ -1956,13 +1956,16 @@ function _vl2_play(fn,d,colorSemis,colorType){
 function _vl2_previewNotes(fn,d,colorSemis,colorType){
 	var spec=_vl2_specFor(fn,d,colorSemis,colorType);   // même pipeline que le play
 	if(!spec)return null;
-	var vc=currentVoicing,regBase=_vl2_regBase(),selCtr=_vl2_center(vc);
-	var key=_vl2_specKey(spec)+'|'+vc+'|'+selCtr+'|prev';
+	var vc=currentVoicing,regBase=_vl2_regBase();
 	var cands=_vl2_realize(spec,vc,{regBase:regBase,rootPos:!voiceLeadingEnabled});
 	if(!cands.length)return null;
+	// MÊME centre + MÊME flag absolu que le play (était _vl2_center → C4 pour les ABSOLUTE, d'où le saut
+	// de registre entre survol et jeu). _vl2_selCtr = poche du grip + registre maison du fallback.
+	var selCtr=_vl2_selCtr(cands);
+	var key=_vl2_specKey(spec)+'|'+vc+'|'+selCtr+'|prev';
 	var sv=_vl2_st.voices,sr=_vl2_st.recall;                           // snapshot (select ne touche pas _vl2_prevSpec)
 	_vl2_st.voices=null;_vl2_st.recall=new Map();                      // état froid jetable
-	var notes=_vl2_select(cands,{mode:'flow',center:selCtr,key:key,voicing:vc,spec:spec,prevSpec:null});
+	var notes=_vl2_select(cands,{mode:'flow',center:selCtr,key:key,voicing:vc,spec:spec,prevSpec:null,absolute:_vl2_ABSOLUTE.has(cands[0].voicing)});
 	_vl2_st.voices=sv;_vl2_st.recall=sr;                               // restore (pas de pollution VL)
 	return notes;
 }
