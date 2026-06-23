@@ -1515,6 +1515,16 @@ function _vl2_stackFromFloor(pcs,floor){
 	for(i=0;i<pcs.length;i++){n=cur+1+_vl2_m(pcs[i]-_vl2_m(cur+1));out.push(n);cur=n;}
 	return _vl2_vs(out);
 }
+// Anti-boue : écarte toute seconde mineure (demi-ton) en remontant la voix haute d'une octave.
+// Pour les clusters graves (deeptech) où un demi-ton bas = boueux. Garde toutes les notes (Loi 1).
+function _vl2_deMud(notes){
+	var r=_vl2_vs(notes),i,g,changed;
+	for(g=0;g<6;g++){ changed=false;
+		for(i=0;i<r.length-1;i++){ if(r[i+1]-r[i]===1){ r[i+1]+=12; changed=true; break; } }
+		r=_vl2_vs(r); if(!changed)break;
+	}
+	return r;
+}
 var _vl2_T={
 	classic:function(c){return[c];},
 	open:function(c){return c.length<2?[c]:[_vl2_vs(c.map(function(n,i){return i===1?n+12:n;}))];},
@@ -1595,10 +1605,15 @@ var _vl2_T={
 	drop3:function(c){var r=_vl2_vs(c);r[r.length-3]-=12;return[_vl2_vs(r)];},
 	// trap : son 808. La 808 tient la fondamentale -> on la DROP (rootless). Guide tones +
 	// extensions, SANS la 5te (anti-boue), ancrés GRAVE (C2) = sombre. ABSOLUTE. Triades -> fallback.
+	// trap : ROOTLESS (le 808 joue la fonda — règle basse séparée), grave/dark, plancher 36.
+	// 7e+ : guide tones sans la 5te (3-7). Sans 7e (triade/sus) : fallback MAISON grave = pc-placement
+	// des notes hors-fonda (3ce+5te) à son propre plancher — PAS de retombée sur classic (fini le saut).
 	trap:function(c,oct){
-		if(c.length<4)return[_vl2_vs(c)];
-		var pm=function(n){return((n%12)+12)%12;},u=c.slice(1).map(_vl2_m).filter(function(_,i){return i!==1;}),floor=36+(oct||0);
-		// FIX REGISTRE : pc-placement (méthode house) borné [36,47] = C2 grave/dark au lieu d'empiler en montant (qui dérivait)
+		if(c.length<3)return[_vl2_vs(c)];
+		var pm=function(n){return((n%12)+12)%12;},floor=36+(oct||0);
+		var u=c.slice(1).map(_vl2_m);
+		if(c.length>=4)u=u.filter(function(_,i){return i!==1;});   // 7e+ : lâche la 5te (guide tones)
+		// FIX REGISTRE : pc-placement (méthode house) borné [36,47] = C2 grave/dark
 		var cl=u.map(function(pc){return floor+pm(pc-floor);}).sort(function(a,b){return a-b;}).filter(function(n,i,a){return i===0||n!==a[i-1];});
 		return _vl2_rotOf(_vl2_vs(cl));
 	},
@@ -1674,11 +1689,13 @@ var _vl2_T={
 		var cl=pcs.map(function(pc){return floor+pm(pc);}).sort(function(a,b){return a-b;}).filter(function(n,i,a){return i===0||n!==a[i-1];});
 		return _vl2_rotOf(_vl2_vs(cl).slice(0,6));
 	},
-	deeptech:function(c,oct){   // FIX REGISTRE : placement par pitch-class, registre grave borné [40,51]. floor 40 n'est PAS multiple de 12 → pm(pc-floor) (pas pm(pc)).
+	// deeptech — dub techno : m7 rootless, dark mais PROPRE. pc-placement borné [44,55] (remonté de 40
+	// → moins boueux) + anti-boue (écarte les secondes mineures des 9e/étendus). floor 44 ≠ mult-12 → pm(pc-floor).
+	deeptech:function(c,oct){
 		if(c.length<3)return[_vl2_vs(c)];
-		var pm=function(n){return((n%12)+12)%12;},pcs=c.slice(1).map(pm),floor=40+(oct||0);
+		var pm=function(n){return((n%12)+12)%12;},pcs=c.slice(1).map(pm),floor=44+(oct||0);
 		var cl=pcs.map(function(pc){return floor+pm(pc-floor);}).sort(function(a,b){return a-b;}).filter(function(n,i,a){return i===0||n!==a[i-1];});
-		return _vl2_rotOf(_vl2_vs(cl).slice(0,4));
+		return _vl2_rotOf(_vl2_deMud(_vl2_vs(cl).slice(0,4)));
 	},
 	detroit:function(c,oct){
 		if(c.length<3)return[_vl2_vs(c)];
@@ -1762,7 +1779,7 @@ function _vl2_realize(spec,voicing,opts){
 	var octShift=regBase-48;
 	var want=(opts&&opts.targetVoices!=null)?opts.targetVoices:null;
 	var vc=voicing,fallback=null;
-	if((vc==='rootlessa'||vc==='rootlessb'||vc==='jazz'||vc==='nuhouse'||vc==='house'||vc==='trap')&&!spec.hasSeventh){fallback=vc;vc='classic';}   // rootless (dont house/jazz) : triade = classic (l'accord TEL QUEL)
+	if((vc==='rootlessa'||vc==='rootlessb'||vc==='jazz'||vc==='nuhouse'||vc==='house')&&!spec.hasSeventh){fallback=vc;vc='classic';}   // rootless (dont house/jazz) : triade = classic (l'accord TEL QUEL). trap a SON fallback grave (dyade root+5).
 	if(vc==='quartal'&&(!spec.hasSeventh||!spec.scalePcs)){fallback=vc;vc='classic';}   // quartal a besoin de la 7e + la gamme
 	if(vc==='sus'&&!spec.scalePcs){fallback=vc;vc='classic';}   // sus a besoin de la gamme (le 2)
 	if(vc==='upper'&&!spec.isDominant){fallback=vc;vc='classic';}   // upper n'a de sens que sur les dominantes
