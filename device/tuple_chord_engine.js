@@ -1940,23 +1940,24 @@ function _vl2_play(fn,d,colorSemis,colorType){
 	return notes;
 }
 
-// Aperçu (hover) : calcule le voicing d'une cellule SANS jouer ni polluer la mémoire VL.
-// État VL JETABLE (snapshot + restore) -> le prochain accord réel n'est pas affecté.
-// Toujours en démarrage à froid -> montre la forme CANONIQUE de la cellule (stable).
+// Aperçu (hover) : montre le voicing RÉEL qui jouerait — MÊME chemin que _vl2_play (même realize, même
+// état VL CHAUD courant, même mode) → l'affichage hover == le jeu. Snapshot + restore de l'état VL pour
+// ne RIEN polluer (le prochain accord réel n'est pas affecté). VL off : froid (comme _vl2_play qui reset).
 function _vl2_previewNotes(fn,d,colorSemis,colorType){
 	var spec=_vl2_specFor(fn,d,colorSemis,colorType);   // même pipeline que le play
 	if(!spec)return null;
 	var vc=currentVoicing,regBase=_vl2_regBase();
 	var cands=_vl2_realize(spec,vc,{regBase:regBase,rootPos:!voiceLeadingEnabled});
 	if(!cands.length)return null;
-	// MÊME centre + MÊME flag absolu que le play (était _vl2_center → C4 pour les ABSOLUTE, d'où le saut
-	// de registre entre survol et jeu). _vl2_selCtr = poche du grip + registre maison du fallback.
-	var selCtr=_vl2_selCtr(cands);
-	var key=_vl2_specKey(spec)+'|'+vc+'|'+selCtr+'|prev';
-	var sv=_vl2_st.voices,sr=_vl2_st.recall;                           // snapshot (select ne touche pas _vl2_prevSpec)
-	_vl2_st.voices=null;_vl2_st.recall=new Map();                      // état froid jetable
-	var notes=_vl2_select(cands,{mode:'flow',center:selCtr,key:key,voicing:vc,spec:spec,prevSpec:null,absolute:_vl2_ABSOLUTE.has(cands[0].voicing)});
-	_vl2_st.voices=sv;_vl2_st.recall=sr;                               // restore (pas de pollution VL)
+	var selCtr=_vl2_selCtr(cands);   // même centre que le play
+	var key=_vl2_specKey(spec)+'|'+vc+'|'+selCtr;
+	var mode=voiceLeadingEnabled?((vlMode==='anchored')?'anchor':'flow'):'flow';
+	var warm=voiceLeadingEnabled;
+	var sv=_vl2_st.voices,sr=_vl2_st.recall;                           // snapshot l'état VL
+	_vl2_st.recall=new Map();                                          // recall jetable (l'aperçu ne fige pas l'anchor du jeu)
+	if(!warm)_vl2_st.voices=null;                                      // VL off : froid (comme _vl2_play qui _vl2_reset)
+	var notes=_vl2_select(cands,{mode:mode,center:selCtr,key:key,voicing:vc,spec:spec,prevSpec:(warm?_vl2_prevSpec:null),absolute:_vl2_ABSOLUTE.has(cands[0].voicing)});
+	_vl2_st.voices=sv;_vl2_st.recall=sr;                               // restore (zéro pollution)
 	return notes;
 }
 function preview(fn,d){
