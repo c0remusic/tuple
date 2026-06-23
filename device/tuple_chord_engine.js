@@ -229,7 +229,8 @@ var LIST_DISPATCH = {
 	captureone: captureone, autosync: setautosync, progress: handleprogress,
 	useflats: useflats, preview: preview, previewcolor: previewcolor, previewprog: previewprog, extended: extended,
 	chordify: chordify,
-	progmode: progmode, progmodecycle: progmodecycle, selprog: selprog, selopt: selopt
+	progmode: progmode, progmodecycle: progmodecycle, selprog: selprog, selopt: selopt,
+	capturetoggle: capturetoggle
 };
 function list() {
 	var a = Array.prototype.slice.call(arguments);
@@ -2141,6 +2142,10 @@ function capture(v) {                      // toggle « Capture » depuis l'UI
 	captureMode = (parseInt(v) === 1);
 	outlet(7, "capture", captureMode ? 1 : 0);
 }
+function capturetoggle() {                 // bascule CAPTURE depuis le pad Push (ligne vide) — flippe + re-broadcast (UI + Push synchro)
+	capture(captureMode ? 0 : 1);
+	if (progPushOn) broadcastProgPush();   // rafraîchit le pad CAPTURE (et l'état audition/édition)
+}
 function clearprog()  { progression = []; insertCursor = -1; broadcastProg(); }
 function removelast() { if (progression.length) progression.pop(); broadcastProg(); }
 function removeat(i)  {
@@ -2241,33 +2246,39 @@ function _progSelIdx(){ return (progSel >= 0 && progSel < progression.length) ? 
 // Options empilées au-dessus de l'accord `idx` selon le mode actif, **6 MAX** (la rangée du bas = étapes
 // + 1 rangée vide séparatrice réservent 2 des 8 rangées). Retourne [{deg, fn, kind, …}] — voic: +voicing ;
 // emprunt: +colorSemis/colorType.
-var PROG_OPT_MAX = 6;
+var PROG_OPT_MAX = 48;   // options de l'étape sélectionnée → remplissent la grille 6×8 (rows 0-5)
+// Ordre d'affichage des voicings en mode Voic, GROUPÉ par famille (bottom-up : basiques en bas, près des étapes).
+var _VOIC_ORDER = ["classic","piano","open","spread","drop2","drop3",
+	"rootless","rootlessa","rootlessb","jazz","nuhouse","quartal","upper","sus",
+	"house","prog","trance","funk","organ","frenchtouch","broken","deeptech","detroit","soul","jamiroquai","rave","wide","power"];
 function _progOptions(idx){
 	if (idx < 0 || idx >= progression.length) return [];
 	var step = progression[idx], out, v;
 	if (progMode === PROG_MODE_VOIC){
-		out = [];                                       // voicings de CET accord (6 premiers ; curation fine = futur)
-		for (v = 0; v < VOICING_NAMES.length && out.length < PROG_OPT_MAX; v++)
-			out.push({ deg:step.deg, fn:step.fn, kind:"voic", voicing:VOICING_NAMES[v], colorSemis:step.colorSemis, colorType:step.colorType });
+		out = [];                                       // voicings de CET accord, ordre par famille (_VOIC_ORDER)
+		for (v = 0; v < _VOIC_ORDER.length && out.length < PROG_OPT_MAX; v++)
+			out.push({ deg:step.deg, fn:step.fn, kind:"voic", voicing:_VOIC_ORDER[v], colorSemis:step.colorSemis, colorType:step.colorType });
 		return out;
 	}
 	out = (progMode === PROG_MODE_SUITE) ? _suiteOptions(idx) : substitutesFor({ deg:step.deg, fn:step.fn });
+	if (progMode === PROG_MODE_SUITE) out.sort(function(a,b){ return (b.lvl||0) - (a.lvl||0); });   // meilleur enchaînement d'abord (option 0 = bas)
 	return (out.length > PROG_OPT_MAX) ? out.slice(0, PROG_OPT_MAX) : out;
 }
 
 // Diffuse la progression + les options PAR COLONNE vers le Push (outlet 7). Layout : rangée du bas =
-// étapes ; au-dessus de CHAQUE accord (sa colonne) = ses propres options (6 max) selon le mode. progopt
-// est POSITIONNÉ : col (= l'étape) + optrow (1..6). progclear → progstep* → progopt* → progsel → progdone.
+// Rangée du bas = les étapes. Au-dessus = les options de la SEULE étape SÉLECTIONNÉE, en liste À PLAT
+// (le spike/UI les étalent sur la grille 6×8, bottom-up). progopt = (flatIdx, deg, kind).
+// progclear → progstep* → progopt* → capture → progsel → progdone.
 function broadcastProgPush(){
 	outlet(7, "progclear");
-	var i, j, opts;
-	for (i = 0; i < progression.length; i++){
-		outlet(7, "progstep", i, progression[i].deg);              // rangée du bas (deg : -1 emprunt ; 0..6 degré)
-		opts = _progOptions(i);                                     // options de CET accord
-		for (j = 0; j < opts.length; j++)
-			outlet(7, "progopt", i, j + 1, (opts[j].deg == null ? -1 : opts[j].deg), opts[j].kind);   // col=i, optrow=j+1
-	}
-	outlet(7, "progsel", _progSelIdx(), progMode);
+	var i, j, opts, sel = _progSelIdx();
+	for (i = 0; i < progression.length; i++)
+		outlet(7, "progstep", i, progression[i].deg);             // rangée du bas (deg : -1 emprunt ; 0..6 degré)
+	opts = _progOptions(sel);                                     // options de l'étape SÉLECTIONNÉE
+	for (j = 0; j < opts.length; j++)
+		outlet(7, "progopt", j, (opts[j].deg == null ? -1 : opts[j].deg), opts[j].kind);   // flatIdx, deg, kind
+	outlet(7, "capture", captureMode ? 1 : 0);                   // état CAPTURE (pad ligne vide)
+	outlet(7, "progsel", sel, progMode);
 	outlet(7, "progdone");
 }
 
@@ -2307,7 +2318,7 @@ function _optName(opt){
 // Cellule de grille (forme playFlatCell) pour une option / une étape : emprunt -> "b", sinon "d".
 function _cellFor(o){ return (o.fn === "color") ? { kind:"b", semis:o.colorSemis, type:o.colorType } : { kind:"d", fn:o.fn, degree:o.deg }; }
 
-function progmode(v){ progPushOn = (parseInt(v) === 1); outlet(7, "progmode", progPushOn ? 1 : 0); if (progPushOn) broadcastProgPush(); }
+function progmode(v){ progPushOn = (parseInt(v) === 1); if (progPushOn) progSel = 0; outlet(7, "progmode", progPushOn ? 1 : 0); if (progPushOn) broadcastProgPush(); }   // entrée : sélection par défaut = 1re étape
 function progmodecycle(){ progMode = (progMode + 1) % 3; outlet(7, "progmodeui", progMode); if (progPushOn) broadcastProgPush(); }
 // Sélection d'une étape (rangée 0 du Push) : la sélectionne + l'écoute (réutilise playprog).
 function selprog(col){
@@ -2317,15 +2328,15 @@ function selprog(col){
 	playprog(i);
 	if (progPushOn) broadcastProgPush();
 }
-// Appui d'une option au-dessus d'un accord. `col` = la colonne = l'accord concerné ; `row` = 1..6.
-// CAPTURE off -> écoute ; CAPTURE on -> édite : Subs/Voicings remplacent l'accord de la colonne, Suite
-// insère après — en rejouant l'option par le VRAI chemin (son/nom/état) via _progCommit.
-function selopt(col, row){
-	var idx = parseInt(col), r = parseInt(row);
+// Appui d'une option dans la grille. `flat` = index à plat dans les options de l'étape SÉLECTIONNÉE.
+// CAPTURE off -> écoute ; CAPTURE on -> édite : Subs/Voicings remplacent l'étape, Suite insère après —
+// en rejouant l'option par le VRAI chemin (son/nom/état) via _progCommit.
+function selopt(flat){
+	var idx = _progSelIdx(), f = parseInt(flat);
 	if (idx < 0 || idx >= progression.length) return;
 	var opts = _progOptions(idx);
-	if (r - 1 < 0 || r - 1 >= opts.length) return;
-	var opt = opts[r - 1];
+	if (f < 0 || f >= opts.length) return;
+	var opt = opts[f];
 	if (!captureMode){ _auditionNotes(_realizeOption(idx, opt), _optName(opt), (opt.deg == null ? -1 : opt.deg)); return; }   // écoute + nom dans le Monitor
 	var step = progression[idx], cell, savedVc = null;
 	if (opt.kind === "voic"){

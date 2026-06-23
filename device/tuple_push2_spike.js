@@ -74,6 +74,7 @@ var smartActive = false, smartPads = {};
 // slot = 18 + col*3 + (lvl-1) → 8 cibles × 3 = slots 18..41.
 var SMART_TIER = [0, 0.45, 0.72, 1.0];   // facteur de luminosité par lvl (1..3)
 var WHITEIDX  = 9;   // accord DISPONIBLE mais non suggéré = allumé en BLANC (slot 9 libre)
+var CAP_ON_IDX = 42, CAP_OFF_IDX = 43;   // pad CAPTURE (ligne vide) : rouge vif (on) / blanc vif (off). Slots libres (smart = 18-41).
 function _smartSlot(col, lvl){ var l = (lvl < 1) ? 1 : (lvl > 3 ? 3 : lvl); return 18 + col*3 + (l-1); }
 function _scaleRGB(rgb, f){ return [Math.round(rgb[0]*f), Math.round(rgb[1]*f), Math.round(rgb[2]*f)]; }
 
@@ -83,6 +84,7 @@ function _scaleRGB(rgb, f){ return [Math.round(rgb[0]*f), Math.round(rgb[1]*f), 
 var progLayout = false;                 // le layout progression est-il actif ? (reçoit 'progmode 1/0')
 var progSteps  = [], progOpts = [];     // étapes (degrés, -1=emprunt) ; options ({deg,kind})
 var progSelIdx = -1, progModeCur = 0;   // étape sélectionnée + mode actif
+var progCapture = false;                // état CAPTURE (pad ligne vide)
 var _pTmpSteps = null, _pTmpOpts = null;   // double-buffer (comme colTmp) pour un affichage atomique
 
 // Observe device active state — release grab si le device est désactivé.
@@ -208,7 +210,8 @@ function qualities() { var q = arrayfromargs(arguments); degQual = []; for (var 
 function progmode(v) { progLayout = (parseInt(v) === 1); L("progLayout=" + progLayout); if (enabled) { applyPalette(); refreshGrid(); } flush(); }
 function progclear() { _pTmpSteps = []; _pTmpOpts = []; }
 function progstep(col, deg) { if (_pTmpSteps) _pTmpSteps.push(parseInt(deg)); }
-function progopt(col, row, deg, kind) { if (_pTmpOpts) _pTmpOpts.push({ col: parseInt(col), row: parseInt(row), deg: parseInt(deg), kind: String(kind) }); }
+function progopt(flat, deg, kind) { if (_pTmpOpts) _pTmpOpts.push({ idx: parseInt(flat), deg: parseInt(deg), kind: String(kind) }); }   // liste à plat (étape sélectionnée)
+function capture(v) { progCapture = (parseInt(v) === 1); if (enabled && progLayout) refreshGrid(); }   // état CAPTURE → feedback pad
 function progsel(idx, mode) { progSelIdx = parseInt(idx); progModeCur = parseInt(mode); }
 function progdone() { if (_pTmpSteps) { progSteps = _pTmpSteps; progOpts = _pTmpOpts; _pTmpSteps = null; _pTmpOpts = null; } L("progdone steps=" + progSteps.length + " opts=" + progOpts.length + " sel=" + progSelIdx + " mode=" + progModeCur); if (enabled && progLayout) refreshGrid(); }
 
@@ -235,6 +238,8 @@ function applyPalette() {
 	}
 	for (var sl2 = 1; sl2 <= 3; sl2++) setPaletteRGB(_smartSlot(7, sl2), _scaleRGB([170, 50, 230], SMART_TIER[sl2]));   // emprunt (col 7) violet
 	setPaletteRGB(WHITEIDX, [200, 200, 205]);   // blanc doux : accord disponible (layout Smart)
+	setPaletteRGB(CAP_ON_IDX, [255, 25, 25]);   // CAPTURE on = rouge vif
+	setPaletteRGB(CAP_OFF_IDX, [255, 255, 255]); // CAPTURE off = blanc vif
 	L("palette RGB appliquée (scheme " + scheme + ")"); flush();
 }
 
@@ -287,20 +292,24 @@ function _progOptIdx(opt, pressed) {
 	return WHITEIDX;
 }
 function refreshProg() {
-	// Le Push indexe la rangée 0 EN HAUT. Layout : physique 7 = étapes (bas) ; physique 6 = séparateur (vide) ;
-	// physique 5..0 = options, optrow 1..6 (optrow = 6 - physique). Options POSITIONNÉES par colonne.
+	// Push : rangée 0 EN HAUT. Layout : physique 7 = étapes (bas) ; physique 6 = ligne vide + pad CAPTURE (col 0) ;
+	// physique 5..0 = options de l'étape SÉLECTIONNÉE, BOTTOM-UP (idx 0 en physique 5, près des étapes).
+	// gridRow physique = 5 - floor(idx/8) ; col = idx%8.
 	var c, phys, k, grid = [], n = 0, firstErr = "";
 	for (c = 0; c < 8; c++) { grid[c] = []; for (phys = 0; phys < 8; phys++) grid[c][phys] = OFFIDX; }
 	for (c = 0; c < progSteps.length && c < 8; c++) grid[c][7] = _progStepIdx(progSteps[c], c === progSelIdx);   // étapes (bas)
-	for (k = 0; k < progOpts.length; k++) {                                                                      // options au-dessus de leur colonne
+	grid[0][6] = progCapture ? CAP_ON_IDX : CAP_OFF_IDX;                                                          // CAPTURE (ligne vide, col 0)
+	for (k = 0; k < progOpts.length; k++) {                                                                       // options de l'étape sélectionnée, bottom-up
 		var o = progOpts[k];
-		if (o.col >= 0 && o.col < 8 && o.row >= 1 && o.row <= 6) grid[o.col][6 - o.row] = _progOptIdx(o, false);
+		if (o.idx < 0 || o.idx >= 48) continue;
+		var gr = 5 - Math.floor(o.idx / 8), gc = o.idx % 8;
+		grid[gc][gr] = _progOptIdx(o, false);
 	}
 	for (c = 0; c < 8; c++) for (phys = 0; phys < 8; phys++) {
 		var v = grid[c][phys];
 		try { theMatrix.call("send_value", c, phys, v); if (v !== OFFIDX) n++; } catch (e) { if (!firstErr) firstErr = String(e); }
 	}
-	L("refreshProg: steps=" + progSteps.length + " opts=" + progOpts.length + " sel=" + progSelIdx + " mode=" + progModeCur + " lit=" + n + (firstErr ? " ERR:" + firstErr : "")); flush();
+	L("refreshProg: steps=" + progSteps.length + " opts=" + progOpts.length + " sel=" + progSelIdx + " cap=" + progCapture + " mode=" + progModeCur + " lit=" + n + (firstErr ? " ERR:" + firstErr : "")); flush();
 }
 
 // =====================================================================
@@ -346,20 +355,23 @@ function onMatrixProg(vel, col, row) {
 		}
 		return;
 	}
-	if (row === 6) return;                                    // séparateur : rien
-	var optrow = 6 - row;                                     // physique 5..0 -> optrow 1..6
-	var o = _findOpt(col, optrow);
+	if (row === 6) {                                          // ligne vide : pad CAPTURE (col 0), reste = rien
+		if (col === 0 && vel > 0) { L("PROG capturetoggle"); flush(); outlet(0, "capturetoggle"); }
+		return;
+	}
+	var flat = (5 - row) * 8 + col;                           // physique 5..0 -> idx à plat (bottom-up)
+	var o = _findOptFlat(flat);
 	if (!o) return;
 	if (vel > 0) {
-		L("PROG press opt col=" + col + " optrow=" + optrow + " -> selopt"); flush();
-		outlet(0, "selopt", col, optrow);
+		L("PROG press opt flat=" + flat + " -> selopt"); flush();
+		outlet(0, "selopt", flat);
 		try { theMatrix.call("send_value", col, row, _progOptIdx(o, true)); } catch (e) {}
 	} else {
 		outlet(0, "release");
 		try { theMatrix.call("send_value", col, row, _progOptIdx(o, false)); } catch (e) {}
 	}
 }
-// Retrouve l'option positionnée à (col, optrow) dans le buffer diffusé.
-function _findOpt(col, optrow) { for (var k = 0; k < progOpts.length; k++) { var o = progOpts[k]; if (o.col === col && o.row === optrow) return o; } return null; }
+// Retrouve l'option d'index à plat dans le buffer diffusé.
+function _findOptFlat(flat) { for (var k = 0; k < progOpts.length; k++) { if (progOpts[k].idx === flat) return progOpts[k]; } return null; }
 
 post("PUSH2 module (toggle) LOADED\n");

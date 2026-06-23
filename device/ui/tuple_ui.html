@@ -1729,7 +1729,7 @@
         var cn=(e.target&&e.target.className)?String(e.target.className):'';
         if(cn.indexOf('pg-ins')>=0||cn.indexOf('pg-del')>=0) return;   // viser +/× ne joue pas l'accord
       }
-      send('playprog', idx); card.classList.add('pressed');
+      send(progOn ? 'selprog' : 'playprog', idx); card.classList.add('pressed');   // PROG actif : sélectionne l'étape (la grille Push montre ses options) ; sinon joue juste
       _drag={ kind:'reorder', idx:idx, x:(e?e.clientX:0), y:(e?e.clientY:0), active:false, target:-1, lastTarget:null };  // début éventuel d'un glisser (réordonner)
     };
     ins.onmousedown=function(e){ if(e){e.preventDefault();e.stopPropagation();} };
