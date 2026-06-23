@@ -52,6 +52,22 @@ function download(url, dest, cb) {
     }).on('error', cb);
 }
 
+// ── Max path → POSIX (macOS) ─────────────────────────────────────────────────
+// Max's patcher.filepath is "Volume:/path" on macOS (e.g. "Macintosh HD:/Users/…").
+// The shell (cp/rm) needs a real POSIX path. Boot volume → files live at "/" (strip the
+// volume); external volume → "/Volumes/<vol>/…". Disambiguate via fs.existsSync.
+function maxToPosix(p) {
+    p = String(p || '');
+    if (!p || p.charAt(0) === '/') return p;            // already POSIX (or empty)
+    var m = p.match(/^[^:\/]+:(\/.*)$/);                 // "Volume:/path" → "/path"
+    if (!m) return p;
+    var rest = m[1];
+    if (fs.existsSync(rest)) return rest;               // boot volume (e.g. /Users/… exists)
+    var vol = p.slice(0, p.indexOf(':'));
+    var ext = '/Volumes/' + vol + rest;                 // external volume
+    return fs.existsSync(ext) ? ext : rest;             // best effort
+}
+
 // ── Windows: launch branded installer (requires_reinstall=true) ───────────────
 function dlWin(url) {
     var dest = path.join(os.tmpdir(), 'Tuple-Installer.exe');
@@ -94,11 +110,12 @@ function dlMac(url, amxdPath) {
     maxApi.post('tuple_dl: downloading → ' + tempZip);
     download(url, tempZip, function(err) {
         if (err) { maxApi.post('tuple_dl: download error: ' + err.message); fail('download'); return; }
-        // Prefer amxdPath-derived dir; fall back to saved install path file
+        // Prefer amxdPath-derived dir; fall back to saved install path file.
+        // amxdPath is a Max path ("Macintosh HD:/Users/…") → convert to POSIX for the shell.
         var installDir = '';
-        if (amxdPath) { installDir = path.dirname(path.dirname(amxdPath)); }
+        if (amxdPath) { installDir = path.dirname(path.dirname(maxToPosix(amxdPath))); }
         if (!installDir) {
-            try { installDir = fs.readFileSync(path.join(os.homedir(), '.tuple-install-path'), 'utf8').trim(); } catch(_) {}
+            try { installDir = maxToPosix(fs.readFileSync(path.join(os.homedir(), '.tuple-install-path'), 'utf8').trim()); } catch(_) {}
         }
         if (!installDir) {
             maxApi.post('tuple_dl: no saved path — reinstall via .command');

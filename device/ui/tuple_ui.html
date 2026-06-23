@@ -103,7 +103,7 @@
     font-family:var(--sans);font-size:8px;letter-spacing:.14em;font-weight:600;
     color:rgba(255,220,130,.35);text-transform:uppercase;
   }
-  .dd-grid{display:grid;gap:3px;flex:1;align-content:start}
+  .dd-grid{display:grid;gap:4px;flex:1;grid-auto-rows:1fr;overflow:hidden;min-height:0}   /* remplit la hauteur (1fr) + JAMAIS de scroll ; colonnes calculées dans openDrop */
   .dd-cell{
     background:var(--cell);border:1px solid var(--cell-bd);border-radius:5px;
     padding:6px 8px;cursor:pointer;text-align:left;
@@ -120,8 +120,8 @@
   .dd-cell.on{background:var(--gold-dim);border-color:var(--gold-bd);color:var(--gold);font-weight:600}
   /* Full : options plus grandes + bloc centré (la fenêtre est haute → fini le vide en bas) */
   body.full .dd-ov{padding:16px 14px;gap:12px}
-  body.full .dd-grid{align-content:center;gap:7px}
-  body.full .dd-cell{padding:12px 12px;font-size:12px;justify-content:flex-start}
+  body.full .dd-grid{gap:5px}
+  body.full .dd-cell{padding:7px 10px;font-size:11px;justify-content:flex-start;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   /* menu ouvert : on masque les séparateurs dégradés (vsep/sep) pour un panneau propre */
   body.dd-open .vsep, body.dd-open .sep{opacity:0}
 
@@ -288,13 +288,14 @@
   .exs-track{flex:1;height:6px;background:rgba(255,255,255,.06);border-radius:3px;position:relative;cursor:ew-resize;touch-action:none}
   .exs-track:hover{background:rgba(255,255,255,.11)}
   /* repère central pour les sliders bipolaires (off/flat au milieu) */
-  .exs-track.bipolar::after{content:'';position:absolute;left:50%;top:-2px;bottom:-2px;width:1px;margin-left:-.5px;background:rgba(255,255,255,.25);pointer-events:none}
+  .exs-track.bipolar::after{content:'';position:absolute;left:50%;top:1px;bottom:1px;width:2px;margin-left:-1px;border-radius:1px;background:rgba(255,255,255,.16);pointer-events:none}
   .exs-fill{position:absolute;left:0;top:0;bottom:0;width:0;background:var(--gold);opacity:.9;border-radius:3px;pointer-events:none}
   .exs-val{font-size:10px;color:var(--gold);font-weight:500;flex:0 0 54px;text-align:right;white-space:nowrap}
   .exs-val.off{color:var(--muted)}
   .exs-lbl{white-space:nowrap}
   /* Curve = cycler lblbtn (comme VL MODE) à hauteur de cellule Expression */
   #curveBtn{height:32px;padding:0 10px;font-size:10px}
+  #extended{display:flex;align-items:center;justify-content:center}   /* texte centré (en CSS, pas inline → body.strip #extended{display:none} peut l'emporter) */
   /* DEVICE group (Push · Layout) — full uniquement, colonne droite. Caché en strip. */
   .devgrp{display:none}
   body.full .devgrp{display:flex;flex-direction:column;gap:8px;flex:none;margin-top:12px}
@@ -431,37 +432,42 @@
   body.full  .brand-hint{display:inline;font-size:9px;vertical-align:super;color:rgba(255,220,130,.38);margin-left:2px;font-family:var(--body);font-weight:600;line-height:1;cursor:pointer}
   body.strip{background-color:#232323}
 
-  body.strip .config{width:205px;flex:0 0 205px;padding:4px 6px;gap:0;justify-content:flex-start;background:#232323}
-  body.strip .mon   {flex:1;padding:8px 6px;display:flex;flex-direction:column;gap:0;justify-content:space-between;background:#232323}
+  body.strip .config{width:205px;flex:0 0 205px;padding:0 6px;gap:0;justify-content:space-evenly;background:#232323;position:relative}
+  body.strip .mon   {flex:1;padding:8px 6px 6px;display:flex;flex-direction:column;gap:0;justify-content:space-between;background:#232323}
   body.strip .cfg-spacer{display:none}
   body.strip .lbl   {display:none}
   body.strip .zone  {display:contents}
   body.strip .sep   {display:none}
 
-  /* contrôles : lbl-row collé en haut, puis gap 6px entre chaque case */
-  body.strip .lbl-row      {flex:0 0 18px;justify-content:flex-end}
-  body.strip .lbl-row .sync{height:100%;padding:0 6px;width:auto;font-size:9px;letter-spacing:.07em}
-  body.strip .lbl-row .acc-btn{height:100%;padding:0 5px;font-size:10px}
+  /* contrôles : espacement UNIFORME 6px partout (bord↔case = case↔case) via space-evenly sur .config.
+     6 items (SYNC, KEY, oct, VOICING, VL, VL MODE) ; header lbl-row = 17px → S = (169-127)/7 = 6px pile.
+     KEY.top = 29, VL MODE.bot = 163 ; le monitor (chord) et OPEN DEVICE sont réalignés sur ces valeurs. */
+  body.strip .lbl-row      {flex:0 0 17px;justify-content:flex-end}
+  body.strip .lbl-row .sync{height:17px;padding:0 6px;width:auto;font-size:9px;letter-spacing:.07em}   /* hauteur EXPLICITE = hauteur du header : sinon height:100% ne résout pas (parent .ton-btns sans hauteur définie) → SYNC tombait à 15px, centré, laissant un gap SYNC→SCALE de 7px au lieu de 6 */
+  body.strip .lbl-row .acc-btn{position:fixed;top:6px;right:6px;height:17px;padding:0 5px;font-size:10px;z-index:3}   /* ♭/# déplacé côté monitor (coin haut-droit), pendant de SYNC à gauche : c'est un toggle de NOTATION, sa place est près de l'affichage des notes. inset coin = 6px, hauteur 17px = SYNC (boîte identique, alignée). Strip-only (full inchangé). */
   body.strip #zTon + .sep  {display:none}
 
   body.strip .row          {flex:0 0 22px;display:flex;gap:5px;margin-top:3px}
   body.strip .row .csel    {flex:1;padding:0 7px;font-size:10px;align-items:center}
-  body.strip .krow         {padding-right:0}
+  body.strip .krow         {padding-right:0;margin-top:0}   /* marges à 0 : space-evenly gère tout l'espacement (sinon ça s'ajoute) */
   body.strip .krow .csel .cl{font-size:8px}
 
-  body.strip .oct          {flex:0 0 22px;display:flex;gap:5px;margin-top:3px}
+  body.strip .oct          {flex:0 0 22px;display:flex;gap:5px;margin-top:0}
   body.strip .oct span     {padding:0;font-size:8px;display:flex;align-items:center;justify-content:center}
 
-  body.strip #voicing      {flex:0 0 22px;padding:0 7px;font-size:10px;display:flex;align-items:center;margin-top:3px}
-  body.strip #vl           {flex:0 0 22px;padding:0;font-size:8.5px;display:flex;align-items:center;justify-content:center;margin-top:3px}
-  body.strip #vlmode       {flex:0 0 22px;padding:0 7px;font-size:8.5px;display:flex;align-items:center;justify-content:space-between;margin-top:3px}
+  body.strip #voirow       {margin-top:0}   /* space-evenly gère l'espacement (wrapper VOICING+EXT) */
+  body.strip #voicing      {height:22px;padding:0 7px;font-size:10px;display:flex;align-items:center}   /* hauteur EXPLICITE : l'inline flex:1 (wrapper VOICING+EXT, mode full) bat flex:0 0 22px → en strip la case retombait à 15px. height gagne. */
+  body.strip #extended     {display:none}   /* EXT masqué dans le strip (place limitée) */
+  body.strip #vl           {flex:0 0 22px;padding:0;font-size:8.5px;display:flex;align-items:center;justify-content:center;margin-top:0}
+  body.strip #vlmode       {flex:0 0 22px;padding:0 7px;font-size:8.5px;display:flex;align-items:center;justify-content:space-between;margin-top:0}
 
-  /* logo : order:999 + margin-top:auto le pousse au bas de l'espace libre */
-  body.strip .brand        {flex:0 0 auto;margin-bottom:2px}
+  /* logo : sorti du flux (absolu, haut-gauche) → la rangée SYNC partage sa ligne,
+     ce qui libère ~18px au-dessus de KEY pour que KEY.top s'aligne sur le haut du monitor (26px). */
+  body.strip .brand        {position:absolute;top:6px;left:6px;margin:0;z-index:2}   /* inset coin = 6px (= marge latérale de l'UI), aligné avec SYNC et ♭/# */
 
   /* Strip — monitor */
   body.strip .toggle       {height:46px;margin-top:0}
-  body.strip .chord        {flex:none;height:36px;min-height:0;padding:0;margin-top:18px;flex-direction:column;align-items:flex-start;justify-content:flex-start;gap:3px;background:transparent;border:none}  /* top-align : haut du texte stable, aligné avec la case KEY même avec une valeur */
+  body.strip .chord        {flex:none;height:36px;min-height:0;padding:0;margin-top:21px;flex-direction:column;align-items:flex-start;justify-content:flex-start;gap:3px;background:transparent;border:none}  /* margin-top 21 → chord.top = 8+21 = 29 = KEY.top (réaligné sur la grille uniforme de gauche) */
   body.strip .chord .deg   {display:flex;gap:3px}
   body.strip .chord .deg .r{font-size:8px}
   body.strip .chord .deg .f{font-size:7px}
@@ -705,7 +711,7 @@
       <div class="zone" id="zStyle">
         <div class="lbl">Chord style</div>
         <div class="oct" id="oct"></div>
-        <div class="csel" id="voicing"><span class="cl">VOICING</span><span class="cv" id="voicingV">Classic</span></div>
+        <div id="voirow" style="display:flex;gap:8px"><div class="csel" id="voicing" style="flex:1"><span class="cl">VOICING</span><span class="cv" id="voicingV">Classic</span></div><div class="btn" id="extended" style="flex:none;padding:0 10px" title="Extended — enrichit chaque accord avec ses tensions (9/11/13)">EXT</div></div>
         <div class="btn" id="vl">VOICE LEADING</div>
         <div class="btn lblbtn" id="vlmode"><span class="cl">VL MODE</span><span class="cv" id="vlmodeV">Anchor</span></div>
       </div>
@@ -754,9 +760,12 @@
       <div id="cap-dock">
         <div class="cd-head">
           <div class="cd-rec" id="dockCap" title="Capture each chord you play"><span class="cd-dot"></span>CAPTURE</div>
+          <div class="btn" id="progBtn" title="Progression companion on Push 2 — bottom row = your progression steps, rows above = options for the selected step">PROG</div>
+          <div class="btn" id="progModeBtn" title="Progression options on Push — Substitutes / Next chords / Voicings">MODE · Subs</div>
           <div class="cd-sp"></div>
           <div class="btn" id="dockClear" title="Remove every chord">CLEAR</div>
           <div class="btn" id="dockClip" title="Write the progression to the selected clip slot (1 chord = 1 bar)">CLIP</div>
+          <div class="btn" id="dockChordify" title="Chordify — turn the recorded trigger notes (play Tuple via MIDI, record natively in Live) into full Tuple chords">CHORDIFY</div>
         </div>
         <div class="cd-cards" id="dockCards"></div>
       </div>
@@ -788,7 +797,7 @@
       <div class="devgrp" id="zDev">
         <div class="lbl">Device</div>
         <div class="btn" id="pushBtn" title="Chord grid on Push 2 pads">PUSH</div>
-        <div class="btn" id="colorBtn" title="Degree color logic">LAYOUT · Spectrum</div>
+        <div class="btn lblbtn" id="colorBtn" title="Degree color logic"><span class="cl">LAYOUT</span><span class="cv" id="colorV">Spectrum</span></div>
         <div class="btn lblbtn off" id="smartBtn" title="SMART suggestions — Off / Function / Voice-leading"><span class="cl">SMART</span><span class="cv" id="smartV">Off</span></div>
       </div>
 
@@ -817,7 +826,7 @@
   function _activeKeys(){ return _useFlats ? KEYS_FLAT : KEYS; }
   function cellLabel(lbl){ return _useFlats ? lbl.replace(/[A-G]#/g, function(m){ return _S2F[m]||m; }) : lbl; }
   var SCALES   = ['Major','Minor','Dorian','Phrygian','Lydian','Mixolydian','Harm.Min','Mel.Min','Locrian','Penta Maj','Penta Min','Lyd. Dom'];
-  var VOICINGS = ['Classic','Piano','Open','Spread','House','Prog','Rootless A','Rootless B','Drop 2','Drop 3','Jazz','Nu-House','Trap','Trance','Funk'];
+  var VOICINGS = ['Classic','Piano','Open','Spread','House','Prog','Rootless A','Rootless B','Rootless','Drop 2','Drop 3','Jazz','Nu-House','Trap','Trance','Funk','Quartal','Upper','Organ','French Touch','Broken','Deep Tech','Detroit','Soul','Jamiroquai','Rave','Sus','Wide','Power'];
   var VLMODES  = ['ANCHOR','FLOW'];
   var VLMODE_MSG = ['anchored','flow'];
   var STRUM_CURVES = ['Linear','Accel','Decel'];   // libellés du cycler Curve
@@ -939,7 +948,6 @@
     var ov=document.getElementById('ddOv');
     document.getElementById('ddTitle').textContent=title;
     var grid=document.getElementById('ddGrid');
-    grid.style.gridTemplateColumns='repeat('+ncols+',1fr)';
     grid.innerHTML='';
     arr.forEach(function(name,i){
       var c=document.createElement('div');
@@ -954,6 +962,9 @@
     _dropOpen=id;
     ov.classList.add('open');
     document.body.classList.add('dd-open');   // masque les séparateurs dégradés pendant l'ouverture
+    // JAMAIS DE SCROLL : assez de colonnes pour que les rangées tiennent (≥22px), puis grid-auto-rows:1fr remplit jusqu'en bas.
+    var maxRows=Math.max(1,Math.floor(grid.clientHeight/22));
+    grid.style.gridTemplateColumns='repeat('+Math.max(ncols||1,Math.ceil(arr.length/maxRows))+',1fr)';
   }
 
   // FOCUS CLAVIER : empêche le WebView de voler le focus clavier d'Ableton.
@@ -1015,7 +1026,7 @@
       (cols[c]||[]).forEach(function(cell,row){
         var d=el('div','cell'+((activeCol===c&&activeRow===row)?' active':''),cellLabel(cell.label));
         d.setAttribute('data-col',c); d.setAttribute('data-row',row);
-        (function(cc,rr,dd){ dd.onmousedown=function(e){ _cellDown(e,cc,rr,dd); }; })(c,row,d);
+        (function(cc,rr,dd){ dd.onmousedown=function(e){ _cellDown(e,cc,rr,dd); }; dd.onmouseenter=function(){ cellHoverEnter(cc,rr); }; dd.onmouseleave=cellHoverLeave; })(c,row,d);
         col.appendChild(d);
       });
       g.appendChild(col);
@@ -1026,7 +1037,7 @@
       var lab=cellLabel(cell.label);  /* pas de roman dans la case → homogène avec les degrés */
       var d=el('div','cell'+((activeCol===7&&activeRow===i)?' active':''),lab);
       d.setAttribute('data-col',7); d.setAttribute('data-row',i);
-      (function(ii,dd){ dd.onmousedown=function(e){ _cellDown(e,7,ii,dd); }; })(i,d);
+      (function(ii,dd){ dd.onmousedown=function(e){ _cellDown(e,7,ii,dd); }; dd.onmouseenter=function(){ cellHoverEnter(7,ii); }; dd.onmouseleave=cellHoverLeave; })(i,d);
       bc.appendChild(d);
     });
     g.appendChild(bc);
@@ -1114,7 +1125,7 @@
     var v=document.getElementById('smartV'); if(v) v.textContent = smartOn ? (smartMode==='function'?'Function':'Voice-leading') : 'Off';
     document.body.classList.toggle('smart',smartOn);
     buildLegend();   // smart ON → luminosité ; smart OFF → légende du layout
-    var cb=document.getElementById('colorBtn'); if(cb) cb.textContent='LAYOUT · '+SCHEME_NAMES[colorScheme];
+    var cb=document.getElementById('colorV'); if(cb) cb.textContent=SCHEME_NAMES[colorScheme];
     if(!smartOn) _smartClearAll();
     if(typeof applyScheme==='function') applyScheme();   // têtes = couleurs de degré (layout) + cartes de progression
   }
@@ -1125,6 +1136,7 @@
     document.getElementById('voicingV').textContent = VOICINGS[state.voicingIdx]||'Classic';
     var vl=document.getElementById('vl');
     vl.className='btn'+(state.vl?' gold':'');
+    var ext=document.getElementById('extended'); if(ext) ext.className='btn'+(state.extended?' gold':'');
     var vm=document.getElementById('vlmode');
     vm.className='btn lblbtn'+(state.vl?'':' off');   // neutre, anchor/flow egal ; grise si VL off
     var mv=VLMODES[state.vlmodeIdx];
@@ -1160,8 +1172,8 @@
     track.addEventListener('pointermove',function(e){ if(dragging) apply(fromX(e.clientX)); });
     track.addEventListener('pointerup',function(e){ dragging=false; try{ track.releasePointerCapture(e.pointerId); }catch(_){} });
     track.addEventListener('pointercancel',function(){ dragging=false; });
-    track.addEventListener('wheel',function(e){ e.preventDefault(); e.stopPropagation();
-      var step=Math.max(1,Math.round((max-min)/100)); apply(cur+(e.deltaY>0?-step:step)); },{passive:false});
+    root.addEventListener('wheel',function(e){ e.preventDefault(); e.stopPropagation();   // molette sur TOUTE la case (.exslider), pas juste le bar
+      var step=Math.max(1,Math.round((max-min)/25)); apply(cur+(e.deltaY>0?-step:step)); },{passive:false});   // pas ~4× plus gros
     var resetVal=(min<=0&&max>=0)?0:min;   // double-clic = reset (off/centre)
     track.addEventListener('dblclick',function(e){ e.preventDefault(); apply(resetVal); });
     return { set:function(v){ cur=clamp(v); paint(); } };
@@ -1190,6 +1202,8 @@
       function(v){ state.humanize=v; send('humanizeamt',v); });
     document.getElementById('curveBtn').onmousedown=function(e){ if(e)e.preventDefault();
       state.strumCurveIdx=(state.strumCurveIdx+1)%STRUM_CURVES.length; renderExpr(); send('strumcurve',state.strumCurveIdx); };
+    document.getElementById('curveBtn').addEventListener('wheel',function(e){ e.preventDefault(); e.stopPropagation();   // molette = cycle la courbe (c'est un cycler, pas un slider)
+      state.strumCurveIdx=(state.strumCurveIdx+(e.deltaY>0?-1:1)+STRUM_CURVES.length)%STRUM_CURVES.length; renderExpr(); send('strumcurve',state.strumCurveIdx); },{passive:false});
   }
 
   function renderNotes(arr){
@@ -1237,6 +1251,28 @@
     var hadChord = p.length > 0;
     while(p.length) p[0].classList.remove('pressed');
     if(hadChord) send('release');
+  }
+
+  // ── HOVER PREVIEW ── survol d'une case = affiche ses notes au moniteur, SANS jouer.
+  // Le highlight de la case vient du CSS (.cell:hover) ; on n'ajoute QUE l'affichage des notes.
+  var _previewing=false, _previewLabel='';
+  function cellHoverEnter(c,r){
+    if(document.getElementsByClassName('pressed').length) return;   // un accord est tenu -> pas d'aperçu
+    if(c===7){ var b=bor[r]; if(!b) return; _previewLabel=b.label; send('previewcolor',b.semis,b.type); }
+    else { var cell=cols[c]&&cols[c][r]; if(!cell||!cell.fn) return; _previewLabel=cell.label; send('preview',cell.fn,c); }
+    _previewing=true;
+  }
+  function cellHoverLeave(){
+    if(!_previewing) return;
+    _previewing=false;
+    renderNotes(_lastNotes);   // restaure le moniteur sur l'accord tenu (ou vide)
+  }
+  function renderPreview(arr){
+    if(!_previewing) return;   // la souris est déjà repartie (réponse asynchrone)
+    var midi=(arr||[]).map(Number).filter(function(n){ return !isNaN(n)&&n>=0&&n<128; });
+    document.getElementById('chordName').textContent=cellLabel(_previewLabel)||'—';
+    document.getElementById('noteNames').textContent=midi.map(midiToName).join(' · ');
+    var rg=pianoRangeFor(midi); buildPiano(rg.start,rg.octs); updatePiano(midi);
   }
 
   var syncClickPending=false;
@@ -1332,7 +1368,7 @@
     // Layout (logique couleur) changé ailleurs (Push / moteur) → le refléter sur la fenêtre principale.
     M.bindInlet('colorscheme', function(v){
       var n=SCHEME_NAMES.length; colorScheme=(((parseInt(v)||0)%n)+n)%n;
-      var cb=document.getElementById('colorBtn'); if(cb) cb.textContent='LAYOUT · '+SCHEME_NAMES[colorScheme];
+      var cb=document.getElementById('colorV'); if(cb) cb.textContent=SCHEME_NAMES[colorScheme];
       applyScheme();
     });
     M.bindInlet('root',      function(v){ state.root=parseInt(v); renderConfig(); });
@@ -1340,6 +1376,7 @@
     M.bindInlet('octave',    function(v){ state.oct=parseInt(v); renderConfig(); });
     M.bindInlet('voicing',   function(v){ var n=parseInt(v); if(!isNaN(n)) state.voicingIdx=n; renderConfig(); });
     M.bindInlet('vl',        function(v){ state.vl=(parseInt(v)===1); renderConfig(); });
+    M.bindInlet('extended',  function(v){ state.extended=(parseInt(v)===1); renderConfig(); });
     M.bindInlet('vlmode',    function(v){ var i=VLMODE_MSG.indexOf(String(v).toLowerCase()); if(i>=0) state.vlmodeIdx=i; renderConfig(); });
     M.bindInlet('active',    function(fn,degree){
       var fnStr=String(fn);
@@ -1364,6 +1401,7 @@
       updateActive();
     });
     M.bindInlet('notes',     function(){ renderNotes(Array.prototype.slice.call(arguments)); });
+    M.bindInlet('previewnotes', function(){ renderPreview(Array.prototype.slice.call(arguments)); });
     M.bindInlet('clearnotes',function(){ activeCol=-1;activeRow=-1;activeChordName=''; renderNotes([]); updateActive(); });
     // Lecture d'une carte de progression (playprog) : nom + degré pour le Monitor (le 'notes' qui suit le rend).
     M.bindInlet('monitor',   function(name,deg){ activeChordName=String(name); var d=parseInt(deg); activeCol=(d>=0&&d<7)?d:7; activeRow=-1; });
@@ -1399,6 +1437,9 @@
     M.bindInlet('clipnoslot',function(){ clipMsg('NO SLOT'); });
     M.bindInlet('clipempty', function(){ clipMsg('EMPTY'); });
     M.bindInlet('cliperr',   function(){ clipMsg('ERROR'); });
+    M.bindInlet('chordifydone', function(){ clipMsg('CHORDIFIED'); });
+    M.bindInlet('progmode',  function(v){ progOn=(parseInt(v)===1); var b=document.getElementById('progBtn'); if(b){ b.classList.toggle('on',progOn); b.textContent=progOn?'PROG ON':'PROG'; } });
+    M.bindInlet('progmodeui',function(v){ _setProgModeUI(parseInt(v)); });
     // Resynchronise le bouton du strip quand la fenêtre est fermée/ouverte ailleurs
     // (ex. bouton CLOSE de la grande fenêtre). Le X Windows n'émet rien → non couvert.
     M.bindInlet('windowstate',function(v){
@@ -1527,6 +1568,7 @@
   };
 
   document.getElementById('vl').onmousedown     = function(e){ if(e)e.preventDefault(); state.vl=!state.vl; renderConfig(); send('voiceleading',state.vl?1:0); };
+  document.getElementById('extended').onmousedown = function(e){ if(e)e.preventDefault(); state.extended=!state.extended; renderConfig(); send('extended',state.extended?1:0); };
   document.getElementById('vlmode').onmousedown = function(e){ if(e)e.preventDefault(); state.vlmodeIdx=(state.vlmodeIdx+1)%VLMODES.length; renderConfig(); send('vlmode',VLMODE_MSG[state.vlmodeIdx]); };
 
   // MOLETTE SUR LES MENUS (KEY/SCALE/VOICING/VL MODE) : change la valeur sans ouvrir le
@@ -1604,6 +1646,22 @@
     send('pushmode', pushOn?1:0);
   };
 
+  // Toggle PROG : layout « progression » sur le Push (rangée 0 = étapes, rangées 1-7 = options).
+  var progOn=false;
+  document.getElementById('progBtn').onmousedown = function(e){ if(e)e.preventDefault(); };
+  document.getElementById('progBtn').onclick = function(){
+    progOn=!progOn;
+    this.classList.toggle('on',progOn);
+    this.textContent = progOn ? 'PROG ON' : 'PROG';
+    send('progmode', progOn?1:0);
+  };
+  // Cycler MODE des options de progression : Subs → Suite → Voic. Le moteur est la source de vérité
+  // (renvoie 'progmodeui') ; le clic ne fait qu'envoyer le cycle.
+  var PROGMODE_NAMES=['Subs','Suite','Voic'];
+  document.getElementById('progModeBtn').onmousedown = function(e){ if(e)e.preventDefault(); };
+  document.getElementById('progModeBtn').onclick = function(){ send('progmodecycle'); };
+  function _setProgModeUI(i){ var b=document.getElementById('progModeBtn'); if(b) b.textContent='MODE · '+PROGMODE_NAMES[((i%3)+3)%3]; }
+
   // ── CAPTURE → CLIP : progression d'accords -> clip Live (fenêtre full). Device-only. ──
   // UI = opener (groupe Device) + panneau ANCRÉ sous la grille (#cap-dock) : contrôles EN HAUT,
   // cartes EN DESSOUS (retour à la ligne + défilement) → un max de place pour les longues progressions.
@@ -1659,7 +1717,10 @@
     var ins=el('div','pg-ins','+'); ins.title='Insert next chords after this one';
     var del=el('div','pg-del','×'); del.title='Remove';
     card.appendChild(ins); card.appendChild(del);
-    card.title=(entry.name||'?')+' — press & hold to play';
+    card.title=(entry.name||'?')+' — hover to preview · hold to play';
+    // Survol = APERÇU (nom + notes au moniteur, sans jouer) — calqué sur l'aperçu d'une case de grille.
+    card.onmouseenter=function(){ if(document.getElementsByClassName('pressed').length) return; _previewLabel=(entry.name||'?'); send('previewprog', idx); _previewing=true; };
+    card.onmouseleave=cellHoverLeave;
     // Appui = joue l'accord et TIENT jusqu'au relâchement (comme une case de la grille).
     // Le note-off vient du mouseup global → releaseAll() → message 'release'.
     card.onmousedown=function(e){
@@ -1704,6 +1765,7 @@
   noSelect(gE('dockCap'),     toggleCapture);
   noSelect(gE('dockClear'),   function(){ send('clearprog'); });
   noSelect(gE('dockClip'),    function(){ send('sendclip'); });
+  noSelect(gE('dockChordify'),function(){ send('chordify'); });
 
   // ── Glisser-déposer (clic rapide = jouer ; appuyer + glisser = déplacer/ajouter) ──
   // kind 'reorder' = depuis une carte de progression ; kind 'add' = depuis une case de la grille.
@@ -1755,7 +1817,8 @@
     if(!_drag) return;
     if(!_drag.active){
       if(Math.abs(e.clientX-_drag.x)+Math.abs(e.clientY-_drag.y) < 8) return;   // seuil (évite les drags accidentels)
-      _drag.active=true;                                                          // la note CONTINUE de sonner jusqu'au relâchement (mouseup → release)
+      _drag.active=true;
+      send('release');                                                            // le drag ("grab") coupe la note — carte de progression OU case de grille
       document.body.classList.add('pg-dragging');
       if(_drag.kind==='reorder'){ var src=gE('dockCards').querySelectorAll('.pg-card')[_drag.idx]; if(src) src.classList.add('pg-drag-src'); }
       else if(_drag.kind==='add' && !dockOpen){ openDock(); }                    // ouvre le tiroir pour recevoir le dépôt
@@ -1791,14 +1854,14 @@
   document.getElementById('colorBtn').onmousedown = function(e){ if(e)e.preventDefault(); };
   document.getElementById('colorBtn').onclick = function(){
     colorScheme=(colorScheme+1)%SCHEME_NAMES.length;
-    this.textContent='LAYOUT · '+SCHEME_NAMES[colorScheme];
+    document.getElementById('colorV').textContent=SCHEME_NAMES[colorScheme];
     applyScheme(); send('colorscheme', colorScheme);   // têtes : neutres si smart on, sinon couleurs du layout
   };
   document.getElementById('colorBtn').addEventListener('wheel', function(e){
     e.preventDefault(); e.stopPropagation();
     var n=SCHEME_NAMES.length;
     colorScheme=(colorScheme+(e.deltaY>0?-1:1)+n)%n;
-    this.textContent='LAYOUT · '+SCHEME_NAMES[colorScheme];
+    document.getElementById('colorV').textContent=SCHEME_NAMES[colorScheme];
     applyScheme(); send('colorscheme', colorScheme);
   }, {passive:false});
 

@@ -227,7 +227,9 @@ var LIST_DISPATCH = {
 	capture: capture, sendclip: sendclip, clearprog: clearprog, removelast: removelast,
 	removeat: removeat, setcursor: setcursor, playprog: playprog, moveprog: moveprog,
 	captureone: captureone, autosync: setautosync, progress: handleprogress,
-	useflats: useflats
+	useflats: useflats, preview: preview, previewcolor: previewcolor, previewprog: previewprog, extended: extended,
+	chordify: chordify,
+	progmode: progmode, progmodecycle: progmodecycle, selprog: selprog, selopt: selopt
 };
 function list() {
 	var a = Array.prototype.slice.call(arguments);
@@ -380,9 +382,8 @@ function pushUIState() {
 		// chord_engine chargé hors patch (sans les receive) → on ignore
 	}
 
-	broadcastGrid();   // la grille dépend de root/scale → on rediffuse
-	_sg_reset();
-	if (smartOn) _sg_broadcast();   // smart chords : reset live-memory on key/scale change
+	_sg_reset();          // key/scale a changé → on efface la mémoire smart live AVANT de rediffuser
+	broadcastSurface();   // grille (dépend de root/scale) + heat-map smart repartie de zéro
 }
 
 // SYNC : relit la tonalité du set Live (bouton SYNC du jsui)
@@ -493,7 +494,7 @@ function voicing(v) {
 }
 
 // Reçoit un index int (0-12) depuis live.menu
-var VOICING_NAMES = ["classic","piano","open","spread","house","prog","rootlessa","rootlessb","drop2","drop3","jazz","nuhouse","trap","trance","funk"];
+var VOICING_NAMES = ["classic","piano","open","spread","house","prog","rootlessa","rootlessb","rootless","drop2","drop3","jazz","nuhouse","trap","trance","funk","quartal","upper","organ","frenchtouch","broken","deeptech","detroit","soul","jamiroquai","rave","sus","wide","power"];
 function voicingidx(v) {
 	currentVoicing = VOICING_NAMES[parseInt(v)] || "classic";
 	_vl2_reset();
@@ -573,7 +574,11 @@ function isValid(d, type, iv) {
 
 // Types affichés dans la grille, ordre = priorité (courants d'abord, alterés/jazz après).
 // Tous les types valides au degré sont affichés — pas de cap.
-var GRID_TYPES = ["triad","seven","nine","mmaj7","sus4","sus2","add9","six","sevensus4","sixnine","sevenflat9","sevensharp9","m7s5"];
+// Ordre = PRIORITÉ d'affichage. La fenêtre principale prend les MAX_GRID_ROWS premiers types valides
+// par colonne ; la fenêtre EXT reçoit le complément (cf. validGridCells). sixnine (6/9) placé juste
+// après six (plus courant que 7sus4/altérés → reste dans la principale quand une colonne déborde).
+var GRID_TYPES = ["triad","seven","nine","mmaj7","sus4","sus2","add9","six","sixnine","sevensus4","sevenflat9","sevensharp9","m7s5"];
+var MAX_GRID_ROWS = 8;   // fenêtre principale : 8 rangées max (jamais de débordement vertical)
 
 // Accords empruntés par mode (déplacés ici : source de vérité)
 var BORROWED_MAJOR = [
@@ -672,37 +677,38 @@ function gridTypeValid(d, fn, iv) {
 }
 
 // Nom d'accord affiché pour une case (degré + type)
-function gridLabel(d, fn, iv) {
+function gridLabel(d, fn, iv, ext) {
 	iv = iv || getIntervals(d);
 	var rn = NOTE_NAMES[(root + scale[d]) % 12];
+	var x = (ext === undefined || ext === null) ? extendedOn : ext;   // x = nom étendu (CM7 -> CM13…)
 	if (fn === "triad") {
 		if (iv[2]===3 && iv[4]===6) return rn + "dim";
 		if (iv[2]===4 && iv[4]===8) return rn + "aug";
-		if (iv[2]===3) return rn + "m";
-		return rn;
+		if (iv[2]===3) return rn + (x ? "madd9" : "m");
+		return rn + (x ? "6/9" : "");
 	}
 	if (fn === "sus2") return rn + "sus2";
 	if (fn === "sus4") return rn + "sus4";
-	if (fn === "add9") return (iv[2]===3 ? rn + "madd9" : rn + "add9");
-	if (fn === "six")         return (iv[2]===3 ? rn + "m6"   : rn + "6");
+	if (fn === "add9") return (iv[2]===3 ? rn + "madd9" : rn + (x ? "6/9" : "add9"));
+	if (fn === "six")         return (iv[2]===3 ? rn + (x ? "m6/9" : "m6")   : rn + (x ? "6/9" : "6"));
 	if (fn === "sixnine")     return (iv[2]===3 ? rn + "m6/9" : rn + "6/9");
-	if (fn === "mmaj7")       return rn + "mMaj7";
+	if (fn === "mmaj7")       return rn + (x ? "mMaj9" : "mMaj7");
 	if (fn === "sevensus4")   return rn + "7sus4";
-	if (fn === "sevenflat9")  return rn + "7b9";
-	if (fn === "sevensharp9") return rn + "7#9";
+	if (fn === "sevenflat9")  return rn + (x ? "13b9" : "7b9");
+	if (fn === "sevensharp9") return rn + (x ? "13#9" : "7#9");
 	if (fn === "seven") {
-		if (isValid(d,"maj7",iv))  return rn + "M7";
-		if (isValid(d,"min7",iv))  return rn + "m7";
-		if (isValid(d,"dom7",iv))  return rn + "7";
-		if (isValid(d,"dim7",iv))  return rn + "dim7";
-		if (isValid(d,"hdim7",iv)) return rn + "ø7";
+		if (isValid(d,"maj7",iv))  return rn + (x ? "M13" : "M7");
+		if (isValid(d,"min7",iv))  return rn + (x ? "m11" : "m7");
+		if (isValid(d,"dom7",iv))  return rn + (x ? "13" : "7");
+		if (isValid(d,"dim7",iv))  return rn + (x ? "dim9" : "dim7");
+		if (isValid(d,"hdim7",iv)) return rn + (x ? "ø11" : "ø7");
 	}
 	if (fn === "nine") {
-		if (isValid(d,"maj9",iv)) return rn + "M9";
-		if (isValid(d,"min9",iv)) return rn + "m9";
-		if (isValid(d,"nine",iv)) return rn + "9";
+		if (isValid(d,"maj9",iv)) return rn + (x ? "M13" : "M9");
+		if (isValid(d,"min9",iv)) return rn + (x ? "m11" : "m9");
+		if (isValid(d,"nine",iv)) return rn + (x ? "13" : "9");
 	}
-	if (fn === "m7s5") return rn + "m7#5";   // m7♯5 (quinte augmentée) — sinon la case montrait la fonda nue
+	if (fn === "m7s5") return rn + (x ? "m9#5" : "m7#5");   // m7♯5 (quinte augmentée)
 	return rn;
 }
 
@@ -755,6 +761,25 @@ function _sg_fluidLevel(rankIndex, total){
 	return frac < 0.34 ? 3 : frac < 0.67 ? 2 : 1;
 }
 function _sg_isMinor(){ return chordQuality(0) === 1; }
+
+// SUBSTITUTS (mode Push « Substituts ») — accords pouvant REMPLACER une étape, même emplacement
+// harmonique : frères de FONCTION (I↔iii↔vi, ii↔IV, V↔vii°) + variantes de QUALITÉ (même degré,
+// autre type). Port ES5 de site/vl2/substitutes.js (testé). Les relatifs maj/min viennent gratis (vi/iii).
+var _FUNC_MAJOR = [0,1,0,1,2,0,2], _FUNC_MINOR = [0,1,0,1,2,1,1];   // 0=Tonique 1=Sous-dom 2=Dom — mineur : ♭VI=S (pas T du majeur), ♭VII=S (PAS dominante : sous-tonique sans sensible). T={i,♭III} S={ii°,iv,♭VI,♭VII} D={V}
+function gridTypesFor(d) {
+	var iv = getIntervals(d), out = [], t;
+	for (t = 0; t < GRID_TYPES.length; t++) if (gridTypeValid(d, GRID_TYPES[t], iv)) out.push(GRID_TYPES[t]);
+	return out;
+}
+function substitutesFor(step) {        // step = { deg, fn }
+	var out = [];
+	if (step.deg == null || step.deg < 0) return out;   // emprunts : raffinement futur
+	var F = _sg_isMinor() ? _FUNC_MINOR : _FUNC_MAJOR, myFunc = F[step.deg], d, i;
+	for (d = 0; d < 7; d++) if (d !== step.deg && F[d] === myFunc) out.push({ kind:"func", deg:d, fn:step.fn });
+	var types = gridTypesFor(step.deg);
+	for (i = 0; i < types.length; i++) if (types[i] !== step.fn) out.push({ kind:"qual", deg:step.deg, fn:types[i] });
+	return out;
+}
 function _sg_base(lastDeg, tgt, isMin){
 	if (lastDeg == null || lastDeg < 0 || tgt < 0) return 0;
 	return (isMin ? SG_MINOR : SG_MAJOR)[lastDeg][tgt];
@@ -815,17 +840,25 @@ function _sg_transType(lastDeg, targetDeg, isBor){
 }
 function _sg_pcs(spec){ var a = [], i; for (i = 0; i < spec.pcs.length; i++) a.push(spec.pcs[i].pc); return a; }
 function _sg_diatonicCell(d, fn){
-	var sp = _vl2_buildSpec(fn, d); if (!sp) return null;
+	var sp = _vl2_specFor(fn, d); if (!sp) return null;   // même pipeline que play → smart ne peut plus diverger (EXT inclus)
 	return { kind:"d", degree:d, fn:fn, pcs:_sg_pcs(sp), isDominant:sp.isDominant, hasSeventh:sp.hasSeventh, sp:sp };
 }
 function _sg_borrowedCell(index, semis, type){
-	var sp = _vl2_buildColorSpec(semis, type);
+	var sp = _vl2_specFor('color', 0, semis, type);   // même pipeline (enrich no-op sur emprunts, pas de scalePcs)
 	return { kind:"b", index:index, pcs:_sg_pcs(sp), sp:sp };   // emprunts : isDominant/hasSeventh/isSecDom non lus (le score d'emprunt n'utilise que pcs/sp)
 }
 // Registre + centre de sélection — SOURCE UNIQUE (utilisés par _vl2_play ET _sg_fluid) :
 // regBase = plancher d'octave (multiple de 12) ; center = tonique pour classic, C-ancré sinon.
 function _vl2_regBase(){ return 48 + Math.max(-12, Math.min(24, currentOctave * 12)); }
-function _vl2_center(vc){ var rb = _vl2_regBase(); return (vc === "classic") ? (rb + root) : (60 + currentOctave * 12); }
+function _vl2_center(vc){ var rb = _vl2_regBase(); return (vc === "classic") ? (rb + root) : (vc === "piano") ? (rb + 6) : (60 + currentOctave * 12); }   // piano : centre plus bas (basse grave) -> pas de dérive FLOW vers le haut
+// SOURCE UNIQUE du centre de sélection — utilisée par _vl2_play ET _sg_fluid (sinon la heat-map VL
+// et le playback divergent → sauts d'octave). cands = sortie de _vl2_realize ; cands[0] = forme canonique.
+// ABSOLUTE : centre = poche d'origine du grip (moyenne de la canonique), sinon _vl2_center (classic/piano/C4).
+function _vl2_selCtr(cands){
+	var realized = cands[0].voicing;
+	if (_vl2_ABSOLUTE.has(realized)){ var ns = cands[0].notes, s = 0, i; for (i = 0; i < ns.length; i++) s += ns[i]; return s / ns.length; }
+	return _vl2_center(realized);
+}
 // Fluidité de voice-leading : coût de mouvement vers la réalisation que l'appareil JOUERAIT
 // (celle dont la moyenne est la plus proche du centre de registre), avec le voicing + l'octave
 // courants. Plus bas = plus fluide. Pur (ne mute pas _vl2_st). Sensible au voicing (≠ ancien
@@ -834,9 +867,9 @@ function _sg_fluid(sp){
 	var ref = (typeof lastChordNotes !== "undefined" && lastChordNotes && lastChordNotes.length) ? lastChordNotes : activeNotes;
 	if (!sp || !ref || !ref.length) return 0;
 	var regBase = _vl2_regBase();
-	var center = _vl2_center(currentVoicing);
 	var cands = _vl2_realize(sp, currentVoicing, { regBase:regBase, rootPos:!voiceLeadingEnabled });
 	if (!cands || !cands.length) return 9999;
+	var center = _vl2_selCtr(cands);   // SOURCE UNIQUE — même centre que _vl2_play (poche pour les ABSOLUTE)
 	var w = _vl2_pickW(currentVoicing), i, j, sum, m, dev, pick = null, bestDev = 1e9;
 	for (i = 0; i < cands.length; i++){
 		var ns = cands[i].notes; sum = 0; for (j = 0; j < ns.length; j++) sum += ns[j]; m = sum / ns.length;
@@ -846,18 +879,22 @@ function _sg_fluid(sp){
 	return _vl2_movCost(ref, pick, w);
 }
 function _sg_remember(){
-	var sp = (lastFn === "color") ? _vl2_buildColorSpec(lastColorSemis, lastColorType) : _vl2_buildSpec(lastFn, lastDegree);
+	var sp = _vl2_specFor(lastFn, lastDegree, lastColorSemis, lastColorType);   // même pipeline que play
 	if (!sp) return;
 	var entry = { kind:(lastFn === "color") ? "b" : "d", degree:(lastFn === "color") ? -1 : lastDegree, pcs:_sg_pcs(sp) };
+	// Pas de doublon CONSÉCUTIF : rejouer le même accord ne doit pas polluer le contexte (l'avant-dernier).
+	var lastE = _sg_hist[_sg_hist.length-1];
+	if (lastE && lastE.kind === entry.kind && lastE.degree === entry.degree && lastE.pcs.join(",") === entry.pcs.join(",")) return;
 	_sg_hist.push(entry);
 	if (_sg_hist.length > SG_HIST_MAX) _sg_hist.shift();
 }
 function _sg_reset(){ _sg_hist = []; }
 
-// Recalcule + diffuse la heat-map (outlet 7). Émis seulement si SMART on ; sinon neutralise.
-function _sg_broadcast(){
-	outlet(7, "smartclear");
-	if (!smartOn || !_sg_hist.length) { outlet(7, "smartdone"); return; }
+// Coeur de suggestion : classe + ordonne les cases candidates APRÈS la source (= queue de _sg_hist).
+// Extrait de _sg_broadcast pour être réutilisé par _suiteOptions (mode Suite du Push). skip* = l'accord
+// à NE PAS re-suggérer (la source elle-même). Retourne le tableau `emit` (cases retenues, triées +
+// nivelées) SANS rien émettre — ne lit que _sg_hist + l'état de gamme, jamais l'accord live.
+function _sg_rank(skipFn, skipDeg, skipSemis, skipType){
 	var isMin = _sg_isMinor();
 	var last = _sg_hist[_sg_hist.length-1], lastPcs = (last && last.pcs) ? last.pcs : [];
 	var lastDeg = (last && last.kind === "d") ? last.degree : -1;
@@ -873,7 +910,7 @@ function _sg_broadcast(){
 	var cells = validGridCells(), ci;   // MÊME forme de grille que broadcastGrid (source unique)
 	for (ci = 0; ci < cells.length; ci++){
 		d = cells[ci].d; fn = cells[ci].fn;
-		if (lastFn !== "color" && d === lastDegree && fn === lastFn) continue;   // ne pas re-suggérer l'accord qu'on vient de jouer
+		if (skipFn !== "color" && d === skipDeg && fn === skipFn) continue;   // ne pas re-suggérer la source
 		var cell = _sg_diatonicCell(d, fn); if (!cell) continue;
 		var dcat;
 		if (lastResolveDeg >= 0){
@@ -891,17 +928,17 @@ function _sg_broadcast(){
 	}
 	var bl = borrowedFor();
 	for (t = 0; t < bl.length; t++){
-		if (lastFn === "color" && bl[t].semis === lastColorSemis && bl[t].type === lastColorType) continue;   // ne pas re-suggérer l'emprunt joué
+		if (skipFn === "color" && bl[t].semis === skipSemis && bl[t].type === skipType) continue;   // ne pas re-suggérer l'emprunt source
 		var bc = _sg_borrowedCell(t, bl[t].semis, bl[t].type);
 		s = _sg_clamp(_sg_borrowedScore(bc, lastDeg, isMin, degByRoot, tonicPc) + _sg_common(lastPcs, bc.pcs));
 		lvl = _sg_level(s);
 		if (lvl <= 0) continue;
 		if (!byFn["color"]) { byFn["color"] = []; fnOrder.push("color"); }
-		byFn["color"].push({ kind:"b", index:t, lvl:lvl, cat:"color", s:s, sp:bc.sp });
+		byFn["color"].push({ kind:"b", index:t, semis:bl[t].semis, type:bl[t].type, lvl:lvl, cat:"color", s:s, sp:bc.sp });   // semis/type : réalisation de l'option (Push)
 	}
 	// Sélection : top SG_PER_FN par fonction, TOUJOURS par score harmonique (les deux modes)
 	// → plusieurs accords par fonction, toutes les fonctions présentes, borné (pas de rangées).
-	var fi, fa, j, n2, emit = [], x;
+	var fi, fa, j, n2, emit = [];
 	for (fi = 0; fi < fnOrder.length; fi++){
 		fa = byFn[fnOrder[fi]];
 		fa.sort(function(a,b){ return b.s - a.s; });
@@ -916,12 +953,45 @@ function _sg_broadcast(){
 		by.sort(function(a,b){ return a._f - b._f; });
 		for (k = 0; k < by.length; k++) by[k].lvl = _sg_fluidLevel(k, by.length);
 	}
+	return emit;
+}
+
+// Recalcule + diffuse la heat-map (outlet 7). Émis seulement si SMART on ; sinon neutralise.
+function _sg_broadcast(){
+	outlet(7, "smartclear");
+	if (!smartOn || !_sg_hist.length) { outlet(7, "smartdone"); return; }
+	var emit = _sg_rank(lastFn, lastDegree, lastColorSemis, lastColorType), j, x;   // skip = l'accord qu'on vient de jouer
 	for (j = 0; j < emit.length; j++){
 		x = emit[j];
 		if (x.kind === "d") outlet(7, "smartcell", x.d, x.fn, x.lvl, x.cat, x.s, 0);
 		else outlet(7, "smartbor", x.index, x.lvl, x.cat, x.s, 0);
 	}
 	outlet(7, "smartdone");
+}
+
+// Mode SUITE (Push) : meilleurs accords À JOUER APRÈS l'étape `idx` de la progression. Réutilise le
+// scorer smart (_sg_rank) en remplaçant TEMPORAIREMENT l'historique par progression[0..idx] (puis le
+// restaure) — l'état live (_sg_hist / lastFn…) n'est pas touché. Retourne [{deg,fn,kind:"suite",…}].
+function _suiteOptions(idx){
+	if (idx < 0 || idx >= progression.length) return [];
+	var saved = _sg_hist, built = [], i, p, sp;
+	for (i = 0; i <= idx; i++){
+		p = progression[i];
+		sp = _vl2_specFor(p.fn, p.deg, p.colorSemis, p.colorType);   // même pipeline que _sg_remember
+		if (!sp) continue;
+		built.push({ kind:(p.fn === "color") ? "b" : "d", degree:(p.fn === "color") ? -1 : p.deg, pcs:_sg_pcs(sp) });
+	}
+	_sg_hist = built;
+	var src = progression[idx];
+	var emit = _sg_rank(src.fn, src.deg, src.colorSemis, src.colorType);   // skip = l'étape elle-même
+	_sg_hist = saved;
+	var out = [], j, x;
+	for (j = 0; j < emit.length; j++){
+		x = emit[j];
+		if (x.kind === "d") out.push({ deg:x.d, fn:x.fn, kind:"suite", lvl:x.lvl });
+		else out.push({ deg:-1, fn:"color", kind:"suite", lvl:x.lvl, colorSemis:x.semis, colorType:x.type });
+	}
+	return out;
 }
 
 // Toggle UI : "smart 1/0".
@@ -944,9 +1014,25 @@ function validGridCells() {
 	for (d = 0; d < 7; d++) {
 		if (degMask && !degMask[d]) continue;
 		iv = getIntervals(d);   // calculé UNE fois par degré (partagé par gridTypeValid + gridLabel)
-		for (t = 0; t < GRID_TYPES.length; t++) {
-			fn = GRID_TYPES[t];
-			if (gridTypeValid(d, fn, iv)) out.push({ d:d, fn:fn, iv:iv });
+		// Types valides de la colonne, dans l'ordre de PRIORITÉ (GRID_TYPES).
+		var valid = [];
+		for (t = 0; t < GRID_TYPES.length; t++) { fn = GRID_TYPES[t]; if (gridTypeValid(d, fn, iv)) valid.push(fn); }
+		if (!extendedOn) {
+			// Fenêtre PRINCIPALE : le max d'accords sans dépasser MAX_GRID_ROWS.
+			for (t = 0; t < valid.length && t < MAX_GRID_ROWS; t++) out.push({ d:d, fn:valid[t], iv:iv });
+		} else {
+			// Fenêtre EXT : UNIQUEMENT les accords absents de la principale. On exclut les labels des
+			// MAX_GRID_ROWS cases principales (labels NORMAUX), puis on dédoublonne les formes enrichies
+			// entre elles. Résultat : surtout les M13/m11/13 (extensions qui n'existent pas ailleurs).
+			var mainLbls = {}, lim = (valid.length < MAX_GRID_ROWS) ? valid.length : MAX_GRID_ROWS, lb;
+			for (t = 0; t < lim; t++) mainLbls[gridLabel(d, valid[t], iv, false)] = 1;
+			var seen = {};
+			for (t = 0; t < valid.length; t++) {
+				lb = gridLabel(d, valid[t], iv, true);   // label ENRICHI (la case jouera l'accord enrichi)
+				if (mainLbls[lb] || seen[lb]) continue;
+				seen[lb] = 1;
+				out.push({ d:d, fn:valid[t], iv:iv });
+			}
 		}
 	}
 	return out;
@@ -979,9 +1065,20 @@ function broadcastGrid() {
 	outlet(7, "griddone");
 }
 
+// La « surface » cohérente : grille + heat-map smart, diffusées ENSEMBLE. broadcastGrid reconstruit
+// colFns/colLen côté Push → les anciennes suggestions (smartPads) deviennent périmées ; en mode SMART
+// (spotlight Push) un accord valide NON suggéré est peint en BLANC → si on rediffuse la grille sans
+// rejouer le smart, tous les pads passent en blanc (bug du grab Push). Regrouper les deux ici garantit
+// qu'AUCUN site ne peut oublier la moitié smart. NE PAS y mettre _sg_reset : effacer la mémoire smart
+// (uniquement sur changement key/scale) reste explicite chez l'appelant (pushUIState).
+function broadcastSurface() {
+	broadcastGrid();
+	if (smartOn) _sg_broadcast();
+}
+
 // L'UI demande la grille (au chargement) — aussi appelé par Push (doInit -> requestgrid)
 function requestgrid() {
-	broadcastGrid();
+	broadcastSurface();   // grille + heat-map (cf. broadcastSurface : sinon les pads non suggérés passent en blanc au grab)
 }
 
 // Synchronise l'état (key, scale) vers l'UI au reload
@@ -990,20 +1087,6 @@ function requeststate() {
 	broadcastProg();   // repeuple la liste de progression après un reload du jweb
 }
 
-// Joue une case par (colonne, rangée) — entrée Push.
-function playcell(col, row) {
-	col = parseInt(col); row = parseInt(row);
-	if (col === 7) {
-		if (row >= 0 && row < gBor.length) colorchord(gBor[row].semis, gBor[row].type);
-		return;
-	}
-	if (col >= 0 && col < 7 && row >= 0 && row < gCols[col].length) {
-		playFlatCell({ kind:"d", fn:gCols[col][row].fn, degree:col });
-	}
-}
-
-// Vélocité reçue avant un playcell (pad pressé)
-function padvel(v) { currentVelocity = parseInt(v); }
 
 function strumms(v) {
 	_strumMs = Math.max(-250, Math.min(250, parseInt(v) || 0));  // signé : <0 descendant, >0 montant. >~60ms = arpège
@@ -1258,13 +1341,17 @@ function _vl2_checkIdentity(voicing, notes, spec) {
 	var ns = notes.slice().sort(function(a,b){return a-b;});
 	var pcs = new Set(ns.map(m));
 	var has = function(role){ var e=null; for(var i=0;i<spec.pcs.length;i++) if(spec.pcs[i].role===role){e=spec.pcs[i];break;} return e&&pcs.has(e.pc); };
-	if (spec.hasSeventh) {
-		if (!has('seventh')) v.push('guide:7e absente');
+	if (spec.hasSeventh) {   // guide tones sur les 7e. EXCEPTION house : 6/9 en EXT (lâche la 7e, GARDE la 3ce).
+		if (voicing !== 'house' && voicing !== 'sus' && voicing !== 'power' && !has('seventh')) v.push('guide:7e absente');
 		var hasThird = false; for(var i=0;i<spec.pcs.length;i++) if(spec.pcs[i].role==='third'){hasThird=true;break;}
-		if (hasThird && !has('third')) v.push('guide:3ce absente');
+		if (voicing !== 'sus' && voicing !== 'power' && hasThird && !has('third')) v.push('guide:3ce absente');
 	}
-	if (voicing==='rootlessa'||voicing==='rootlessb'||voicing==='jazz'||voicing==='nuhouse'||voicing==='house') { if (pcs.has(spec.rootPc)) v.push('rootless:fondamentale présente'); }
-	else if (voicing==='trap') { if(m(ns[0])!==spec.rootPc)v.push('trap:basse ≠ fondamentale'); }
+	if (voicing==='rootlessa'){if(pcs.has(spec.rootPc))v.push('rootless:fondamentale présente');var t3=null;for(var ii=0;ii<spec.pcs.length;ii++)if(spec.pcs[ii].role==='third'){t3=spec.pcs[ii];break;}if(t3&&m(ns[0])!==t3.pc)v.push('rootlessa:3ce absente du bas');}
+	else if (voicing==='rootlessb'){if(pcs.has(spec.rootPc))v.push('rootless:fondamentale présente');var t7=null;for(var ji=0;ji<spec.pcs.length;ji++)if(spec.pcs[ji].role==='seventh'){t7=spec.pcs[ji];break;}if(t7&&m(ns[0])!==t7.pc)v.push('rootlessb:7e absente du bas');}
+	else if (voicing==='jazz'||voicing==='nuhouse'||voicing==='house'||voicing==='quartal'||voicing==='upper'||voicing==='rootless'||voicing==='organ'||voicing==='broken'||voicing==='deeptech'||voicing==='frenchtouch') { if (pcs.has(spec.rootPc)) v.push('rootless:fondamentale présente'); }
+	else if (voicing==='sus') { var t=null,ti; for(ti=0;ti<spec.pcs.length;ti++)if(spec.pcs[ti].role==='third'){t=spec.pcs[ti];break;} if(t&&pcs.has(t.pc))v.push('sus:3ce présente'); }
+	else if (voicing==='power') { var fp=m(spec.rootPc+7),pi; for(pi=0;pi<ns.length;pi++)if(m(ns[pi])!==spec.rootPc&&m(ns[pi])!==fp){v.push('power:note hors root/5te');break;} }
+	else if (voicing==='trap') { if(pcs.has(spec.rootPc))v.push('trap:fondamentale présente (808)'); }
 	else if (voicing==='drop2'||voicing==='drop3') {
 		if (ns.length < 4) { v.push('dropN:<4 voix'); }
 		else {
@@ -1281,7 +1368,7 @@ function _vl2_checkIdentity(voicing, notes, spec) {
 	else if (voicing==='piano') {
 		if (m(ns[0])!==spec.rootPc) v.push('piano:basse ≠ fondamentale');
 		var rh=ns.slice(1);
-		if (rh.length && Math.max.apply(null,rh)-Math.min.apply(null,rh)>12) v.push('piano:MD > 1 octave');
+		if (rh.length && Math.max.apply(null,rh)-Math.min.apply(null,rh) > 12 + Math.max(0,rh.length-3)*3) v.push('piano:MD trop large');   // marge pour les accords étendus -> pas de saut d'octave EXT/normal
 	}
 	return v;
 }
@@ -1307,7 +1394,8 @@ function _vl2_buildSpec(fn, d) {
 		if(pcs[i].role==='third'&&iv(pcs[i])===4) isThird4=true;
 		if(pcs[i].role==='seventh'&&iv(pcs[i])===10) isSev10=true;
 	}
-	return {pcs:pcs, rootPc:rootPc, fn:fn, degree:d, hasSeventh:hasSev, isDominant:isThird4&&isSev10};
+	var scalePcs=[]; for(var j=0;j<scale.length;j++) scalePcs.push(m(root+scale[j]));   // gamme (quartal/upper)
+	return {pcs:pcs, rootPc:rootPc, fn:fn, degree:d, scalePcs:scalePcs, hasSeventh:hasSev, isDominant:isThird4&&isSev10};
 }
 
 function _vl2_buildColorSpec(semis, type) {
@@ -1318,12 +1406,52 @@ function _vl2_buildColorSpec(semis, type) {
 	return {pcs:pcs, rootPc:rootPc, fn:'color', degree:semis, hasSeventh:ivs.length>3, isDominant:type==='dom7'};
 }
 
+var extendedOn = false;   // toggle EXTENDED : enrichit chaque accord avec ses tensions (couche B)
+// Extended (couche B) — miroir ES5 de chordspec.enrichSpec. Ajoute les tensions idiomatiques par qualité
+// (3ce M -> +9+13 ; 3ce m + 7e -> +9+11 ; jamais la 11 juste sur 3ce M ; saute les tensions déjà là).
+// Réutilise scalePcs. Sans scalePcs (emprunts) ou sans 3ce (sus) : inchangé.
+function _vl2_enrichSpec(spec){
+	if(!spec||!spec.scalePcs)return spec;
+	var hasRole=function(r){for(var j=0;j<spec.pcs.length;j++)if(spec.pcs[j].role===r)return true;return false;};
+	var third=null,i;for(i=0;i<spec.pcs.length;i++)if(spec.pcs[i].role==='third'){third=spec.pcs[i];break;}
+	if(!third){   // sus / sans 3ce
+		var sus=null;for(i=0;i<spec.pcs.length;i++)if(spec.pcs[i].role==='sus'){sus=spec.pcs[i];break;}
+		if(sus&&spec.hasSeventh&&!hasRole('ninth'))   // 7sus4 -> 9sus4 (la 9 est diatonique)
+			return {pcs:spec.pcs.slice().concat([{pc:spec.scalePcs[(spec.degree+1)%7],role:'ninth'}]),rootPc:spec.rootPc,fn:spec.fn,degree:spec.degree,scalePcs:spec.scalePcs,hasSeventh:spec.hasSeventh,isDominant:spec.isDominant};
+		return spec;   // sus sans 7e : laissé tel quel
+	}
+	var minor=_vl2_m(third.pc-spec.rootPc)===3;
+	var add=[];
+	if(!hasRole('ninth')) add.push({pc:spec.scalePcs[(spec.degree+1)%7],role:'ninth'});
+	if(minor&&spec.hasSeventh&&!hasRole('eleventh')) add.push({pc:spec.scalePcs[(spec.degree+3)%7],role:'eleventh'});
+	if(!minor&&!hasRole('thirteenth')&&!hasRole('sixth')) add.push({pc:spec.scalePcs[(spec.degree+5)%7],role:'thirteenth'});
+	if(!add.length)return spec;
+	return {pcs:spec.pcs.slice().concat(add),rootPc:spec.rootPc,fn:spec.fn,degree:spec.degree,scalePcs:spec.scalePcs,hasSeventh:spec.hasSeventh,isDominant:spec.isDominant};
+}
+// PIPELINE DE SPEC UNIQUE — construit le spec d'une case (diatonique OU emprunt) et applique les transforms
+// de niveau spec (EXT enrich aujourd'hui ; futurs : polychord…). Utilisé par play, preview ET smart → ils
+// ne peuvent plus diverger (la classe de bug « le smart n'a pas eu l'EXT » disparaît à la racine).
+function _vl2_specFor(fn,d,colorSemis,colorType){
+	var spec=(fn==='color')?_vl2_buildColorSpec(colorSemis,colorType):_vl2_buildSpec(fn,d);
+	if(!spec)return null;
+	if(extendedOn)spec=_vl2_enrichSpec(spec);
+	return spec;
+}
+// Toggle UI : "extended 1/0". Orthogonal au voicing.
+function extended(v){
+	sendNoteOff(); activeMidiNote = -1;    // libère toute note tenue (comme voiceleading/vlmode) → le toggle ne laisse pas de note coincée
+	extendedOn=(parseInt(v)===1);
+	_vl2_reset();                          // changer de mode = nouvelle réalisation
+	outlet(7,'extended',extendedOn?1:0);   // reflète l'état au bouton EXT
+	broadcastSurface();                    // re-diffuse la grille (noms étendus CM7->CM13) + la heat-map smart (la grille change en EXT)
+}
+
 function _vl2_specKey(s) {
 	var r=s.fn+':'+s.degree+':'; for(var i=0;i<s.pcs.length;i++) r+=(i?'.':'')+s.pcs[i].pc; return r;
 }
 
 // --- realizer ---
-var _vl2_ROLE_ORDER=['root','sus','third','fifth','sixth','seventh','ninth'];
+var _vl2_ROLE_ORDER=['root','sus','third','fifth','sixth','seventh','ninth','eleventh','thirteenth'];
 function _vl2_vs(a){return a.slice().sort(function(x,y){return x-y;});}
 function _vl2_m(n){return((n%12)+12)%12;}
 function _vl2_rotOf(arr){
@@ -1331,22 +1459,77 @@ function _vl2_rotOf(arr){
 	for(var i=0;i<arr.length;i++){out.push(r.slice());r=_vl2_vs(r.slice(1).concat([r[0]+12]));}
 	return out;
 }
+// rootless A/B : MÊME réalisation (retire la fonda par pitch-class, robuste aux rotations de _vl2_realize).
+// _vl2_checkIdentity distingue Type A (3ce en bas) de Type B (7e en bas). NON-ABSOLUTE → registre normalisé
+// par le Selector (fini l'écart de l'ancien stackFromFloor : Am7 3rd=C→48 vs G7 3rd=B→59).
+function _vl2_rootlessClose(c,spec){
+	if(!spec||c.length<4)return[_vl2_vs(c)];
+	var rp=_vl2_m(spec.rootPc);
+	var wr=_vl2_vs(c.filter(function(n){return _vl2_m(n)!==rp;}));
+	return wr.length>=3?[wr]:[_vl2_vs(c)];
+}
 function _vl2_closeFrom(spec,rootMidi){
 	var ord=spec.pcs.slice().sort(function(a,b){return _vl2_ROLE_ORDER.indexOf(a.role)-_vl2_ROLE_ORDER.indexOf(b.role);});
 	var out=[rootMidi],last=rootMidi;
 	for(var i=1;i<ord.length;i++){var n=last+1;n+=_vl2_m(ord[i].pc-_vl2_m(n));out.push(n);last=n;}
 	return out;
 }
-var _vl2_STRUCT=new Set(['piano','rootlessa','rootlessb','drop2','drop3','house','prog','jazz','nuhouse','trap','trance','funk']);
-var _vl2_ABSOLUTE=new Set(['house','prog','jazz','nuhouse','trap','trance','funk']);
+var _vl2_STRUCT=new Set(['piano','rootlessa','rootlessb','rootless','drop2','drop3','house','prog','jazz','nuhouse','trap','trance','funk','quartal','upper','organ','frenchtouch','broken','deeptech','detroit','soul','jamiroquai','rave','sus','wide','power']);
+var _vl2_ABSOLUTE=new Set(['house','prog','jazz','nuhouse','trap','trance','funk','quartal','upper','organ','broken','deeptech','detroit','soul','jamiroquai','rave','sus','wide','power']);
+// Replie une extension qui flotte tout en haut (EXT : la 13e empilée une octave au-dessus → span 2 octaves,
+// injouable d'une main). Voir realizer.js compactFloatingTop. FOLD = voicings SERRÉS uniquement (les
+// open/spread/funk/prog/trance/nuhouse/drop/piano/upper gardent leur déplacement d'octave voulu).
+var _vl2_FLOAT_GAP=5;
+function _vl2_compactFloatingTop(notes){
+	var r=_vl2_vs(notes),g;
+	for(g=0;g<8&&r.length>=2;g++){
+		var n=r.length;
+		if(r[n-1]-r[n-2]<=_vl2_FLOAT_GAP)break;
+		var folded=r[n-1]-12;
+		if(folded<=r[0]||r.indexOf(folded)!==-1)break;
+		r=_vl2_vs(r.slice(0,n-1).concat([folded]));
+	}
+	return r;
+}
+var _vl2_FOLD=new Set(['classic','rootlessa','rootlessb']);
+// Symétrique pour le BAS : remonte une fonda grave ISOLÉE d'une octave si elle "boome" loin sous le reste
+// (#28 : Am11 spread/open). Ne touche QUE le bas isolé (gap>FLOAT_GAP) → l'étalement voulu est préservé.
+function _vl2_compactFloatingBottom(notes){
+	var r=_vl2_vs(notes),g;
+	for(g=0;g<8&&r.length>=2;g++){
+		if(r[1]-r[0]<=_vl2_FLOAT_GAP)break;
+		var lifted=r[0]+12;
+		if(lifted>=r[r.length-1]||r.indexOf(lifted)!==-1)break;
+		r=_vl2_vs(r.slice(1).concat([lifted]));
+	}
+	return r;
+}
+var _vl2_BOTTOM_FOLD=new Set(['spread','open']);
+// Empile une liste de pitch-classes en position serrée ascendante depuis un plancher MIDI.
+function _vl2_stackFromFloor(pcs,floor){
+	var out=[],cur=floor-1,i,n;
+	for(i=0;i<pcs.length;i++){n=cur+1+_vl2_m(pcs[i]-_vl2_m(cur+1));out.push(n);cur=n;}
+	return _vl2_vs(out);
+}
 var _vl2_T={
 	classic:function(c){return[c];},
 	open:function(c){return c.length<2?[c]:[_vl2_vs(c.map(function(n,i){return i===1?n+12:n;}))];},
 	spread:function(c){return c.length<3?[c]:[_vl2_vs(c.map(function(n,i){return i%2===1?n+12:n;}))];},
-	// house : stab deep-house ROOTLESS (basse jouée à part), cluster serré ancré C3.
-	house:function(c,oct){
+	// house : STAB deep-house = sus2 + 6/9, rootless, brillant (PAS de 3ce ni 7e) → 2de + 5te + 6te depuis la
+	// gamme. Registre C3, toutes rotations, 1 main. Besoin de scalePcs (sinon fallback en amont).
+	// house : stab deep-house ROOTLESS, ancré C3. EN MODE EXTENDED (9e + 13e) → 6/9 = 3-5-6-9 (lâche la 7e),
+	// distinct + correct. En NORMAL → cluster rootless (QUE les notes de l'accord, ≈ rootless assumé).
+	house:function(c,oct,spec){
 		if(c.length<3)return[_vl2_vs(c)];oct=oct||0;
-		var hm=function(n){return((n%12)+12)%12;},pcs=c.slice(1).map(hm);
+		var hm=function(n){return((n%12)+12)%12;};
+		var roleP=function(r){if(!spec)return null;var e=null,j;for(j=0;j<spec.pcs.length;j++)if(spec.pcs[j].role===r){e=spec.pcs[j];break;}return e?e.pc:null;};
+		var thirteenth=roleP('thirteenth'),ninth=roleP('ninth');
+		if(thirteenth!=null&&ninth!=null){   // EXTENDED → 6/9 (3-5-6-9, sans la 7e)
+			var i6=[roleP('third'),roleP('fifth'),thirteenth,ninth],seq=[],q;
+			for(q=0;q<i6.length;q++)if(i6[q]!=null)seq.push(i6[q]);
+			return _vl2_rotOf(_vl2_stackFromFloor(seq,48+oct));
+		}
+		var pcs=c.slice(1).map(hm);
 		if(c.length>=5)pcs=pcs.filter(function(p,i){return i!==1;});
 		var floor=48+oct;
 		var cluster=pcs.map(function(pc){return floor+hm(pc);}).sort(function(a,b){return a-b;})
@@ -1360,7 +1543,7 @@ var _vl2_T={
 		var rt=48+oct+rootPc,cl=[rt],cur=rt,i,n;
 		for(i=0;i<upperPc.length;i++){n=cur+1+pm(upperPc[i]-pm(cur+1));cl.push(n);cur=n;}
 		cl.push(rt+12);
-		return[_vl2_vs(cl).slice(0,6)];
+		return[_vl2_vs(cl).slice(0,6)];   // pad root-doublé = registre FIXE (cohérence > mouvement) — pas de fenêtre octave (dérive)
 	},
 	piano:function(c){
 		if(c.length<3)return[c];
@@ -1370,23 +1553,48 @@ var _vl2_T={
 			return[lo-12+d].concat(rh);  // basse ~1 octave sous la MD
 		});
 	},
-	rootlessa:function(c){return c.length<3?[c]:_vl2_rotOf(c.slice(1));},
-	rootlessb:function(c){
-		if(c.length<3)return[c];
-		var u=c.slice(1),k=Math.ceil(u.length/2);
-		var sp=_vl2_vs(u.slice(k).concat(u.slice(0,k).map(function(n){return n+12;})));
-		return[-1,0,1,2].map(function(o){return _vl2_vs(sp.map(function(n){return n+o*12;}));});
+	// rootless A/B : NON-ABSOLUTE (sorti du set ABSOLUTE) — le Realizer génère toutes les formes
+	// rootless A/B (Bill Evans) : réalisation commune _vl2_rootlessClose ; _vl2_checkIdentity choisit
+	// la rotation (Type A = 3ce en bas, Type B = 7e en bas). Voir _vl2_rootlessClose ci-dessus.
+	rootlessa:function(c,oct,spec){return _vl2_rootlessClose(c,spec);},
+	rootlessb:function(c,oct,spec){return _vl2_rootlessClose(c,spec);},
+	rootless:function(c,oct,spec){return _vl2_rootlessClose(c,spec);},   // A↔B fusionnés : le Selector choisit la rotation (Type A/B) qui voice-lead le mieux (geste Bill Evans)
+	// quartal : So What rootless [11,7,3,5]. 11e = 4e degré gamme au-dessus de la fonda, montée
+	// en #11 sur accord majeur (lydien). 1 main, rootless, ABSOLUTE. Besoin de scalePcs (sinon fallback).
+	quartal:function(c,oct,spec){
+		if(!spec||!spec.scalePcs||c.length<3)return[_vl2_vs(c)];
+		var roleP=function(r){var e=null,i;for(i=0;i<spec.pcs.length;i++)if(spec.pcs[i].role===r){e=spec.pcs[i];break;}return e?e.pc:null;};
+		var third=roleP('third'),fifth=roleP('fifth'),seventh=roleP('seventh');
+		if(third==null||seventh==null)return[_vl2_vs(c)];
+		var eleven=spec.scalePcs[(spec.degree+3)%7];
+		if(_vl2_m(third-spec.rootPc)===4)eleven=_vl2_m(eleven+1);   // #11 lydien sur accord majeur
+		var seq=[eleven,seventh,third];if(fifth!=null)seq.push(fifth);
+		return _vl2_rotOf(_vl2_stackFromFloor(seq,48+(oct||0)));   // rotations → VL chaud (canonique = pile So-What, 1re)
+	},
+	// upper : upper-structure DEUX MAINS (exception comme piano). MG = shell guide-tones (3+7, rootless),
+	// MD = triade majeure d'upper-structure. Auto : US bII (altered) sur b9/#9, sinon US II (lydien dom).
+	// Dominantes uniquement (fallback en amont). Pas de scalePcs (triade chromatique depuis la fonda).
+	upper:function(c,oct,spec){
+		if(!spec||!spec.isDominant)return[_vl2_vs(c)];
+		var roleP=function(r){var e=null,i;for(i=0;i<spec.pcs.length;i++)if(spec.pcs[i].role===r){e=spec.pcs[i];break;}return e?e.pc:null;};
+		var third=roleP('third'),seventh=roleP('seventh');
+		if(third==null||seventh==null)return[_vl2_vs(c)];
+		var ninth=null,ni;for(ni=0;ni<spec.pcs.length;ni++)if(spec.pcs[ni].role==='ninth'){ninth=spec.pcs[ni];break;}
+		var iv9=ninth?_vl2_m(ninth.pc-spec.rootPc):-1;
+		var usRoot=_vl2_m(spec.rootPc+((iv9===1||iv9===3)?1:2));   // US bII (altered) ou US II (lydien)
+		var shell=_vl2_stackFromFloor([third,seventh],48+(oct||0));                         // main gauche ~C3
+		var triad=_vl2_stackFromFloor([usRoot,_vl2_m(usRoot+4),_vl2_m(usRoot+7)],60+(oct||0)); // main droite ~C4
+		// shell MG fixe + inversions de la triade MD → VL chaud (canonique = triade position fonda, 1re)
+		return _vl2_rotOf(triad).map(function(t){return _vl2_vs(shell.concat(t));});
 	},
 	drop2:function(c){var r=_vl2_vs(c);r[r.length-2]-=12;return[_vl2_vs(r)];},
 	drop3:function(c){var r=_vl2_vs(c);r[r.length-3]-=12;return[_vl2_vs(r)];},
-	// trap : accord grave serré root-inclus verrouillé C3 (dark) ; la sub-808 jouée à part.
+	// trap : son 808. La 808 tient la fondamentale -> on la DROP (rootless). Guide tones +
+	// extensions, SANS la 5te (anti-boue), ancrés GRAVE (C2) = sombre. ABSOLUTE. Triades -> fallback.
 	trap:function(c,oct){
-		if(c.length<3)return[_vl2_vs(c)];oct=oct||0;
-		var pm=function(n){return((n%12)+12)%12;},rootPc=pm(c[0]),upperPc=c.slice(1).map(pm);
-		if(upperPc.length>=4)upperPc=upperPc.filter(function(_,i){return i!==1;});
-		var rt=48+oct+rootPc,cl=[rt],cur=rt,i,n;
-		for(i=0;i<upperPc.length;i++){n=cur+1+pm(upperPc[i]-pm(cur+1));cl.push(n);cur=n;}
-		return[_vl2_vs(cl)];
+		if(c.length<4)return[_vl2_vs(c)];
+		var u=c.slice(1).map(_vl2_m).filter(function(_,i){return i!==1;});
+		return _vl2_rotOf(_vl2_stackFromFloor(u,36+(oct||0)));   // C2 grave/dark ; rotations → le Selector stabilise au registre
 	},
 	// nuhouse : rootless OUVERT aéré (2e voix +octave), 1 main, ancré C3, suit OCT.
 	nuhouse:function(c,oct){
@@ -1395,12 +1603,13 @@ var _vl2_T={
 		var cl=pcs.map(function(pc){return floor+pm(pc);}).sort(function(a,b){return a-b;})
 			.filter(function(n,i,a){return i===0||n!==a[i-1];});
 		if(cl.length>=2)cl[1]+=12;
-		return[_vl2_vs(cl)];
+		return _vl2_rotOf(_vl2_vs(cl));   // rotations → VL chaud (canonique = cluster aéré, 1re)
 	},
-	jazz:function(c,oct){
+	jazz:function(c,oct,spec){
 		if(c.length<3)return[_vl2_vs(c)];oct=oct||0;
 		var pm=function(n){return((n%12)+12)%12;};
 		var pcs=c.slice(1).map(pm),floor=48+oct,cluster=[],cur=floor;
+		if(pcs.length>=3)pcs=pcs.filter(function(p,k){return k!==1;});   // 7e+ : SHELL (lâche la 5te) → 3-7(-9) ; QUE les notes de l'accord, ≠ rootless
 		for(var i=0;i<pcs.length;i++){
 			var n=cur+pm(pcs[i]-pm(cur));
 			if(cluster.length&&n<=cluster[cluster.length-1])n+=12;
@@ -1417,7 +1626,7 @@ var _vl2_T={
 		var rt=48+oct+rootPc,cl=[rt],cur=rt,i,n;
 		for(i=0;i<upperPc.length;i++){n=cur+1+pm(upperPc[i]-pm(cur+1));cl.push(n);cur=n;}
 		cl.push(rt+12);
-		return[_vl2_vs(cl).slice(0,6)];
+		return[_vl2_vs(cl).slice(0,6)];   // anthem root-doublé = registre FIXE (cohérence > mouvement)
 	},
 	// funk : grip "10e" root-inclus — fonda en bas + 3ce (c[1], ordre des rôles) montée
 	// d'une octave = la dixième caractéristique. c[1] est TOUJOURS la 3ce, donc la 10e
@@ -1426,12 +1635,77 @@ var _vl2_T={
 	funk:function(c,oct){
 		if(c.length<3)return[_vl2_vs(c)];oct=oct||0;
 		var pm=function(n){return((n%12)+12)%12;},floor=48+oct;
+		var hasSev=c.length>=4;   // sparse Rhodes : lâche la 5te s'il y a une 7e
 		var rt=floor+pm(c[0]),third=floor+pm(c[1])+12;
 		var rest=[];
-		for(var i=2;i<c.length;i++){var n=floor+pm(c[i]);if(n-rt<3)n+=12;rest.push(n);}
+		for(var i=2;i<c.length;i++){if(i===2&&hasSev)continue;var n=floor+pm(c[i]);if(n-rt<3)n+=12;rest.push(n);}
 		var notes=_vl2_vs([rt].concat(rest).concat([third]))
 			.filter(function(n,i,a){return i===0||n!==a[i-1];});
-		return[notes];
+		return[notes];   // grip "10e" root-inclus = registre FIXE (cohérence > mouvement)
+	},
+	// ─── NOUVEAUX VOICINGS (miroir vl2, 1res versions à affiner à l'oreille) ───
+	organ:function(c,oct){
+		if(c.length<3)return[_vl2_vs(c)];
+		var pm=function(n){return((n%12)+12)%12;},pcs=c.slice(1).map(pm),floor=60+(oct||0),cl=[],cur=floor-1,i,n;
+		for(i=0;i<pcs.length;i++){n=cur+1+pm(pcs[i]-pm(cur+1));cl.push(n);cur=n;}
+		return _vl2_rotOf(_vl2_vs(cl).slice(0,5));
+	},
+	frenchtouch:function(c,oct,spec){return _vl2_rootlessClose(c,spec);},
+	broken:function(c,oct){
+		if(c.length<3)return[_vl2_vs(c)];
+		var pm=function(n){return((n%12)+12)%12;},pcs=c.slice(1).map(pm),floor=48+(oct||0),cl=[],cur=floor-1,i,n;
+		for(i=0;i<pcs.length;i++){n=cur+1+pm(pcs[i]-pm(cur+1));cl.push(n);cur=n;}
+		return _vl2_rotOf(_vl2_vs(cl).slice(0,6));
+	},
+	deeptech:function(c,oct){
+		if(c.length<3)return[_vl2_vs(c)];
+		var pm=function(n){return((n%12)+12)%12;},pcs=c.slice(1).map(pm),floor=40+(oct||0),cl=[],cur=floor-1,i,n;
+		for(i=0;i<pcs.length;i++){n=cur+1+pm(pcs[i]-pm(cur+1));cl.push(n);cur=n;}
+		return _vl2_rotOf(_vl2_vs(cl).slice(0,4));
+	},
+	detroit:function(c,oct){
+		if(c.length<3)return[_vl2_vs(c)];
+		var pm=function(n){return((n%12)+12)%12;},keep=c.length>=4?[c[0],c[1],c[3]]:[c[0],c[1],c[2]],floor=48+(oct||0),cl=[],cur=floor-1,i,m;
+		for(i=0;i<keep.length;i++){m=cur+1+pm(pm(keep[i])-pm(cur+1));cl.push(m);cur=m;}
+		return[_vl2_vs(cl)];
+	},
+	soul:function(c,oct){
+		if(c.length<3)return[_vl2_vs(c)];
+		var pm=function(n){return((n%12)+12)%12;},floor=48+(oct||0),hasSev=c.length>=4,root=floor+pm(c[0]),third=floor+pm(c[1])+12,rest=[],i,n;
+		for(i=2;i<c.length;i++){if(i===2&&hasSev)continue;n=floor+pm(c[i]);if(n-root<3)n+=12;rest.push(n);}
+		return[_vl2_vs([root].concat(rest).concat([third])).filter(function(x,j,a){return j===0||x!==a[j-1];})];
+	},
+	jamiroquai:function(c,oct){
+		if(c.length<3)return[_vl2_vs(c)];
+		var pm=function(n){return((n%12)+12)%12;},floor=53+(oct||0),out=[],cur=floor-1,i,m;
+		for(i=0;i<c.length;i++){m=cur+1+pm(pm(c[i])-pm(cur+1));out.push(m);cur=m;}
+		return[_vl2_vs(out).slice(0,6)];
+	},
+	rave:function(c,oct){
+		if(c.length<2)return[_vl2_vs(c)];
+		var pm=function(n){return((n%12)+12)%12;},floor=60+(oct||0),root=floor+pm(c[0]),out=[root],cur=root,u=c.slice(1),i,m;
+		for(i=0;i<u.length;i++){m=cur+1+pm(pm(u[i])-pm(cur+1));out.push(m);cur=m;}
+		out.push(root+12);
+		return[_vl2_vs(out).slice(0,6)];
+	},
+	sus:function(c,oct,spec){
+		if(!spec||!spec.scalePcs)return[_vl2_vs(c)];
+		var pm=function(n){return((n%12)+12)%12;};
+		var role=function(r){var e=null,k;for(k=0;k<spec.pcs.length;k++)if(spec.pcs[k].role===r){e=spec.pcs[k];break;}return e?e.pc:null;};
+		var two=spec.scalePcs[(spec.degree+1)%7],fifth=role('fifth'),seventh=role('seventh');
+		var seq=[spec.rootPc,two];if(fifth!=null)seq.push(fifth);if(seventh!=null)seq.push(seventh);
+		var floor=48+(oct||0),out=[],cur=floor-1,i,n;
+		for(i=0;i<seq.length;i++){n=cur+1+pm(seq[i]-pm(cur+1));out.push(n);cur=n;}
+		return[_vl2_vs(out)];
+	},
+	wide:function(c,oct){
+		var pm=function(n){return((n%12)+12)%12;},floor=42+(oct||0),base=[],cur=floor-1,i,m;
+		for(i=0;i<c.length;i++){m=cur+1+pm(pm(c[i])-pm(cur+1));base.push(m);cur=m;}
+		return[_vl2_vs(base.map(function(n,j){return j%2===1?n+24:n;})).slice(0,6)];
+	},
+	power:function(c,oct){
+		var pm=function(n){return((n%12)+12)%12;},root=48+(oct||0)+pm(c[0]);
+		return[[root,root+7,root+12]];
 	}
 };
 function _vl2_stabilize(notes,spec,target){
@@ -1462,7 +1736,10 @@ function _vl2_realize(spec,voicing,opts){
 	var octShift=regBase-48;
 	var want=(opts&&opts.targetVoices!=null)?opts.targetVoices:null;
 	var vc=voicing,fallback=null;
-	if((vc==='rootlessa'||vc==='rootlessb'||vc==='jazz'||vc==='nuhouse'||vc==='house')&&!spec.hasSeventh){fallback=vc;vc='classic';}
+	if((vc==='rootlessa'||vc==='rootlessb'||vc==='jazz'||vc==='nuhouse'||vc==='house'||vc==='trap')&&!spec.hasSeventh){fallback=vc;vc='classic';}   // rootless (dont house/jazz) : triade = classic (l'accord TEL QUEL)
+	if(vc==='quartal'&&(!spec.hasSeventh||!spec.scalePcs)){fallback=vc;vc='classic';}   // quartal a besoin de la 7e + la gamme
+	if(vc==='sus'&&!spec.scalePcs){fallback=vc;vc='classic';}   // sus a besoin de la gamme (le 2)
+	if(vc==='upper'&&!spec.isDominant){fallback=vc;vc='classic';}   // upper n'a de sens que sur les dominantes
 	if(vc==='drop3'&&spec.pcs.length<4){fallback=vc;vc='drop2';}
 	if(vc==='drop2'&&spec.pcs.length<4){fallback=fallback||vc;vc='classic';}
 	// classic VL off : tonique de la gamme en bas, tous les degrés strictement au-dessus.
@@ -1474,24 +1751,28 @@ function _vl2_realize(spec,voicing,opts){
 		var cn=_vl2_vs(_vl2_closeFrom(spec,cr)).slice(0,6);
 		if(Math.min.apply(null,cn)<24||Math.max.apply(null,cn)>108)return[];
 		if(_vl2_checkIdentity(vc,cn,spec).length)return[];
-		return[{notes:cn,voicing:vc,fallback:fallback}];
+		return[{notes:cn,voicing:vc,fallback:fallback,canonical:true}];
 	}
 	var rotUp=function(arr){var r=_vl2_vs(arr);r.push(r.shift()+12);return _vl2_vs(r);};
-	var seen=new Set(),out=[];
+	var seen=new Set(),out=[],canonTagged=false;
 	for(var oct=-2;oct<=2;oct++){
 		var base=48+oct*12,rootMidi=base+_vl2_m(spec.rootPc-_vl2_m(base));
 		var inv=_vl2_closeFrom(spec,rootMidi);
 		var nInv=_vl2_ABSOLUTE.has(vc)?1:spec.pcs.length;
 		for(var k=0;k<nInv;k++){
 			var TF=_vl2_T[vc]||_vl2_T.classic;
-			var shapes=TF(inv,octShift);
+			var shapes=TF(inv,octShift,spec);
 			for(var si=0;si<shapes.length;si++){
 				var notes=(want!=null&&!_vl2_STRUCT.has(vc))?_vl2_stabilize(shapes[si],spec,want):_vl2_vs(shapes[si]).slice(0,6);
+				if(_vl2_FOLD.has(vc))notes=_vl2_compactFloatingTop(notes);   // replie l'extension flottante (EXT, voicings serrés) → jouable 1 main
+				if(_vl2_BOTTOM_FOLD.has(vc)&&spec.pcs.length>=5)notes=_vl2_compactFloatingBottom(notes);   // remonte la fonda grave isolée — accords riches 9e+/EXT (#28 Am11)
 				if(Math.min.apply(null,notes)<24||Math.max.apply(null,notes)>108)continue;
 				if(_vl2_checkIdentity(vc,notes,spec).length)continue;
 				if(!_vl2_ABSOLUTE.has(vc)&&_vl2_lowIntervalViolations(notes,octShift).length)continue;
 				var key=notes.join(',');if(seen.has(key))continue;seen.add(key);
-				out.push({notes:notes,voicing:vc,fallback:fallback});
+				// forme maison : ABSOLUTE (registre fixe, shape indépendante de l'octave de boucle) → le 1er candidat émis EST la canonique ; sinon 1re inversion à base===regBase.
+				var canon=_vl2_ABSOLUTE.has(vc)?!canonTagged:(base===regBase&&k===0&&!canonTagged);if(canon)canonTagged=true;
+				out.push({notes:notes,voicing:vc,fallback:fallback,canonical:canon});
 			}
 			inv=rotUp(inv);
 		}
@@ -1520,7 +1801,7 @@ var _vl2_W_jazz={
 	tendency:-5,chromatic:-5,
 	crossing:12
 };
-var _vl2_JAZZ_VC={rootlessa:1,rootlessb:1,drop2:1,drop3:1,house:1,jazz:1,nuhouse:1};
+var _vl2_JAZZ_VC={rootlessa:1,rootlessb:1,rootless:1,drop2:1,drop3:1,house:1,jazz:1,nuhouse:1,quartal:1,upper:1,organ:1,frenchtouch:1,broken:1,deeptech:1,sus:1,wide:1};
 function _vl2_pickW(vc){return _vl2_JAZZ_VC[vc]?_vl2_W_jazz:_vl2_W;}
 function _vl2_movCost(prev,cand,w){
 	if(!w)w=_vl2_W;
@@ -1581,7 +1862,8 @@ function _vl2_select(cands,opts){
 	var first=st.voices===null,best=null,bestC=Infinity;
 	for(var ci=0;ci<cands.length;ci++){
 		var c=cands[ci],cost;
-		if(first){cost=Math.abs(mean(c.notes)-center);}
+		// ABSOLUTE (registre fixe) : à froid on VERROUILLE la forme canonique signature (sinon la proximité-centre choisirait une rotation/octave secondaire et casserait l'identité). Les candidats ne servent qu'au VL chaud.
+		if(first){cost=(c.canonical?(opts.absolute?-1000:0):3)+Math.abs(mean(c.notes)-center);}
 		else{
 			cost=_vl2_movCost(st.voices,c.notes,w)+_vl2_harmBonus(st.voices,c.notes,opts,w);
 			if(mode==='flow'){
@@ -1605,7 +1887,7 @@ function _vl2_select(cands,opts){
 // --- façade vl2 ---
 // Mapping mode v1 → v2 : "anchored"→"anchor" · "relative"→"flow" · "piano"→ voicing piano + flow
 function _vl2_play(fn,d,colorSemis,colorType){
-	var spec=(fn==='color')?_vl2_buildColorSpec(colorSemis,colorType):_vl2_buildSpec(fn,d);
+	var spec=_vl2_specFor(fn,d,colorSemis,colorType);   // pipeline de spec unique (build + EXT)
 	if(!spec)return null;
 	var vc=currentVoicing,mode='anchor';
 	if(voiceLeadingEnabled){
@@ -1616,13 +1898,38 @@ function _vl2_play(fn,d,colorSemis,colorType){
 	// regBase : plancher de l'octave (multiple de 12, invariant).
 	// selCtr  : tonique pour classic (ancrage harmonique), C-ancré pour les autres voicings.
 	var regBase=_vl2_regBase();
-	var selCtr=_vl2_center(vc);
-	var key=_vl2_specKey(spec)+'|'+vc+'|'+selCtr;
 	var cands=_vl2_realize(spec,vc,{regBase:regBase,rootPos:!voiceLeadingEnabled});
 	if(!cands.length)return null;
-	var notes=_vl2_select(cands,{mode:mode,center:selCtr,key:key,voicing:vc,spec:spec,prevSpec:_vl2_prevSpec});
+	var selCtr=_vl2_selCtr(cands);   // SOURCE UNIQUE (poche pour ABSOLUTE) — même centre que _sg_fluid → heat-map VL alignée au playback
+	var key=_vl2_specKey(spec)+'|'+vc+'|'+selCtr;
+	var notes=_vl2_select(cands,{mode:mode,center:selCtr,key:key,voicing:vc,spec:spec,prevSpec:_vl2_prevSpec,absolute:_vl2_ABSOLUTE.has(cands[0].voicing)});
 	_vl2_prevSpec=spec;
 	return notes;
+}
+
+// Aperçu (hover) : calcule le voicing d'une cellule SANS jouer ni polluer la mémoire VL.
+// État VL JETABLE (snapshot + restore) -> le prochain accord réel n'est pas affecté.
+// Toujours en démarrage à froid -> montre la forme CANONIQUE de la cellule (stable).
+function _vl2_previewNotes(fn,d,colorSemis,colorType){
+	var spec=_vl2_specFor(fn,d,colorSemis,colorType);   // même pipeline que le play
+	if(!spec)return null;
+	var vc=currentVoicing,regBase=_vl2_regBase(),selCtr=_vl2_center(vc);
+	var key=_vl2_specKey(spec)+'|'+vc+'|'+selCtr+'|prev';
+	var cands=_vl2_realize(spec,vc,{regBase:regBase,rootPos:!voiceLeadingEnabled});
+	if(!cands.length)return null;
+	var sv=_vl2_st.voices,sr=_vl2_st.recall;                           // snapshot (select ne touche pas _vl2_prevSpec)
+	_vl2_st.voices=null;_vl2_st.recall=new Map();                      // état froid jetable
+	var notes=_vl2_select(cands,{mode:'flow',center:selCtr,key:key,voicing:vc,spec:spec,prevSpec:null});
+	_vl2_st.voices=sv;_vl2_st.recall=sr;                               // restore (pas de pollution VL)
+	return notes;
+}
+function preview(fn,d){
+	var notes=_vl2_previewNotes(String(fn),parseInt(d),0,'');
+	if(notes&&notes.length)outlet(7,['previewnotes'].concat(notes));
+}
+function previewcolor(semis,type){
+	var notes=_vl2_previewNotes('color',0,parseInt(semis),String(type));
+	if(notes&&notes.length)outlet(7,['previewnotes'].concat(notes));
 }
 
 // =====================================================
@@ -1713,6 +2020,7 @@ function sendChord(name, notes) {
 	// n'est qu'un FILET DE SECOURS (applyVoicing) si vl2 ne sort aucun candidat.
 	var v2 = _vl2_play(lastFn, lastDegree, lastColorSemis, lastColorType);
 	notes = (v2 && v2.length) ? v2 : applyVoicing(notes);
+	if (_chordifyMode) { _chordifyResult = notes.slice(); return; }   // CHORDIFY : capture le voicing (VL avancé), zéro son/UI/état
 	sendNoteOff();
 	activeNotes = notes.slice();
 	lastChordNotes = notes.slice();            // survit au note-off → utilisé par le glisser → ajout
@@ -1730,7 +2038,7 @@ function sendChord(name, notes) {
 // =====================================================
 var captureMode = false;       // toggle UI : ON = on empile chaque accord joué
 var progression = [];          // [{ name:"Cmaj7", notes:[48,52,55,59] }]
-var CLIP_BEATS_PER_BAR = 4;    // 4/4 par défaut (v1) ; 1 accord = 1 mesure
+var CLIP_BEATS_PER_BAR = 4;    // fallback si la signature de Live est illisible (sendclip lit la vraie) ; 1 accord = 1 mesure
 var insertCursor = -1;         // index d'insertion (clic sur une carte) ; -1 = ajout à la fin
 var PROG_MAX     = 8;          // limite d'accords (pas de scroll) ; au-delà on n'ajoute plus
 
@@ -1754,16 +2062,35 @@ function currentRoman() {
 	return base;                                         // majeur
 }
 
+// Construit une entrée de progression depuis l'accord COURANT (lastFn/lastDegree/last*).
+// `notesArr` = notes à stocker : activeNotes (jeu live) ou lastChordNotes (glisser → ajout).
+function _progEntry(name, notesArr) {
+	return {
+		name: String(name),
+		roman: currentRoman(),
+		deg: (lastFn === "color" ? -1 : lastDegree),   // -1 = emprunt (violet) ; 0..6 = degré
+		fn: lastFn,                                     // re-dérivation (substituts/voicings/suite Push)
+		colorSemis: lastColorSemis, colorType: lastColorType,
+		notes: notesArr.slice()
+	};
+}
+
 // Appelé depuis sendChord() quand captureMode est ON : empile l'accord joué (clic, clavier MIDI
 // ou pad Push). 1 déclenchement = 1 carte.
 function captureChord(name) {
+	var entry = _progEntry(name, activeNotes);
+	if (_progCommit) {                                 // édition depuis le Push (rangées 1-7, CAPTURE on)
+		var c = _progCommit; _progCommit = null;
+		if (c.mode === "replace" && c.idx >= 0 && c.idx < progression.length) {
+			progression.splice(c.idx, 1, entry);       // Subs/Voicings : remplace l'étape (taille inchangée, ignore PROG_MAX)
+		} else if (progression.length < PROG_MAX) {
+			var at = c.idx + 1; if (at < 0) at = 0; if (at > progression.length) at = progression.length;
+			progression.splice(at, 0, entry);          // Suite : insère APRÈS l'étape (respecte PROG_MAX)
+		} else { outlet(7, "progfull"); return; }
+		broadcastProg();
+		return;
+	}
 	if (progression.length >= PROG_MAX) { outlet(7, "progfull"); return; }   // limite atteinte (8)
-	var entry = {
-		name: String(name),
-		roman: currentRoman(),
-		deg: (lastFn === "color" ? -1 : lastDegree),  // -1 = emprunt (violet) ; 0..6 = degré
-		notes: activeNotes.slice()
-	};
 	if (insertCursor >= 0 && insertCursor <= progression.length) {
 		progression.splice(insertCursor, 0, entry);   // insère à la position du curseur, qui RESTE fixe :
 		                                               // l'accord suivant s'insère au MÊME point (devant le précédent)
@@ -1806,12 +2133,7 @@ function moveprog(from, to) {
 function captureone(name, pos) {
 	if (progression.length >= PROG_MAX) { outlet(7, "progfull"); return; }
 	pos = parseInt(pos);
-	var entry = {
-		name: String(name),
-		roman: currentRoman(),
-		deg: (lastFn === "color" ? -1 : lastDegree),
-		notes: lastChordNotes.slice()              // ← dernier accord joué (activeNotes a pu être vidé par le release)
-	};
+	var entry = _progEntry(name, lastChordNotes);   // ← dernier accord joué (activeNotes a pu être vidé par le release)
 	if (pos >= 0 && pos <= progression.length) progression.splice(pos, 0, entry);
 	else progression.push(entry);
 	broadcastProg();
@@ -1826,12 +2148,30 @@ function playprog(i) {
 	if (!notes || !notes.length) return;
 	sendNoteOff();
 	activeNotes = notes.slice();
+	lastChordNotes = notes.slice();             // survit au note-off
+	// Reconstruit le contexte de l'accord (depuis l'entrée) → le smart + la grille à l'écran SUIVENT
+	// l'accord de progression joué (sinon SMART on + lecture progression ne rafraîchissait pas l'UI).
+	lastFn = p.fn || "triad";
+	lastColorSemis = p.colorSemis; lastColorType = p.colorType;
+	if (p.deg != null && p.deg >= 0) lastDegree = p.deg;
 	_emitNotes(notes);                          // MÊME chemin d'émission que le jeu de la grille (fiable)
 	// Monitor : nom + degré de la carte. APRÈS sendNoteOff (qui émet 'clearnotes' → l'UI vide
 	// activeChordName) et AVANT 'notes' (qui rend le Monitor) — sinon le texte resterait vide.
 	outlet(7, "monitor", p.name, (p.deg == null ? -1 : p.deg));
 	outlet(7, ["notes"].concat(activeNotes));   // clavier moniteur
+	outlet(7, "active", lastFn, lastDegree);    // surbrillance de la grille à l'écran
+	if (smartOn) { _sg_remember(); _sg_broadcast(); }   // la heat-map suit l'accord de progression joué
 	// pas de note-off auto : la note tient jusqu'au relâchement (message 'release', comme la grille)
+}
+
+// APERÇU au survol d'une carte de progression (UI) : émet ses notes stockées via 'previewnotes' (même
+// pipeline que l'aperçu de la grille) — SANS jouer ni toucher l'état (activeNotes/smart/last*). Le nom
+// est géré côté UI (_previewLabel). Mineur : ne recalcule pas le voicing, montre les notes capturées.
+function previewprog(idx) {
+	idx = parseInt(idx);
+	if (idx < 0 || idx >= progression.length) return;
+	var p = progression[idx];
+	if (p.notes && p.notes.length) outlet(7, ["previewnotes"].concat(p.notes));
 }
 
 // Diffuse la progression à l'UI par TRIPLETS : "prog <nom> <romain> <deg> …" (vide = "prog" seul).
@@ -1846,6 +2186,125 @@ function broadcastProg() {
 	}
 	outlet(7, ["prog"].concat(flat));
 	outlet(7, "cursor", insertCursor);
+	if (progPushOn) broadcastProgPush();   // le Push reflète la progression à chaque changement
+}
+
+// =====================================================
+// PROGRESSION → PUSH (device-only) — layout « progression » sur le Push 2 : rangée du BAS = les étapes
+// capturées ; au-dessus de CHAQUE accord (dans sa colonne) = ses options (6 max) selon le mode actif
+// (Substituts / Suite / Voicings), séparées par une rangée vide. Spec :
+// docs/superpowers/specs/2026-06-22-push-progression-3modes-design.md.
+// =====================================================
+var PROG_MODE_SUBS = 0, PROG_MODE_SUITE = 1, PROG_MODE_VOIC = 2;
+var progMode   = PROG_MODE_SUBS;   // mode actif des options (rangées 1-7)
+var progSel    = -1;               // étape sélectionnée ; -1 = dernière étape de la progression
+var progPushOn = false;            // le layout Push « progression » est-il actif ? (toggle UI 'progmode')
+function _progSelIdx(){ return (progSel >= 0 && progSel < progression.length) ? progSel : progression.length - 1; }
+
+// Options empilées au-dessus de l'accord `idx` selon le mode actif, **6 MAX** (la rangée du bas = étapes
+// + 1 rangée vide séparatrice réservent 2 des 8 rangées). Retourne [{deg, fn, kind, …}] — voic: +voicing ;
+// emprunt: +colorSemis/colorType.
+var PROG_OPT_MAX = 6;
+function _progOptions(idx){
+	if (idx < 0 || idx >= progression.length) return [];
+	var step = progression[idx], out, v;
+	if (progMode === PROG_MODE_VOIC){
+		out = [];                                       // voicings de CET accord (6 premiers ; curation fine = futur)
+		for (v = 0; v < VOICING_NAMES.length && out.length < PROG_OPT_MAX; v++)
+			out.push({ deg:step.deg, fn:step.fn, kind:"voic", voicing:VOICING_NAMES[v], colorSemis:step.colorSemis, colorType:step.colorType });
+		return out;
+	}
+	out = (progMode === PROG_MODE_SUITE) ? _suiteOptions(idx) : substitutesFor({ deg:step.deg, fn:step.fn });
+	return (out.length > PROG_OPT_MAX) ? out.slice(0, PROG_OPT_MAX) : out;
+}
+
+// Diffuse la progression + les options PAR COLONNE vers le Push (outlet 7). Layout : rangée du bas =
+// étapes ; au-dessus de CHAQUE accord (sa colonne) = ses propres options (6 max) selon le mode. progopt
+// est POSITIONNÉ : col (= l'étape) + optrow (1..6). progclear → progstep* → progopt* → progsel → progdone.
+function broadcastProgPush(){
+	outlet(7, "progclear");
+	var i, j, opts;
+	for (i = 0; i < progression.length; i++){
+		outlet(7, "progstep", i, progression[i].deg);              // rangée du bas (deg : -1 emprunt ; 0..6 degré)
+		opts = _progOptions(i);                                     // options de CET accord
+		for (j = 0; j < opts.length; j++)
+			outlet(7, "progopt", i, j + 1, (opts[j].deg == null ? -1 : opts[j].deg), opts[j].kind);   // col=i, optrow=j+1
+	}
+	outlet(7, "progsel", _progSelIdx(), progMode);
+	outlet(7, "progdone");
+}
+
+// --- Handlers du layout Push « progression » (toggle / cycle de mode / sélection d'étape / option) ---
+var _progCommit = null;   // {mode:"replace"|"insert", idx} : posé par selopt, consommé par captureChord
+
+// Réalise les notes d'une option SANS effet de bord (preview VL jetable) — pour l'audition (CAPTURE off).
+function _realizeOption(idx, opt){
+	var step = progression[idx], fn, d, cs, ct;
+	if (opt.kind === "voic"){ fn = step.fn; d = step.deg; cs = step.colorSemis; ct = step.colorType; }   // re-voice de l'étape
+	else if (opt.fn === "color"){ fn = "color"; d = 0; cs = opt.colorSemis; ct = opt.colorType; }        // emprunt (suite)
+	else { fn = opt.fn; d = opt.deg; cs = 0; ct = ""; }                                                   // diatonique
+	if (fn === "color") d = 0;
+	var notes, savedVc;
+	if (opt.kind === "voic" && opt.voicing){ savedVc = currentVoicing; currentVoicing = opt.voicing; notes = _vl2_previewNotes(fn, d, cs, ct); currentVoicing = savedVc; }
+	else notes = _vl2_previewNotes(fn, d, cs, ct);
+	return notes || [];
+}
+// Émet un accord d'audition (même chemin que playprog : note-off + _emitNotes + Monitor + clavier).
+function _auditionNotes(notes, name, deg){
+	if (!notes || !notes.length) return;
+	sendNoteOff();
+	activeNotes = notes.slice();
+	_emitNotes(notes);
+	if (name != null) outlet(7, "monitor", String(name), (deg == null ? -1 : deg));   // nom + degré (APRÈS clearnotes de sendNoteOff, AVANT 'notes' — sinon le Monitor reste vide)
+	outlet(7, ["notes"].concat(activeNotes));
+}
+// Nom d'affichage d'une option pour le Monitor : libellé diatonique (gridLabel) ou nom d'emprunt.
+function _optName(opt){
+	if (opt.fn === "color"){
+		var bl = borrowedFor(), i;
+		for (i = 0; i < bl.length; i++) if (bl[i].semis === opt.colorSemis && bl[i].type === opt.colorType) return NOTE_NAMES[(((root + bl[i].semis) % 12) + 12) % 12] + bl[i].suf;
+		return "·";
+	}
+	return gridLabel(opt.deg, opt.fn);
+}
+// Cellule de grille (forme playFlatCell) pour une option / une étape : emprunt -> "b", sinon "d".
+function _cellFor(o){ return (o.fn === "color") ? { kind:"b", semis:o.colorSemis, type:o.colorType } : { kind:"d", fn:o.fn, degree:o.deg }; }
+
+function progmode(v){ progPushOn = (parseInt(v) === 1); outlet(7, "progmode", progPushOn ? 1 : 0); if (progPushOn) broadcastProgPush(); }
+function progmodecycle(){ progMode = (progMode + 1) % 3; outlet(7, "progmodeui", progMode); if (progPushOn) broadcastProgPush(); }
+// Sélection d'une étape (rangée 0 du Push) : la sélectionne + l'écoute (réutilise playprog).
+function selprog(col){
+	var i = parseInt(col);
+	if (i < 0 || i >= progression.length) return;
+	progSel = i;
+	playprog(i);
+	if (progPushOn) broadcastProgPush();
+}
+// Appui d'une option au-dessus d'un accord. `col` = la colonne = l'accord concerné ; `row` = 1..6.
+// CAPTURE off -> écoute ; CAPTURE on -> édite : Subs/Voicings remplacent l'accord de la colonne, Suite
+// insère après — en rejouant l'option par le VRAI chemin (son/nom/état) via _progCommit.
+function selopt(col, row){
+	var idx = parseInt(col), r = parseInt(row);
+	if (idx < 0 || idx >= progression.length) return;
+	var opts = _progOptions(idx);
+	if (r - 1 < 0 || r - 1 >= opts.length) return;
+	var opt = opts[r - 1];
+	if (!captureMode){ _auditionNotes(_realizeOption(idx, opt), _optName(opt), (opt.deg == null ? -1 : opt.deg)); return; }   // écoute + nom dans le Monitor
+	var step = progression[idx], cell, savedVc = null;
+	if (opt.kind === "voic"){
+		cell = _cellFor({ fn:step.fn, deg:step.deg, colorSemis:step.colorSemis, colorType:step.colorType });
+		if (opt.voicing){ savedVc = currentVoicing; currentVoicing = opt.voicing; }   // re-voice temporaire (n'altère pas le voicing live)
+		_progCommit = { mode:"replace", idx:idx };
+	} else if (progMode === PROG_MODE_SUITE){
+		cell = _cellFor(opt);
+		_progCommit = { mode:"insert", idx:idx };
+	} else {                                                                          // SUBS
+		cell = _cellFor(opt);
+		_progCommit = { mode:"replace", idx:idx };
+	}
+	playFlatCell(cell);                 // -> sendChord -> captureChord consomme _progCommit (splice)
+	if (savedVc !== null) currentVoicing = savedVc;
+	_progCommit = null;                 // filet : déjà consommé en temps normal
 }
 
 // Écrit la progression dans le clip de l'emplacement SÉLECTIONNÉ (1 accord = 1 mesure).
@@ -1853,27 +2312,104 @@ function broadcastProg() {
 // Notes "block" propres (pas de strum/humanize : ce sont des effets de jeu).
 function sendclip() {
 	if (!progression.length) { outlet(7, "clipempty"); post("sendclip: progression vide\n"); return; }
-	var barLen = CLIP_BEATS_PER_BAR;
-	var total  = progression.length * barLen;
 	try {
-		var slot = new LiveAPI(function(){}, "live_set view highlighted_clip_slot");
-		if (!slot || !slot.id || parseInt(slot.id) === 0) { outlet(7, "clipnoslot"); post("sendclip: aucun slot selectionne\n"); return; }
-		var has = slot.get("has_clip"); has = (has instanceof Array) ? has[0] : has;
-		if (parseInt(has) === 1) { outlet(7, "clipbusy"); post("sendclip: slot occupe -> choisir un slot vide\n"); return; }
-		slot.call("create_clip", total);
-		var clip = new LiveAPI(function(){}, "live_set view highlighted_clip_slot clip");
-		var count = 0, i, k;
-		for (i = 0; i < progression.length; i++) count += progression[i].notes.length;
-		clip.call("set_notes");
-		clip.call("notes", count);
+		// 1 accord = 1 mesure, à la signature rythmique RÉELLE de Live (était 4/4 EN DUR -> faux en 3/4, 6/8…).
+		// Le temps de clip Live se compte en noires : 1 mesure = num * 4/den noires (4/4->4, 3/4->3, 6/8->3).
+		var song = new LiveAPI(function(){}, "live_set");
+		var num = song.get("signature_numerator");   num = parseInt((num instanceof Array) ? num[0] : num);
+		var den = song.get("signature_denominator"); den = parseInt((den instanceof Array) ? den[0] : den);
+		var barLen = (num > 0 && den > 0) ? (num * 4 / den) : CLIP_BEATS_PER_BAR;
+		var total  = progression.length * barLen;
+		var notes = [], i, k;
 		for (i = 0; i < progression.length; i++) {
 			var start = i * barLen, ns = progression[i].notes;
-			for (k = 0; k < ns.length; k++) clip.call("note", ns[k], start, barLen, 100, 0);
+			for (k = 0; k < ns.length; k++) notes.push({ pitch: ns[k], start: start, dur: barLen, vel: 100 });
 		}
-		clip.call("done");
+		var r = _writeClipNotes(notes, total, false);   // progression = clip neuf (jamais overdub) ; 1 accord = 1 mesure
+		if (r === "noslot") { outlet(7, "clipnoslot"); post("sendclip: aucun slot selectionne\n"); return; }
+		if (r === "busy")   { outlet(7, "clipbusy");   post("sendclip: slot occupe -> choisir un slot vide\n"); return; }
 		outlet(7, "clipdone", progression.length);
 		post("sendclip: " + progression.length + " accords -> clip (" + total + " temps)\n");
 	} catch (e) { outlet(7, "cliperr"); post("sendclip ERR " + e + "\n"); }
+}
+
+// =====================================================
+// PROGRESSION -> CLIP : écriture des notes via LiveAPI (utilisé par sendclip).
+// =====================================================
+
+// Écrit notes=[{pitch,start,dur,vel}] dans le clip du slot SÉLECTIONNÉ (API moderne add_new_notes).
+// overdub=false : refuse un slot occupé (busy) ; overdub=true : empile. Renvoie "ok"|"noslot"|"busy"|"empty".
+function _writeClipNotes(notes, totalBeats, overdub) {
+	if (!notes || !notes.length) return "empty";
+	var slot = new LiveAPI(function(){}, "live_set view highlighted_clip_slot");
+	if (!slot || !slot.id || parseInt(slot.id) === 0) return "noslot";
+	var has = slot.get("has_clip"); has = (has instanceof Array) ? has[0] : has;
+	var hasClip = (parseInt(has) === 1);
+	if (hasClip && !overdub) return "busy";
+	if (!hasClip) slot.call("create_clip", totalBeats);   // overdub sur slot vide -> on crée quand même
+	var clip = new LiveAPI(function(){}, "live_set view highlighted_clip_slot clip");
+	if (!clip || !clip.id || parseInt(clip.id) === 0) return "noslot";
+	var arr = [], i;
+	for (i = 0; i < notes.length; i++) {
+		arr.push({ pitch: notes[i].pitch, start_time: notes[i].start, duration: notes[i].dur, velocity: (notes[i].vel > 0 ? notes[i].vel : 100) });
+	}
+	clip.call("add_new_notes", { notes: arr });   // API moderne (Live 11+) ; remplace set_notes/note/done déprécié (= 0 note)
+	return "ok";
+}
+
+// =====================================================
+// CHORDIFY — transforme un clip de notes-DÉCLENCHEURS (enregistré NATIVEMENT par Live en jouant
+// Tuple au clavier/Push) en ACCORDS Tuple : chaque déclencheur -> son voicing, MÊME temps/durée/vélo.
+// Le dur (enregistrement, timing, repos, vélo) = natif Live ; Tuple = pur transform du clip.
+// =====================================================
+var _chordifyMode = false;     // quand true, sendChord CAPTURE le voicing au lieu d'émettre
+var _chordifyResult = null;
+
+// Lit les notes d'un clip -> [{pitch,start,dur,vel}]. get_notes_extended renvoie une CHAÎNE JSON
+// { "notes": [ { pitch, start_time, duration, velocity, ... } ] } (Live 11/12).
+function _readClipNotes(clip) {
+	var raw = clip.call("get_notes_extended", 0, 128, 0, 1000000);
+	var data;
+	try { data = JSON.parse(raw); }
+	catch (e) { post("[CHORDIFY] JSON parse ERR: " + e + " raw[0..80]=" + String(raw).substring(0, 80) + "\n"); return []; }
+	var ns = (data && data.notes) ? data.notes : [];
+	var out = [], i;
+	for (i = 0; i < ns.length; i++) {
+		out.push({ pitch: parseInt(ns[i].pitch), start: parseFloat(ns[i].start_time), dur: parseFloat(ns[i].duration), vel: parseInt(ns[i].velocity) });
+	}
+	return out;
+}
+
+// Transforme le clip sélectionné : chaque déclencheur -> son accord Tuple, au même temps/durée/vélo.
+function chordify() {
+	try {
+		var clip = new LiveAPI(function(){}, "live_set view detail_clip");
+		if (!clip || !clip.id || parseInt(clip.id) === 0) clip = new LiveAPI(function(){}, "live_set view highlighted_clip_slot clip");
+		if (!clip || !clip.id || parseInt(clip.id) === 0) { outlet(7, "clipnoslot"); post("chordify: aucun clip selectionne\n"); return; }
+		var trigs = _readClipNotes(clip);
+		if (!trigs.length) { outlet(7, "clipempty"); post("chordify: clip vide\n"); return; }
+		trigs.sort(function(a, b){ return a.start - b.start; });
+		var _sv = _vl2_st.voices, _sr = _vl2_st.recall;     // snapshot VL
+		_vl2_st.voices = null; _vl2_st.recall = new Map();  // repart à zéro -> rejoue la séquence proprement (VL)
+		var out = [], i, k;
+		_chordifyMode = true;
+		for (i = 0; i < trigs.length; i++) {
+			var idx = trigs[i].pitch - MIDI_BASE;
+			if (idx < 0 || idx >= flatGrid.length) continue;   // pas une note de la grille Tuple -> on saute
+			_chordifyResult = null;
+			playFlatCell(flatGrid[idx]);                       // -> sendChord (mode chordify) -> _chordifyResult = voicing
+			var ch = _chordifyResult;
+			if (ch && ch.length) for (k = 0; k < ch.length; k++) {
+				out.push({ pitch: ch[k], start_time: trigs[i].start, duration: trigs[i].dur, velocity: (trigs[i].vel > 0 ? trigs[i].vel : 100) });
+			}
+		}
+		_chordifyMode = false;
+		_vl2_st.voices = _sv; _vl2_st.recall = _sr;         // restore VL (le jeu live n'est pas perturbé)
+		clip.call("remove_notes_extended", 0, 128, 0, 1000000);
+		clip.call("add_new_notes", { notes: out });
+		outlet(7, "chordifydone", out.length);
+		post("chordify: " + trigs.length + " declencheurs -> " + out.length + " notes\n");
+	} catch (e) { outlet(7, "cliperr"); post("chordify ERR " + e + "\n"); }
 }
 
 // =====================================================
@@ -2032,8 +2568,8 @@ function colorchord(semis, type) {
 //  This is NOT the old _wire_updater relay (removed in 1c1416b) — just one
 //  node.script + two patchlines. See docs/decisions.md.
 
-// Diffusion initiale de la grille (différée le temps que l'UI charge)
-var gridInitTask = new Task(broadcastGrid, this);
+// Diffusion initiale de la grille (différée le temps que l'UI charge) — passe par la surface unique
+var gridInitTask = new Task(broadcastSurface, this);
 gridInitTask.schedule(700);
 
 // Auto-sync observers — init at global scope too so autowatch reloads recreate them.
@@ -2047,9 +2583,9 @@ _autoSyncInitTask.schedule(800);
 (function _selfCheck(){
 	try {
 		var okSt = (typeof _vl2_st !== 'undefined' && _vl2_st && _vl2_st.recall);
-		// VOICING_NAMES doit avoir 15 entrées (classic..funk). Si on en ajoute sans
-		// mettre à jour l'UI (VOICINGS dans tuple_ui.html), le mapping par index diverge.
-		var vcOk = VOICING_NAMES.length === 15;
+		// VOICING_NAMES doit avoir 29 entrées (classic..power). Si on en ajoute sans
+		// mettre à jour l'UI (VOICINGS dans tuple_ui.html + VOICEKEYS dans demo.html + le live.menu du .amxd), le mapping par index diverge.
+		var vcOk = VOICING_NAMES.length === 29;
 		post("tuple selfcheck: Set=" + (typeof Set !== 'undefined') +
 		     " Map=" + (typeof Map !== 'undefined') +
 		     " _vl2_st=" + (okSt ? "ok" : "KO") +

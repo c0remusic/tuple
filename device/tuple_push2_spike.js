@@ -9,7 +9,6 @@
 //
 // RECORDING : 2-PISTES — les accords sortent par les noteout du moteur → piste →
 // enregistrables sur une 2e piste (MIDI From: piste Tuple, Post FX). Aucun code ici.
-// L'écriture-clip 1-piste est CONSERVÉE mais DORMANTE (REC=false) pour plus tard.
 //
 // NB recette Push (empirique, sur hardware) : voir docs/decisions.md § Push RÉSOLU.
 
@@ -78,6 +77,14 @@ var WHITEIDX  = 9;   // accord DISPONIBLE mais non suggéré = allumé en BLANC 
 function _smartSlot(col, lvl){ var l = (lvl < 1) ? 1 : (lvl > 3 ? 3 : lvl); return 18 + col*3 + (l-1); }
 function _scaleRGB(rgb, f){ return [Math.round(rgb[0]*f), Math.round(rgb[1]*f), Math.round(rgb[2]*f)]; }
 
+// --- Layout PROGRESSION (compagnon harmonique Push) — reçu de l'outlet 7 du moteur ---
+// Rangée 0 (bas) = étapes capturées ; rangées 1-7 = options de l'étape sélectionnée selon le mode
+// (0=Substituts 1=Suite 2=Voicings). Voir docs/superpowers/specs/2026-06-22-push-progression-3modes-design.md.
+var progLayout = false;                 // le layout progression est-il actif ? (reçoit 'progmode 1/0')
+var progSteps  = [], progOpts = [];     // étapes (degrés, -1=emprunt) ; options ({deg,kind})
+var progSelIdx = -1, progModeCur = 0;   // étape sélectionnée + mode actif
+var _pTmpSteps = null, _pTmpOpts = null;   // double-buffer (comme colTmp) pour un affichage atomique
+
 // Observe device active state — release grab si le device est désactivé.
 // IMPORTANT : créé PARESSEUSEMENT (dans enable()), PAS au chargement du script.
 // Créer un LiveAPI au top-level échoue ("Live API is not initialized" → objet null)
@@ -101,9 +108,6 @@ function ensureDeviceActiveObserver() {
 		deviceActiveApi.property = "active";
 	} catch (e) { L("deviceActive observer ERR " + e); deviceActiveApi = null; }
 }
-
-// écriture-clip (option 1-piste) — DORMANTE
-var REC = false, lastNotes = [], writePos = 0, entries = [], theClip = null;
 
 function noop() {}
 
@@ -181,7 +185,6 @@ function disable() {
 // =====================================================================
 // RÉCEPTION SORTIE 7 DU MOTEUR (grille + notes)
 // =====================================================================
-function notes() { var p = arrayfromargs(arguments); lastNotes = []; for (var i = 0; i < p.length; i++) { var n = parseInt(p[i]); if (!isNaN(n)) lastNotes.push(n); } }
 function gridclear() { colTmp = [0,0,0,0,0,0,0]; borTmp = 0; colFnsTmp = [[],[],[],[],[],[],[]]; }
 function gridcell(col, fn) { if (colTmp) { var c = parseInt(col); colTmp[c]++; if (colFnsTmp) colFnsTmp[c].push(String(fn)); } }
 function gridbor() { borTmp++; }
@@ -199,6 +202,15 @@ function smartdone() {
 	if (enabled && smartActive) refreshGrid();
 }
 function qualities() { var q = arrayfromargs(arguments); degQual = []; for (var i = 0; i < q.length; i++) degQual.push(parseInt(q[i])); if (scheme === 4 && enabled) { applyPalette(); refreshGrid(); } }
+
+// PROGRESSION : reçus de l'outlet 7. 'progmode' bascule le layout ; progclear/progstep/progopt/progsel/
+// progdone construisent l'affichage (double-buffer, comme la grille). Le moteur ré-émet à chaque change.
+function progmode(v) { progLayout = (parseInt(v) === 1); L("progLayout=" + progLayout); if (enabled) { applyPalette(); refreshGrid(); } flush(); }
+function progclear() { _pTmpSteps = []; _pTmpOpts = []; }
+function progstep(col, deg) { if (_pTmpSteps) _pTmpSteps.push(parseInt(deg)); }
+function progopt(col, row, deg, kind) { if (_pTmpOpts) _pTmpOpts.push({ col: parseInt(col), row: parseInt(row), deg: parseInt(deg), kind: String(kind) }); }
+function progsel(idx, mode) { progSelIdx = parseInt(idx); progModeCur = parseInt(mode); }
+function progdone() { if (_pTmpSteps) { progSteps = _pTmpSteps; progOpts = _pTmpOpts; _pTmpSteps = null; _pTmpOpts = null; } L("progdone steps=" + progSteps.length + " opts=" + progOpts.length + " sel=" + progSelIdx + " mode=" + progModeCur); if (enabled && progLayout) refreshGrid(); }
 
 // Réécrit les RGB des slots de palette via SysEx Push 2 (cmd 0x03), puis on allume avec ces index.
 function setPaletteRGB(idx, c) {
@@ -242,6 +254,7 @@ function brightIdx(col, row) {
 
 function refreshGrid() {
 	if (!enabled || !theMatrix) { L("refreshGrid SKIP enabled=" + enabled + " matrix=" + (theMatrix != null)); flush(); return; }
+	if (progLayout) { refreshProg(); return; }   // layout progression : rangée 0 = étapes, 1-7 = options
 	var n = 0, firstErr = "";
 	var spotlight = smartActive;   // SMART actif → projecteur : accord suggéré = couleur, accord dispo = blanc, pad vide = éteint
 	for (var c = 0; c < 8; c++) for (var r = 0; r < 8; r++) {
@@ -259,6 +272,37 @@ function refreshGrid() {
 	L("refreshGrid: " + n + " cases allumées" + (spotlight ? " [SPOTLIGHT smart]" : "") + (firstErr ? " ERR:" + firstErr : "")); flush();
 }
 
+// --- Rendu du layout progression ---
+// Étape (rangée 0) : couleur de degré (emprunt = violet), version claire si sélectionnée.
+function _progStepIdx(deg, sel) {
+	if (deg < 0) return sel ? BRIGHTBOR : BORIDX;
+	return (deg < 7) ? (sel ? BRIGHTDEG[deg] : DEGIDX[deg]) : OFFIDX;
+}
+// Option : Voicings = BLANC neutre (variantes du même accord) ; à l'APPUI = couleur (claire) de l'accord.
+// Subs/Suite = couleur du DEGRÉ de l'accord proposé (même schéma que LAYOUT). Emprunt = violet.
+function _progOptIdx(opt, pressed) {
+	if (opt.kind === "voic") return (!pressed) ? WHITEIDX : ((opt.deg >= 0 && opt.deg < 7) ? BRIGHTDEG[opt.deg] : BRIGHTBOR);   // blanc ; appui = couleur de l'accord
+	if (opt.deg < 0) return pressed ? BRIGHTBOR : BORIDX;         // emprunt
+	if (opt.deg >= 0 && opt.deg < 7) return pressed ? BRIGHTDEG[opt.deg] : DEGIDX[opt.deg];
+	return WHITEIDX;
+}
+function refreshProg() {
+	// Le Push indexe la rangée 0 EN HAUT. Layout : physique 7 = étapes (bas) ; physique 6 = séparateur (vide) ;
+	// physique 5..0 = options, optrow 1..6 (optrow = 6 - physique). Options POSITIONNÉES par colonne.
+	var c, phys, k, grid = [], n = 0, firstErr = "";
+	for (c = 0; c < 8; c++) { grid[c] = []; for (phys = 0; phys < 8; phys++) grid[c][phys] = OFFIDX; }
+	for (c = 0; c < progSteps.length && c < 8; c++) grid[c][7] = _progStepIdx(progSteps[c], c === progSelIdx);   // étapes (bas)
+	for (k = 0; k < progOpts.length; k++) {                                                                      // options au-dessus de leur colonne
+		var o = progOpts[k];
+		if (o.col >= 0 && o.col < 8 && o.row >= 1 && o.row <= 6) grid[o.col][6 - o.row] = _progOptIdx(o, false);
+	}
+	for (c = 0; c < 8; c++) for (phys = 0; phys < 8; phys++) {
+		var v = grid[c][phys];
+		try { theMatrix.call("send_value", c, phys, v); if (v !== OFFIDX) n++; } catch (e) { if (!firstErr) firstErr = String(e); }
+	}
+	L("refreshProg: steps=" + progSteps.length + " opts=" + progOpts.length + " sel=" + progSelIdx + " mode=" + progModeCur + " lit=" + n + (firstErr ? " ERR:" + firstErr : "")); flush();
+}
+
 // =====================================================================
 // APPUIS PADS  [value, vel, col, row, 1]  -> midinote (note-off géré par le moteur)
 // =====================================================================
@@ -269,6 +313,7 @@ function onMatrix(args) {
 	var a = (args.length !== undefined) ? args : [args];
 	if (String(a[0]) !== "value" || a.length < 4) return;
 	var vel = parseInt(a[1]), col = parseInt(a[2]), row = parseInt(a[3]);
+	if (progLayout) { onMatrixProg(vel, col, row); return; }   // layout progression : routage dédié
 	var valid = (col < 7) ? (row < colLen[col]) : (col === 7 && row < borLen);
 	if (!valid) return;
 	var key = col + "_" + row;
@@ -278,7 +323,6 @@ function onMatrix(args) {
 		L("PRESS col=" + col + " row=" + row + " vel=" + vel + " -> midinote " + pitch); flush();
 		outlet(0, "midinote", pitch, vel);
 		try { theMatrix.call("send_value", col, row, brightIdx(col, row)); } catch (e) {}   // feedback : pad tenu = version claire
-		if (REC) writeChord();
 	} else {
 		if (!pressed[key]) return; pressed[key] = false;
 		var p = pressedPitch[key]; if (p !== undefined) outlet(0, "midinote", p, 0);
@@ -286,27 +330,36 @@ function onMatrix(args) {
 	}
 }
 
-// =====================================================================
-// ÉCRITURE-CLIP 1-PISTE — DORMANT (REC=false). À reprendre plus tard
-// (passer à add_new_notes incrémental ; set_notes REMPLACE d'où l'accumulation).
-// =====================================================================
-function getClip() {
-	if (theClip) return theClip;
-	var slot = new LiveAPI(noop, "live_set view highlighted_clip_slot");
-	if (!slot || !slot.id || parseInt(slot.id) === 0) { L("pas de clip slot"); return null; }
-	var has = slot.get("has_clip"); has = (has instanceof Array) ? has[0] : has;
-	if (parseInt(has) === 0) { try { slot.call("create_clip", 16.0); } catch (e) { return null; } }
-	theClip = new LiveAPI(noop, "live_set view highlighted_clip_slot clip");
-	return theClip;
+// Appuis en layout progression : physique 7 -> selprog <col> (sélectionne+écoute l'étape) ; physique 6 =
+// séparateur (rien) ; physique 5..0 -> selopt <col> <optrow> (écoute si CAPTURE off, édite si on, côté
+// moteur). Relâchement -> 'release' (note-off).
+function onMatrixProg(vel, col, row) {
+	if (row === 7) {                                          // étape (rangée du bas)
+		if (col >= progSteps.length) return;
+		if (vel > 0) {
+			L("PROG press step col=" + col + " -> selprog"); flush();
+			outlet(0, "selprog", col);
+			try { theMatrix.call("send_value", col, 7, _progStepIdx(progSteps[col], true)); } catch (e) {}
+		} else {
+			outlet(0, "release");
+			try { theMatrix.call("send_value", col, 7, _progStepIdx(progSteps[col], col === progSelIdx)); } catch (e) {}
+		}
+		return;
+	}
+	if (row === 6) return;                                    // séparateur : rien
+	var optrow = 6 - row;                                     // physique 5..0 -> optrow 1..6
+	var o = _findOpt(col, optrow);
+	if (!o) return;
+	if (vel > 0) {
+		L("PROG press opt col=" + col + " optrow=" + optrow + " -> selopt"); flush();
+		outlet(0, "selopt", col, optrow);
+		try { theMatrix.call("send_value", col, row, _progOptIdx(o, true)); } catch (e) {}
+	} else {
+		outlet(0, "release");
+		try { theMatrix.call("send_value", col, row, _progOptIdx(o, false)); } catch (e) {}
+	}
 }
-function writeChord() {
-	if (!lastNotes.length) return;
-	var clip = getClip(); if (!clip) return;
-	for (var i = 0; i < lastNotes.length; i++) entries.push({ p: lastNotes[i], beat: writePos });
-	writePos += 1;
-	try { clip.call("set_notes"); clip.call("notes", entries.length); for (var j = 0; j < entries.length; j++) clip.call("note", entries[j].p, entries[j].beat, 0.9, 100, 0); clip.call("done"); } catch (e) {}
-}
-function rec() { REC = true; writePos = 0; entries = []; theClip = null; L("clip-write ON"); flush(); }
-function norec() { REC = false; L("clip-write OFF"); flush(); }
+// Retrouve l'option positionnée à (col, optrow) dans le buffer diffusé.
+function _findOpt(col, optrow) { for (var k = 0; k < progOpts.length; k++) { var o = progOpts[k]; if (o.col === col && o.row === optrow) return o; } return null; }
 
 post("PUSH2 module (toggle) LOADED\n");
