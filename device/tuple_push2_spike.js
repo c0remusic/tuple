@@ -75,6 +75,7 @@ var smartActive = false, smartPads = {};
 var SMART_TIER = [0, 0.45, 0.72, 1.0];   // facteur de luminosité par lvl (1..3)
 var WHITEIDX  = 9;   // accord DISPONIBLE mais non suggéré = allumé en BLANC (slot 9 libre)
 var CAP_ON_IDX = 42, CAP_OFF_IDX = 43;   // pad CAPTURE (ligne vide) : rouge vif (on) / blanc vif (off). Slots libres (smart = 18-41).
+var MODE_IDX = [44, 45, 46];             // pad MODE-cycle (ligne vide, col 2) : couleur par mode Subs/Suite/Voic.
 function _smartSlot(col, lvl){ var l = (lvl < 1) ? 1 : (lvl > 3 ? 3 : lvl); return 18 + col*3 + (l-1); }
 function _scaleRGB(rgb, f){ return [Math.round(rgb[0]*f), Math.round(rgb[1]*f), Math.round(rgb[2]*f)]; }
 
@@ -240,6 +241,9 @@ function applyPalette() {
 	setPaletteRGB(WHITEIDX, [200, 200, 205]);   // blanc doux : accord disponible (layout Smart)
 	setPaletteRGB(CAP_ON_IDX, [255, 25, 25]);   // CAPTURE on = rouge vif
 	setPaletteRGB(CAP_OFF_IDX, [255, 255, 255]); // CAPTURE off = blanc vif
+	setPaletteRGB(MODE_IDX[0], [230, 150, 0]);   // MODE Subs = ambre
+	setPaletteRGB(MODE_IDX[1], [40, 200, 120]);  // MODE Suite = vert
+	setPaletteRGB(MODE_IDX[2], [60, 130, 230]);  // MODE Voic = bleu
 	L("palette RGB appliquée (scheme " + scheme + ")"); flush();
 }
 
@@ -283,10 +287,9 @@ function _progStepIdx(deg, sel) {
 	if (deg < 0) return sel ? BRIGHTBOR : BORIDX;
 	return (deg < 7) ? (sel ? BRIGHTDEG[deg] : DEGIDX[deg]) : OFFIDX;
 }
-// Option : Voicings = BLANC neutre (variantes du même accord) ; à l'APPUI = couleur (claire) de l'accord.
-// Subs/Suite = couleur du DEGRÉ de l'accord proposé (même schéma que LAYOUT). Emprunt = violet.
+// Option : couleur du DEGRÉ de l'accord proposé (emprunt = violet) ; appui = version claire (feedback).
+// En Voic, opt.deg = le degré de l'étape SÉLECTIONNÉE → toutes les variantes prennent la couleur de CET accord.
 function _progOptIdx(opt, pressed) {
-	if (opt.kind === "voic") return (!pressed) ? WHITEIDX : ((opt.deg >= 0 && opt.deg < 7) ? BRIGHTDEG[opt.deg] : BRIGHTBOR);   // blanc ; appui = couleur de l'accord
 	if (opt.deg < 0) return pressed ? BRIGHTBOR : BORIDX;         // emprunt
 	if (opt.deg >= 0 && opt.deg < 7) return pressed ? BRIGHTDEG[opt.deg] : DEGIDX[opt.deg];
 	return WHITEIDX;
@@ -299,6 +302,7 @@ function refreshProg() {
 	for (c = 0; c < 8; c++) { grid[c] = []; for (phys = 0; phys < 8; phys++) grid[c][phys] = OFFIDX; }
 	for (c = 0; c < progSteps.length && c < 8; c++) grid[c][7] = _progStepIdx(progSteps[c], c === progSelIdx);   // étapes (bas)
 	grid[0][6] = progCapture ? CAP_ON_IDX : CAP_OFF_IDX;                                                          // CAPTURE (ligne vide, col 0)
+	grid[2][6] = MODE_IDX[(progModeCur >= 0 && progModeCur < 3) ? progModeCur : 0];                               // MODE-cycle (col 2 ; col 1 = espacement vide)
 	for (k = 0; k < progOpts.length; k++) {                                                                       // options de l'étape sélectionnée, bottom-up
 		var o = progOpts[k];
 		if (o.idx < 0 || o.idx >= 48) continue;
@@ -355,8 +359,11 @@ function onMatrixProg(vel, col, row) {
 		}
 		return;
 	}
-	if (row === 6) {                                          // ligne vide : pad CAPTURE (col 0), reste = rien
-		if (col === 0 && vel > 0) { L("PROG capturetoggle"); flush(); outlet(0, "capturetoggle"); }
+	if (row === 6) {                                          // ligne vide : CAPTURE (col 0) · espacement (col 1) · MODE-cycle (col 2)
+		if (vel > 0) {
+			if (col === 0) { L("PROG capturetoggle"); flush(); outlet(0, "capturetoggle"); }
+			else if (col === 2) { L("PROG progmodecycle"); flush(); outlet(0, "progmodecycle"); }
+		}
 		return;
 	}
 	var flat = (5 - row) * 8 + col;                           // physique 5..0 -> idx à plat (bottom-up)
