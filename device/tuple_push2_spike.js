@@ -75,7 +75,7 @@ var smartActive = false, smartPads = {};
 var SMART_TIER = [0, 0.45, 0.72, 1.0];   // facteur de luminosité par lvl (1..3)
 var WHITEIDX  = 9;   // accord DISPONIBLE mais non suggéré = allumé en BLANC (slot 9 libre)
 var CAP_ON_IDX = 42, CAP_OFF_IDX = 43;   // pad CAPTURE (ligne vide) : rouge vif (on) / blanc vif (off). Slots libres (smart = 18-41).
-var MODE_IDX = [44, 45, 46];             // pad MODE-cycle (ligne vide, col 2) : couleur par mode Subs/Suite/Voic.
+var MODE_IDX = 44;                        // pad MODE-cycle (ligne vide, col 2) : couleur FIXE de FONCTION (hors palette d'accords) — cyan.
 function _smartSlot(col, lvl){ var l = (lvl < 1) ? 1 : (lvl > 3 ? 3 : lvl); return 18 + col*3 + (l-1); }
 function _scaleRGB(rgb, f){ return [Math.round(rgb[0]*f), Math.round(rgb[1]*f), Math.round(rgb[2]*f)]; }
 
@@ -241,9 +241,7 @@ function applyPalette() {
 	setPaletteRGB(WHITEIDX, [200, 200, 205]);   // blanc doux : accord disponible (layout Smart)
 	setPaletteRGB(CAP_ON_IDX, [255, 25, 25]);   // CAPTURE on = rouge vif
 	setPaletteRGB(CAP_OFF_IDX, [255, 255, 255]); // CAPTURE off = blanc vif
-	setPaletteRGB(MODE_IDX[0], [230, 150, 0]);   // MODE Subs = ambre
-	setPaletteRGB(MODE_IDX[1], [40, 200, 120]);  // MODE Suite = vert
-	setPaletteRGB(MODE_IDX[2], [60, 130, 230]);  // MODE Voic = bleu
+	setPaletteRGB(MODE_IDX, [0, 190, 200]);      // MODE = cyan fixe (couleur de fonction, pas un accord)
 	L("palette RGB appliquée (scheme " + scheme + ")"); flush();
 }
 
@@ -302,7 +300,7 @@ function refreshProg() {
 	for (c = 0; c < 8; c++) { grid[c] = []; for (phys = 0; phys < 8; phys++) grid[c][phys] = OFFIDX; }
 	for (c = 0; c < progSteps.length && c < 8; c++) grid[c][7] = _progStepIdx(progSteps[c], c === progSelIdx);   // étapes (bas)
 	grid[0][6] = progCapture ? CAP_ON_IDX : CAP_OFF_IDX;                                                          // CAPTURE (ligne vide, col 0)
-	grid[2][6] = MODE_IDX[(progModeCur >= 0 && progModeCur < 3) ? progModeCur : 0];                               // MODE-cycle (col 2 ; col 1 = espacement vide)
+	grid[2][6] = MODE_IDX;                                                                                        // MODE-cycle (col 2 ; col 1 = espacement vide) — couleur fixe de fonction
 	for (k = 0; k < progOpts.length; k++) {                                                                       // options de l'étape sélectionnée, bottom-up
 		var o = progOpts[k];
 		if (o.idx < 0 || o.idx >= 48) continue;
