@@ -11,18 +11,33 @@
   @font-face{font-family:'Syne';src:url('fonts/Syne-Variable.woff2') format('woff2');font-weight:400 800;font-display:swap}
   @font-face{font-family:'JetBrains Mono';src:url('fonts/JetBrainsMono-Variable.woff2') format('woff2');font-weight:400 600;font-display:swap}
   :root{
-    --gold:#FFdc82; --gold-dim:rgba(255,220,130,.16); --gold-bd:transparent;
-    --blue:#8ECCE8; --blue-dim:rgba(142,204,232,.12); --blue-bd:rgba(142,204,232,.32);
-    --purple:#C4A0F0; --purple-dim:rgba(196,160,240,.12); --purple-bd:rgba(196,160,240,.3);
-    --txt:#ede9e0; --muted:rgba(237,233,224,.45); --muted2:rgba(237,233,224,.22);
-    --cell:rgba(255,255,255,.10); --cell-bd:transparent;
+    --gold:#FFB627; --gold-dim:rgba(255,182,39,.16); --gold-bd:rgba(255,182,39,.42);
+    --blue:#6EC6E8; --blue-dim:rgba(110,198,232,.14); --blue-bd:rgba(110,198,232,.42);
+    --purple:#B47EE8; --purple-dim:rgba(180,126,232,.16); --purple-bd:rgba(180,126,232,.42);
+    --txt:#f1eee6; --muted:rgba(241,238,230,.48); --muted2:rgba(241,238,230,.24);
+    --cell:rgba(255,255,255,.055); --cell-bd:rgba(255,255,255,.08);
+    --glass:#201d19; --glass-bd:rgba(255,255,255,.1);
+    --radius-control:10px; --radius-sheet:18px;
+    /* Espacement tokenisé (full mode) — rôles fixés une fois, réutilisés partout (voir
+       .interface-design/system.md § Discipline anti-dérive). Ne PAS ajouter de nouvelle valeur
+       ponctuelle : réutiliser un de ces rôles, ou étendre CETTE liste (jamais une valeur isolée
+       dans un sélecteur). Miroir exact de site/demo.html. */
+    --sp-panel-pad-v:18px;   /* padding vertical de la grille/légende/dock (PAS config/mon, voir ci-dessous) */
+    --sp-panel-pad-h:14px;   /* padding horizontal — grille/légende/dock/prog-toggle */
+    --sp-side-pad:16px;      /* padding UNIFORME (4 côtés égaux) des panneaux flottants config/mon */
+    --sp-side-gap:8px;       /* gap interne des lignes de .mon */
+    --sp-zone-gap:16px;      /* gap entre zones de .config depuis le retrait des .sep (le label doré + ce gap marquent la coupure) */
+    --sp-panel-gap:10px;     /* gap du dock (#cap-dock) */
+    --sp-panel-margin:10px;  /* marge flottante externe des panneaux config/mon (4 côtés égaux) */
+    --sp-grid-gap:5px;       /* écart entre cases, horizontal ET vertical (grille) */
+    --sp-sep-margin:6px;     /* marge verticale des séparateurs dégradés */
     /* Brand fonts: Syne (display) + Space Grotesk (body) — identique au site. Mono pour les notes. */
     --sans:'Space Grotesk',system-ui,-apple-system,sans-serif;
     --mono:'JetBrains Mono',ui-monospace,monospace;
     --display:'Syne',var(--sans);
   }
   *{box-sizing:border-box;margin:0;padding:0;-webkit-user-select:none;user-select:none;outline:none}
-  html{height:100%;overflow:hidden;background:#232323}
+  html{height:100%;overflow:hidden;background:radial-gradient(130% 150% at 18% -12%,#2e281f 0%,#211c16 45%,#15110d 100%)}
   body::before{
     content:'';position:fixed;top:0;left:10px;right:10px;height:2px;z-index:999;pointer-events:none;
     background:linear-gradient(90deg, transparent 0%, rgba(255,255,255,.08) 25%, rgba(255,255,255,.13) 50%, rgba(255,255,255,.08) 75%, transparent 100%);
@@ -30,7 +45,7 @@
   body{width:100%;height:100vh;overflow:hidden;
     font-family:var(--sans);
     color:var(--txt);
-    background-color:#232323;
+    background:radial-gradient(130% 150% at 18% -12%,#2e281f 0%,#211c16 45%,#15110d 100%);
   }
 
   /* Valeurs en mono */
@@ -69,13 +84,14 @@
   }
   body.strip .vsep-l{display:none}  /* pas de séparateur gauche en strip (grille cachée) */
   body.strip .vsep{display:none}    /* masque aussi le séparateur droit (orphelin entre grid et mon) */
-  .lbl{font-size:8px;letter-spacing:.14em;color:rgba(255,220,130,.3);text-transform:uppercase;margin-bottom:2px;font-weight:600}
+  body.full .vsep{display:none}    /* panneaux flottants : l'espacement se lit par les marges, pas par un filet */
+  .lbl{font-size:8px;letter-spacing:.07em;color:rgba(255,182,39,.4);text-transform:uppercase;margin-bottom:2px;font-weight:600}
   .lbl-row{display:flex;align-items:center;justify-content:space-between}
   .row{display:flex;gap:5px}
 
   /* ── CUSTOM SELECT ── */
   .csel{
-    flex:1;background:var(--cell);border:1px solid var(--cell-bd);border-radius:5px;
+    flex:1;background:var(--cell);border:none;border-radius:var(--radius-control);
     padding:5px 8px;cursor:pointer;
     display:flex;align-items:center;gap:4px;
     transition:background .1s,border-color .1s;
@@ -89,23 +105,29 @@
 
   /* ── DROPDOWN OVERLAY ── */
   .dd-ov{
-    position:absolute;left:0;top:0;bottom:0;width:144px;
-    background-color:#1c1c1c;
+    position:absolute;left:6px;top:6px;bottom:6px;width:132px;
+    background:#201d19;
     z-index:50;
-    display:none;flex-direction:column;
+    display:flex;flex-direction:column;
     padding:12px 10px;gap:10px;
-    border-right:1px solid rgba(255,255,255,.07);   /* neutre : plus de double ligne dorée à l'ouverture */
+    border:1px solid var(--glass-bd);
+    border-radius:var(--radius-sheet);
     pointer-events:none;
+    opacity:0;transform:translateX(-10px);
+    transition:opacity .16s ease,transform .16s ease;
   }
-  body.strip .dd-ov{width:205px}
-  .dd-ov.open{display:flex}
+  body.strip .dd-ov{width:193px}
+  .dd-ov.open{opacity:1;transform:translateX(0);pointer-events:auto}
+  /* .dd-cell opts back into pointer-events (see below) even while the panel is faded out —
+     force it off whenever the panel isn't open so closed cells never block clicks underneath. */
+  .dd-ov:not(.open) .dd-cell{pointer-events:none}
   .dd-title{
-    font-family:var(--sans);font-size:8px;letter-spacing:.14em;font-weight:600;
-    color:rgba(255,220,130,.35);text-transform:uppercase;
+    font-family:var(--sans);font-size:8px;letter-spacing:.08em;font-weight:600;
+    color:rgba(255,182,39,.4);text-transform:uppercase;
   }
   .dd-grid{display:grid;gap:4px;flex:1;grid-auto-rows:1fr;overflow:hidden;min-height:0}   /* remplit la hauteur (1fr) + JAMAIS de scroll ; colonnes calculées dans openDrop */
   .dd-cell{
-    background:var(--cell);border:1px solid var(--cell-bd);border-radius:5px;
+    background:var(--cell);border:none;border-radius:var(--radius-control);
     padding:6px 8px;cursor:pointer;text-align:left;
     font-family:var(--sans);font-size:10px;font-weight:500;
     color:var(--muted);letter-spacing:.01em;
@@ -117,17 +139,18 @@
   body.strip .dd-ov{padding:9px 8px;gap:0}
   body.strip .dd-grid{align-content:start;gap:4px}   /* tout tient sans scroll : 3 colonnes (voir openDrop) + cellules compactes */
   .dd-cell:hover{background-color:rgba(255,255,255,.08);color:var(--txt)}
-  .dd-cell.on{background:var(--gold-dim);border-color:var(--gold-bd);color:var(--gold);font-weight:600}
+  .dd-cell.on{background:var(--gold-dim);color:var(--gold);font-weight:600;position:relative;padding-right:22px}
+  .dd-cell.on::after{content:'\2713';position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:10px;font-weight:700}
   /* Full : options plus grandes + bloc centré (la fenêtre est haute → fini le vide en bas) */
   body.full .dd-ov{padding:16px 14px;gap:12px}
   body.full .dd-grid{gap:5px}
   body.full .dd-cell{padding:7px 10px;font-size:11px;justify-content:flex-start;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   /* menu ouvert : on masque les séparateurs dégradés (vsep/sep) pour un panneau propre */
-  body.dd-open .vsep, body.dd-open .sep{opacity:0}
+  body.dd-open .vsep{opacity:0}
 
   /* ── GENERIC CONTROLS ── */
   .sel{
-    flex:1;background:var(--cell);border:1px solid var(--cell-bd);border-radius:5px;
+    flex:1;background:var(--cell);border:none;border-radius:var(--radius-control);
     padding:5px 8px;cursor:pointer;font-size:11px;font-weight:500;
     display:flex;justify-content:space-between;align-items:center;
     transition:background .1s,border-color .1s;
@@ -137,53 +160,53 @@
 
   .sync{
     width:26px;flex:0 0 26px;display:flex;align-items:center;justify-content:center;
-    cursor:pointer;background:var(--cell);border:1px solid var(--cell-bd);
-    border-radius:5px;color:var(--muted);font-size:11px;letter-spacing:-.5px;
+    cursor:pointer;background:var(--cell);border:none;
+    border-radius:var(--radius-control);color:var(--muted);font-size:11px;letter-spacing:-.5px;
     font-weight:600;transition:all .1s;
   }
   .sync:hover{background:rgba(255,255,255,.08)}
-  .sync.flash{background:var(--gold-dim);border-color:var(--gold-bd);color:var(--gold);transition:none}
-  .sync.auto{color:var(--gold);border-color:rgba(255,220,130,.38);background:rgba(255,220,130,.09)}  /* auto-sync ON */
+  .sync.flash{background:var(--gold-dim);color:var(--gold);transition:none}
+  .sync.auto{color:var(--gold);background:rgba(255,182,39,.16)}  /* auto-sync ON */
   .csel.locked{opacity:.45;pointer-events:none}   /* KEY/SCALE locked while auto-sync follows Live */
   .acc-btn{
     flex:0 0 auto;padding:0 6px;display:flex;align-items:center;justify-content:center;
-    cursor:pointer;background:var(--cell);border:1px solid var(--cell-bd);
-    border-radius:5px;color:var(--muted);font-size:11px;font-weight:700;
+    cursor:pointer;background:var(--cell);border:none;
+    border-radius:var(--radius-control);color:var(--muted);font-size:11px;font-weight:700;
     transition:all .1s;user-select:none;letter-spacing:-.5px;height:100%;
   }
   .acc-btn:hover{background:rgba(255,255,255,.08)}
-  .acc-btn.flat{color:var(--blue);border-color:rgba(142,204,232,.38);background:rgba(142,204,232,.09)}
+  .acc-btn.flat{color:var(--blue);background:rgba(110,198,232,.14)}
   /* OPEN/CLOSE : flash doré bref. Background comme sync (gold-dim), border
      plus opaque que sync (var(--gold) 100%) car le bouton est plus grand —
      1px à 28% alpha est invisible sur un élément large. */
-  .toggle.flash{background:var(--gold-dim);border-color:var(--gold-bd);color:var(--gold);transition:none}
+  .toggle.flash{background:var(--gold-dim);color:var(--gold);transition:none}
 
-  .oct{display:flex;gap:2px}
+  .oct{display:flex;gap:2px;background:var(--cell);border-radius:var(--radius-control);padding:2px}
   .oct span{
     flex:1;text-align:center;font-size:10px;
-    padding:5px 0;border-radius:4px;cursor:pointer;
-    background:var(--cell);border:1px solid var(--cell-bd);color:var(--muted);
+    padding:5px 0;border-radius:calc(var(--radius-control) - 3px);cursor:pointer;
+    background:transparent;border:none;color:var(--muted);
     transition:all .1s;
   }
   .oct span:hover{background-color:rgba(255,255,255,.08)}
-  .oct span.on{background:var(--gold-dim);border-color:var(--gold-bd);color:var(--gold);font-weight:600}
+  .oct span.on{background:var(--gold-dim);color:var(--gold);font-weight:600}
 
   .btn{
-    background:var(--cell);border:1px solid var(--cell-bd);border-radius:5px;
+    background:var(--cell);border:none;border-radius:var(--radius-control);
     padding:6px 8px;cursor:pointer;
     font-size:9px;letter-spacing:.06em;font-weight:500;
     color:var(--muted);text-align:center;transition:all .1s;
   }
   .btn:hover{background-color:rgba(255,255,255,.08)}
-  .btn.gold{color:var(--gold);background:var(--gold-dim);border-color:var(--gold-bd)}
-  .btn.blue{color:var(--blue);background:var(--blue-dim);border-color:var(--blue-bd)}
+  .btn.gold{color:var(--gold);background:var(--gold-dim)}
+  .btn.blue{color:var(--blue);background:var(--blue-dim)}
   /* VL MODE = case label+valeur (miroir démo) : neutre, valeur dorée, grisée si VL off */
   .btn.lblbtn{display:flex;align-items:center;justify-content:space-between;gap:6px;text-align:left}
   .btn.lblbtn .cl{font-size:9px;letter-spacing:.07em;color:var(--muted);font-weight:500;flex-shrink:0}
   .btn.lblbtn .cv{color:var(--gold);font-size:10px;font-weight:500;margin-left:auto}
   .btn.lblbtn.off{opacity:.4}
   /* état actif d'un toggle (PUSH, ALWAYS ON TOP) — surbrillance dorée homogène */
-  .btn.on{color:var(--gold);background:var(--gold-dim);border-color:var(--gold-bd);font-weight:600}
+  .btn.on{color:var(--gold);background:var(--gold-dim);font-weight:600}
   /* pousse Device + CLOSE en bas de la colonne monitor (réserve le milieu) */
   .mon-spacer{flex:1;min-height:0}
   body.full .mon-spacer{flex:none}   /* full : supprime le grand gap avant OPEN/CLOSE → espacement cohérent (gap .mon) */
@@ -192,28 +215,27 @@
   .grid{flex:1;display:flex;gap:4px;padding:7px 6px;min-width:0;position:relative}
   .col{flex:1;display:flex;flex-direction:column;gap:3px;min-width:0}
   .head{
-    font-size:8.5px;text-align:center;padding-bottom:3px;
+    position:relative;flex-shrink:0;font-size:8.5px;text-align:center;padding-bottom:9px;
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
-    background:transparent;border-radius:0 0 3px 3px;
+    background:transparent;border-radius:0;
   }
-  .head .r{color:var(--gold)} .head .f{color:var(--muted)}
-  .grid-sep{position:absolute;left:6px;right:6px;height:0;pointer-events:none;z-index:1}
-  .grid-sep::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;
-    background:linear-gradient(to right,transparent 0%,rgba(255,255,255,.07) 10%,rgba(255,255,255,.07) 90%,transparent 100%);
-    box-shadow:0 -6px 14px 3px rgba(255,255,255,.05)}
+  .head::after{content:'';position:absolute;left:50%;bottom:2px;transform:translateX(-50%);
+    width:16px;height:3px;border-radius:2px;background:var(--hc,var(--muted2))}
+  .head .r{color:var(--hc,var(--gold))} .head .f{color:var(--muted)}
+  .grid-sep{display:none}
   .col.bor .head{color:var(--blue)}
   .col.bor{}
   .cell{
-    position:relative;background:var(--cell);border:1px solid var(--cell-bd);
-    border-radius:5px;padding:0 3px;flex:1;max-height:28px;min-height:18px;
+    position:relative;background:var(--cellbg,var(--cell));border:none;
+    border-radius:var(--radius-control);padding:0 3px;flex:1;max-height:28px;min-height:18px;
     display:flex;align-items:center;justify-content:center;
-    font-size:10.5px;text-align:center;color:rgba(237,233,224,.65);
+    font-size:10.5px;text-align:center;color:rgba(241,238,230,.72);
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;
-    transition:background .1s,border-color .1s,color .1s;
+    transition:background .12s,border-color .12s,color .12s,transform .12s,box-shadow .12s;
   }
-  .cell:hover{background-color:rgba(255,255,255,.17);color:var(--txt)}
+  .cell:hover{background-color:var(--cellhoverbg,rgba(255,255,255,.14));color:var(--txt);transform:translateY(-1px)}
   .cell.active{
-    background:var(--gold-dim);border-color:var(--gold-bd);color:var(--gold);font-weight:600;
+    background:var(--dc,var(--gold));color:var(--dctext,#15120c);font-weight:700;
   }
   .cell.pressed{
     background-color:rgba(255,255,255,.14);
@@ -227,7 +249,7 @@
     padding:7px 8px;position:relative;
   }
   .chord{
-    background:var(--cell);border:1px solid var(--cell-bd);border-radius:5px;
+    background:var(--cell);border:1px solid var(--cell-bd);border-radius:var(--radius-control);
     padding:4px 6px;display:flex;flex-direction:column;gap:2px;
     align-items:flex-start;justify-content:center;min-height:30px;
   }
@@ -240,8 +262,8 @@
 
   /* ── PIANO ── */
   .keys{
-    border-radius:5px;overflow:hidden;
-    border:1px solid var(--cell-bd);background:transparent;
+    border-radius:var(--radius-control);overflow:hidden;
+    border:1px solid var(--cell-bd);background:rgba(255,255,255,.02);
     position:relative;flex-shrink:0;
   }
   .wk{
@@ -254,7 +276,7 @@
   .wk.lit{background:var(--blue);opacity:.85}
   .bk{
     position:absolute;top:0;height:62%;
-    background:#181820;
+    background:#1c1a17;
     border:1px solid rgba(0,0,0,.5);border-top:none;
     border-radius:0 0 2px 2px;z-index:1;
     transition:background .08s;
@@ -263,8 +285,8 @@
 
   /* ── TOGGLE ── */
   .toggle{
-    flex:none;height:28px;border-radius:5px;cursor:pointer;
-    background:var(--cell);border:1px solid var(--cell-bd);
+    flex:none;height:28px;border-radius:var(--radius-control);cursor:pointer;
+    background:var(--cell);border:none;
     color:rgba(237,233,224,.4);font-size:10px;font-weight:600;
     letter-spacing:.08em;text-transform:uppercase;
     display:flex;align-items:center;justify-content:center;
@@ -274,13 +296,12 @@
 
   .cfg-spacer{display:none}
   /* EXPRESSION zone — full uniquement (pas assez de place en strip) */
-  body.strip .expr-sep  {display:none}
   body.strip .expr-zone {display:none!important}
   /* Sliders Expression (drag + molette, 0 = off) */
   /* Sliders Expression — cellule bordée 32px comme les autres contrôles (csel/btn) :
      label (.cl) à gauche · piste en creux au milieu · valeur dorée (.cv) à droite */
   .exslider{display:flex;align-items:center;gap:9px;height:32px;padding:0 10px;
-    background:var(--cell);border:1px solid var(--cell-bd);border-radius:5px;
+    background:var(--cell);border:none;border-radius:var(--radius-control);
     transition:opacity .12s,border-color .1s,background .1s}
   .exslider:hover{background-color:rgba(255,255,255,.05)}
   .exslider.dim{opacity:.4;pointer-events:none}
@@ -302,7 +323,7 @@
   /* boutons Device/Window = même hauteur standard (32px) que les autres contrôles full */
   body.full .devgrp .btn,body.full .wingrp .btn{height:32px;padding:0 10px;display:flex;align-items:center;justify-content:center;font-size:10px}
   body.full .devgrp .lbl,body.full .wingrp .lbl{display:block;font-size:9px;letter-spacing:.15em;font-weight:600;
-    color:rgba(255,220,130,.3);text-transform:uppercase;margin-bottom:2px}
+    color:rgba(255,182,39,.3);text-transform:uppercase;margin-bottom:2px}
   /* Séparateur dégradé avant devgrp et wingrp (full uniquement) */
   body.full .devgrp::before,body.full .wingrp::before{
     content:'';display:block;height:1px;margin-bottom:10px;
@@ -318,43 +339,43 @@
   /* ── CAPTURE → CLIP (device-only, full window) : tiroir Progression + barre toggle en bas ── */
 
   /* Carte d'accord — petite case : degré (romain) + nom, en ligne. POLICE DU MONITOR :
-     nom en Space Grotesk, romain en JetBrains Mono. Couleur de degré via --cardc (bord gauche).
-     Clic = supprimer (info-bulle). */
-  /* carte = même hauteur que la grille (30px). Repos SOBRE : fond neutre + accent gauche de la
-     couleur du degré + romain coloré. Léger voile du degré au survol / à l'appui seulement. */
-  .pg-card{position:relative;flex:0 0 auto;display:flex;align-items:center;justify-content:center;gap:5px;cursor:pointer;
-    min-width:54px;height:30px;padding:0 11px;border-radius:6px;
-    background:rgba(255,255,255,.045);border:1px solid var(--cell-bd);border-left:3px solid var(--cardc,var(--muted));
-    transition:background .1s,transform .1s,opacity .12s}
-  .pg-card:hover{background:var(--cardbg,rgba(255,255,255,.10))}
-  .pg-card.pressed{transform:translateY(1px);background:var(--cardbg,rgba(255,255,255,.14))}
-  .pg-card .pg-r{font-family:var(--mono);font-size:9px;font-weight:600;line-height:1;color:var(--gold)}
-  .pg-card .pg-n{font-family:var(--sans);font-size:11px;font-weight:600;line-height:1;color:var(--txt);white-space:nowrap}
+     nom en Space Grotesk, romain en JetBrains Mono. Clic = supprimer (info-bulle).
+     Teinte = couleur du degré (--cardc), cohérent avec la grille (même logique que --dc,
+     contraste calculé via textColorFor). Décision confirmée 2026-07-12 (revient sur le
+     choix "neutre" pris plus tôt dans la même session). */
+  .pg-card{position:relative;flex:0 0 auto;display:flex;align-items:center;justify-content:center;gap:4px;cursor:pointer;
+    min-width:44px;height:22px;padding:0 10px;border-radius:999px;
+    background:var(--cardc,var(--cell));
+    transition:filter .1s,transform .1s,opacity .12s}
+  .pg-card:hover{filter:brightness(1.14)}
+  .pg-card.pressed{transform:translateY(1px);filter:brightness(.88)}
+  .pg-card .pg-r{font-family:var(--mono);font-size:7.5px;font-weight:700;line-height:1;color:var(--cardtext,var(--gold));opacity:.72}
+  .pg-card .pg-n{font-family:var(--sans);font-size:9.5px;font-weight:700;line-height:1;color:var(--cardtext,var(--txt));white-space:nowrap}
   /* actions au survol : INSÉRER (+) au-dessus · SUPPRIMER (×) en-dessous. Clic carte = écouter. */
   /* + / × pleine largeur. ASTUCE : l'écart vers la carte est un PADDING transparent
      (background-clip:content-box) → la zone cliquable/survolable TOUCHE la carte (aucun "trou"
      qui couperait le :hover), tout en gardant l'espace visuel. Pas de pseudo-pont fragile. */
-  .pg-card .pg-ins,.pg-card .pg-del{position:absolute;left:0;right:0;min-width:26px;
-    display:none;align-items:center;justify-content:center;height:24px;z-index:5;cursor:pointer;
-    font-size:14px;line-height:1;border-radius:5px;background:rgba(66,62,56,.99);background-clip:content-box}
-  .pg-card .pg-ins{bottom:100%;padding-bottom:5px;color:var(--gold)}
-  .pg-card .pg-del{top:100%;padding-top:5px;color:var(--muted)}
+  .pg-card .pg-ins,.pg-card .pg-del{position:absolute;left:0;right:0;min-width:22px;
+    display:none;align-items:center;justify-content:center;height:18px;z-index:5;cursor:pointer;
+    font-size:11px;line-height:1;border-radius:var(--radius-control);background:rgba(66,62,56,.99);background-clip:content-box}
+  .pg-card .pg-ins{bottom:100%;padding-bottom:4px;color:var(--gold)}
+  .pg-card .pg-del{top:100%;padding-top:4px;color:var(--muted)}
   .pg-card:hover .pg-ins,.pg-card:hover .pg-del{display:flex}
   .pg-card .pg-ins:hover{background-color:var(--gold-dim);color:var(--gold)}
   .pg-card .pg-del:hover{background-color:rgba(229,139,139,.2);color:#E58B8B}
   /* marqueur d'insertion entre deux cartes (où iront les prochains accords) */
   .pg-cursor{flex:0 0 auto;width:3px;align-self:stretch;min-height:22px;border-radius:2px;
-    background:var(--gold);box-shadow:0 0 8px rgba(255,220,130,.85);animation:dropPulse .7s ease-in-out infinite}
+    background:var(--gold);box-shadow:0 0 8px rgba(255,182,39,.85);animation:dropPulse .7s ease-in-out infinite}
   /* repère de dépôt (pulse) + carte source estompée + fantôme suivant le curseur */
   .pg-dropmark{flex:0 0 auto;width:3px;align-self:stretch;min-height:22px;border-radius:2px;
-    background:var(--gold);box-shadow:0 0 8px rgba(255,220,130,.85);animation:dropPulse .7s ease-in-out infinite}
+    background:var(--gold);box-shadow:0 0 8px rgba(255,182,39,.85);animation:dropPulse .7s ease-in-out infinite}
   @keyframes dropPulse{0%,100%{opacity:1}50%{opacity:.45}}
   body.pg-dragging,body.pg-dragging .pg-card{cursor:grabbing}
   .pg-card.pg-drag-src{opacity:.3;transform:scale(.96)}
   body.pg-dragging .pg-ins,body.pg-dragging .pg-del{display:none!important}
   #pg-ghost{position:fixed;z-index:200;pointer-events:none;display:flex;align-items:center;gap:5px;
-    padding:5px 11px;border-radius:6px;background:rgba(48,45,41,.97);border:1px solid var(--gold-bd);
-    box-shadow:0 8px 22px rgba(0,0,0,.55);font-family:var(--sans);color:var(--txt);
+    padding:5px 11px;border-radius:var(--radius-control);background:#2a2723;border:1px solid var(--gold-bd);
+    font-family:var(--sans);color:var(--txt);
     opacity:0;transform:scale(.85);transition:opacity .12s,transform .12s}
   #pg-ghost.show{opacity:.96;transform:scale(1)}
   #pg-ghost .gr{font-family:var(--mono);font-size:9px;font-weight:600;color:var(--gold)}
@@ -370,37 +391,37 @@
      Contrôles EN HAUT (une ligne) · cartes EN DESSOUS (retour à la ligne + défilement) = place max. */
   /* padding aligné sur la grille full (côtés 14px) → les cartes s'alignent sous les cases.
      gap 8px = même espacement que les groupes Device/Window. */
-  #cap-dock{display:none;position:relative;flex:0 0 auto;flex-direction:column;gap:8px;padding:10px 14px 10px}
-  /* séparation dégradée, identique aux séparateurs des groupes Device/Window (25%/75%) */
-  #cap-dock::before{content:'';position:absolute;top:0;left:14px;right:14px;height:1px;
-    background:linear-gradient(to right, transparent 0%, rgba(255,255,255,.06) 25%, rgba(255,255,255,.06) 75%, transparent 100%)}
-  body.full.dock-open #cap-dock{display:flex}
+  #cap-dock{display:none;position:relative;flex:0 0 auto;flex-direction:column;gap:8px;padding:var(--sp-panel-gap) var(--sp-panel-pad-h);
+    margin:0 var(--sp-panel-pad-h) var(--sp-panel-gap);background:var(--glass);border:1px solid var(--glass-bd);border-radius:var(--radius-sheet)}
+  body.full #cap-dock{display:flex;max-height:0;padding-top:0;padding-bottom:0;margin-top:0;margin-bottom:0;opacity:0;overflow:hidden;pointer-events:none;
+    transition:max-height .2s ease,opacity .16s ease,padding .2s ease,margin .2s ease,transform .2s ease;transform:translateY(-6px)}
+  body.full.dock-open #cap-dock{max-height:220px;padding-top:var(--sp-panel-gap);padding-bottom:var(--sp-panel-gap);
+    margin-top:0;margin-bottom:var(--sp-panel-gap);opacity:1;pointer-events:auto;transform:translateY(0)}
   /* À l'ouverture : la barre Progression remonte AU-DESSUS des cartes (= en-tête du tiroir). */
   body.dock-open #prog-toggle{order:2}
   body.dock-open #cap-dock{order:3}
   /* TOGGLE bar — toujours visible en bas (full window). Ouvre/ferme le tiroir Progression. */
-  #prog-toggle{display:none;position:relative;flex:0 0 auto;align-items:center;justify-content:center;gap:8px;cursor:pointer;height:30px;padding:0 14px;margin-top:6px}
+  #prog-toggle{display:none;position:relative;flex:0 0 auto;align-items:center;justify-content:center;gap:8px;cursor:pointer;height:30px;padding:0 var(--sp-panel-pad-h);margin:var(--sp-sep-margin) var(--sp-panel-pad-h) var(--sp-panel-gap);background:var(--glass);border:1px solid var(--glass-bd);border-radius:var(--radius-sheet);
+    transition:margin .2s ease,border-radius .2s ease}
   body.full #prog-toggle{display:flex}
-  /* séparateur dégradé (comme la grille / les groupes). Ouvert, la barre passe EN HAUT du tiroir :
-     on garde SON filet (il coiffe le tiroir) et on masque celui du tiroir → pas de double trait. */
-  #prog-toggle::before{content:'';position:absolute;top:0;left:14px;right:14px;height:1px;
-    background:linear-gradient(to right, transparent 0%, rgba(255,255,255,.06) 25%, rgba(255,255,255,.06) 75%, transparent 100%)}
-  body.dock-open #cap-dock::before{display:none}
+  body.dock-open #prog-toggle{margin:0 var(--sp-panel-pad-h);border-radius:var(--radius-sheet) var(--radius-sheet) 0 0;border-bottom:none}
+  body.dock-open #cap-dock{border-radius:0 0 var(--radius-sheet) var(--radius-sheet);border-top:none}
   #prog-toggle:hover .pt-lbl,#prog-toggle:hover .pt-chev{color:var(--txt)}
   #prog-toggle .pt-chev{font-size:9px;color:var(--muted);line-height:1;flex:0 0 12px;text-align:center}
   #prog-toggle::after{content:'';flex:0 0 12px}   /* équilibre le chevron → libellé vraiment centré */
   #prog-toggle .pt-lbl{font-size:9px;letter-spacing:.14em;text-transform:uppercase;font-weight:600;color:var(--muted)}
   #prog-toggle.on .pt-lbl,#prog-toggle.on .pt-chev{color:var(--gold)}
   /* halo discret au survol / quand ouvert (centré en haut, aligné au séparateur) */
-  #prog-toggle:hover, #prog-toggle.on{background:radial-gradient(62% 135% at 50% 0%, rgba(255,255,255,.035) 0%, rgba(255,255,255,.012) 42%, transparent 72%);background-origin:content-box;background-clip:content-box}
+  #prog-toggle:hover{background:rgba(255,255,255,.08)}
+  #prog-toggle.on{background:var(--gold-dim)}
   #prog-toggle .pt-count{position:absolute;right:14px;top:50%;transform:translateY(-50%);font-family:var(--mono);font-size:9px;color:var(--muted2)}
   #cap-dock .cd-head{display:flex;align-items:center;gap:8px;min-width:0}
   #cap-dock .cd-rec{flex:0 0 auto;display:flex;align-items:center;gap:6px;cursor:pointer;height:26px;padding:6px 10px;
-    background:var(--cell);border:1px solid var(--cell-bd);border-radius:5px;transition:all .1s;
+    background:var(--cell);border:none;border-radius:var(--radius-control);transition:all .1s;
     font-size:9px;letter-spacing:.1em;text-transform:uppercase;font-weight:600;color:var(--muted)}
   #cap-dock .cd-rec:hover{background-color:rgba(255,255,255,.08);color:var(--txt)}
   #cap-dock .cd-rec .cd-dot{width:8px;height:8px;border-radius:50%;background:var(--muted2)}
-  #cap-dock .cd-rec.on{color:var(--gold);background:var(--gold-dim);border-color:var(--gold-bd)}
+  #cap-dock .cd-rec.on{color:var(--gold);background:var(--gold-dim)}
   #cap-dock .cd-rec.on .cd-dot{background:var(--gold);animation:rbpulse 1.2s infinite}
   @keyframes rbpulse{0%,100%{opacity:1}50%{opacity:.25}}
   #cap-dock .cd-count{flex:0 1 auto;font-family:var(--mono);font-size:9px;color:var(--muted2);
@@ -408,16 +429,16 @@
   #cap-dock .cd-sp{flex:1}
   #cap-dock .cd-head .btn{flex:0 0 auto;padding:6px 10px;height:26px;display:flex;align-items:center}
   #cap-dock .cd-icon{flex:0 0 auto;width:26px;height:26px;display:flex;align-items:center;justify-content:center;
-    cursor:pointer;border-radius:5px;color:var(--muted);font-size:13px;line-height:1;
-    border:1px solid var(--cell-bd);background:var(--cell)}
+    cursor:pointer;border-radius:var(--radius-control);color:var(--muted);font-size:13px;line-height:1;
+    border:none;background:var(--cell)}
   #cap-dock .cd-icon:hover{color:var(--txt);background:rgba(255,255,255,.08)}
   /* hauteur FIXE (≈2 rangées) → la barre ne se redimensionne pas quand les accords arrivent,
      et peu de dead space ; défilement vertical au-delà. */
   /* padding-top généreux = descend les cartes + loge le « + » au-dessus de la 1re rangée ;
      row-gap large = espace pour les « + » / « × » entre les rangées. */
   /* padding vertical ≥ hauteur d'un bouton + sa marge (19+5=24) → les + / × ne sont pas rognés. */
-  #cap-dock .cd-cards{display:flex;flex-wrap:wrap;column-gap:6px;row-gap:26px;align-items:flex-start;align-content:flex-start;
-    height:84px;padding:26px 0;overflow-y:auto;overflow-x:hidden}
+  #cap-dock .cd-cards{display:flex;flex-wrap:wrap;column-gap:5px;row-gap:20px;align-items:flex-start;align-content:flex-start;
+    height:104px;padding:20px 0;overflow-y:auto;overflow-x:hidden}
   #cap-dock .cd-empty{margin:auto;font-size:9px;color:var(--muted)}
   body.strip .mon-spacer{order:1}   /* strip : repousse le CTA en bas (full : l'espace reste en bas) */
   body.strip #toggleBtn{height:47px;order:2}  /* haut du CTA aligné avec le haut de VOICE LEADING (gauche) */
@@ -428,16 +449,15 @@
      full uniquement → cachés en strip via .devgrp (réglé plus bas). */
   body.strip .brand{display:block;font-family:var(--display);font-weight:700;font-size:16px;color:var(--gold);line-height:1;letter-spacing:.01em}
   .brand-hint{display:none}
-  body.strip .brand-hint{display:inline;font-size:7px;vertical-align:super;color:rgba(255,220,130,.45);margin-left:1px;font-family:var(--body);font-weight:600;line-height:1;cursor:pointer}
-  body.full  .brand-hint{display:inline;font-size:9px;vertical-align:super;color:rgba(255,220,130,.38);margin-left:2px;font-family:var(--body);font-weight:600;line-height:1;cursor:pointer}
-  body.strip{background-color:#232323}
+  body.strip .brand-hint{display:inline;font-size:7px;vertical-align:super;color:rgba(255,182,39,.45);margin-left:1px;font-family:var(--body,var(--sans));font-weight:600;line-height:1;cursor:pointer}
+  body.full  .brand-hint{display:inline;font-size:9px;vertical-align:super;color:rgba(255,182,39,.38);margin-left:2px;font-family:var(--body,var(--sans));font-weight:600;line-height:1;cursor:pointer}
+  body.strip{background:transparent}
 
-  body.strip .config{width:205px;flex:0 0 205px;padding:0 6px;gap:0;justify-content:space-evenly;background:#232323;position:relative}
-  body.strip .mon   {flex:1;padding:8px 6px 6px;display:flex;flex-direction:column;gap:0;justify-content:space-between;background:#232323}
+  body.strip .config{width:205px;flex:0 0 205px;padding:0 6px;gap:0;justify-content:space-evenly;background:transparent;position:relative}
+  body.strip .mon   {flex:1;padding:8px 6px 6px;display:flex;flex-direction:column;gap:0;justify-content:space-between;background:transparent}
   body.strip .cfg-spacer{display:none}
   body.strip .lbl   {display:none}
   body.strip .zone  {display:contents}
-  body.strip .sep   {display:none}
 
   /* contrôles : espacement UNIFORME 6px partout (bord↔case = case↔case) via space-evenly sur .config.
      6 items (SYNC, KEY, oct, VOICING, VL, VL MODE) ; header lbl-row = 17px → S = (169-127)/7 = 6px pile.
@@ -445,7 +465,6 @@
   body.strip .lbl-row      {flex:0 0 17px;justify-content:flex-end}
   body.strip .lbl-row .sync{height:17px;padding:0 6px;width:auto;font-size:9px;letter-spacing:.07em}   /* hauteur EXPLICITE = hauteur du header : sinon height:100% ne résout pas (parent .ton-btns sans hauteur définie) → SYNC tombait à 15px, centré, laissant un gap SYNC→SCALE de 7px au lieu de 6 */
   body.strip .lbl-row .acc-btn{position:fixed;top:6px;right:6px;height:17px;padding:0 5px;font-size:10px;z-index:3}   /* ♭/# déplacé côté monitor (coin haut-droit), pendant de SYNC à gauche : c'est un toggle de NOTATION, sa place est près de l'affichage des notes. inset coin = 6px, hauteur 17px = SYNC (boîte identique, alignée). Strip-only (full inchangé). */
-  body.strip #zTon + .sep  {display:none}
 
   body.strip .row          {flex:0 0 22px;display:flex;gap:5px;margin-top:3px}
   body.strip .row .csel    {flex:1;padding:0 7px;font-size:10px;align-items:center}
@@ -477,14 +496,14 @@
 
   /* ── FULL MODE ── */
   /* colonnes gauche/droite de MÊME largeur (230px) */
-  body.full .config        {width:230px;flex:0 0 230px;padding:16px 14px;gap:10px;justify-content:flex-start}
-  body.full .config,body.full .mon{background:rgba(255,255,255,.016)}
+  body.full .config        {width:230px;flex:0 0 230px;padding:var(--sp-side-pad);gap:var(--sp-zone-gap);justify-content:flex-start;
+    margin:var(--sp-panel-margin) 0 var(--sp-panel-margin) var(--sp-panel-margin);border-radius:var(--radius-sheet)}
+  body.full .config,body.full .mon{background:var(--glass);border:1px solid var(--glass-bd)}
   .brand{display:none;cursor:pointer}
   .brand:hover{color:#fff}
   body.full .brand{display:block;font-family:var(--display);font-weight:700;font-size:18px;color:var(--gold);line-height:1;margin-bottom:0;letter-spacing:.01em}
   body.full .zone          {display:flex;flex-direction:column;gap:10px}
-  body.full .lbl           {display:block;font-size:9px;letter-spacing:.15em;margin-bottom:4px}
-  body.full .sep           {flex:none;height:1px;margin:10px 0;background:linear-gradient(to right, transparent 0%, rgba(255,255,255,.06) 25%, rgba(255,255,255,.06) 75%, transparent 100%)}
+  body.full .lbl           {display:block;font-size:9px;letter-spacing:.08em;margin-bottom:4px}
 
   /* Full : 32px = hauteur STANDARD de tous les contrôles ; gaps uniformes 8px */
   body.full .row           {height:32px;flex:none;display:flex;gap:8px}
@@ -501,16 +520,18 @@
   body.full #vl            {height:32px;padding:0;font-size:10px;display:flex;align-items:center;justify-content:center}
   body.full #vlmode        {height:32px;padding:0 10px;font-size:10px;display:flex;align-items:center;justify-content:space-between}
 
-  body.full .dd-ov         {width:230px}
-  body.full .grid          {padding:18px 14px;gap:5px}
-  body.full .col           {gap:4px}
+  body.full .dd-ov         {width:218px}
+  body.full .grid          {padding:var(--sp-panel-pad-v) var(--sp-panel-pad-h);gap:var(--sp-grid-gap)}
+  body.full .col           {gap:var(--sp-grid-gap)}
   /* cellules à hauteur FIXE (l'utilisateur a refusé la grille étirée) */
   body.full .cell          {flex:0 0 30px;height:30px;max-height:30px;font-size:11px;letter-spacing:-.02em;padding:0 2px}
-  body.full .head          {display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:30px;gap:2px;white-space:normal;line-height:1.1;padding-bottom:6px;letter-spacing:.04em}
+  body.full .head          {display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:38px;gap:2px;white-space:normal;line-height:1.1;padding-bottom:14px;letter-spacing:.04em}
+  body.full .head::after   {bottom:4px;width:20px}
   body.full .head .r       {font-size:11px;font-weight:600}
   body.full .head .f       {font-size:8.5px}
 
-  body.full .mon           {width:230px;flex:0 0 230px;padding:18px 14px;gap:6px}
+  body.full .mon           {width:230px;flex:0 0 230px;padding:var(--sp-side-pad);gap:var(--sp-side-gap);
+    margin:var(--sp-panel-margin) var(--sp-panel-margin) var(--sp-panel-margin) 0;border-radius:var(--radius-sheet)}
   /* En-tête Monitor (full) : titre + description. Aligne le haut du monitor sur la rangée KEY. */
   .mon-head{display:none}
   body.full .mon-head      {display:block;flex:none;margin-top:32px}
@@ -528,7 +549,7 @@
   body.full .chord .cn     {font-size:32px;font-weight:700;letter-spacing:-.01em;line-height:1;color:var(--gold)}
   body.full .chord .ns     {font-size:13px;letter-spacing:.06em;color:var(--muted2);font-family:var(--mono)}
   body.full .keys          {flex:none;height:52px}
-  body.full .chord,body.full .keys{border-radius:7px}
+  body.full .chord,body.full .keys{border-radius:var(--radius-sheet)}
 
   /* Range d'octaves affiché sous le clavier monitor (full uniquement) */
   .keys-range{display:none}
@@ -543,7 +564,7 @@
   #info-overlay.open{display:flex}
   #info-box{
     background:rgba(237,233,224,.06);border:1px solid rgba(237,233,224,.14);
-    border-radius:10px;padding:28px 32px;min-width:260px;max-width:320px;
+    border-radius:var(--radius-control);padding:28px 32px;min-width:260px;max-width:320px;
     display:flex;flex-direction:column;gap:14px;
     font-family:var(--sans);color:var(--txt);
     max-height:calc(100vh - 24px);overflow-y:auto;   /* jamais tronqué : scrolle si la fenêtre est courte (strip) */
@@ -564,12 +585,12 @@
   #info-box .ib-tag{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted2);margin-top:-8px}
   #info-box hr{border:none;border-top:1px solid rgba(237,233,224,.06);margin:0}
   #info-box .ib-row{display:flex;flex-direction:column;gap:3px}
-  #info-box .ib-label{font-size:8.5px;letter-spacing:.14em;text-transform:uppercase;color:rgba(255,220,130,.45);font-weight:600}
+  #info-box .ib-label{font-size:8.5px;letter-spacing:.14em;text-transform:uppercase;color:rgba(255,182,39,.45);font-weight:600}
   #info-box .ib-val{font-size:12px;color:var(--txt)}
   #info-box .ib-val a{color:var(--blue);text-decoration:none}
   #info-box .ib-close{margin-top:4px;height:30px;display:flex;align-items:center;justify-content:center;
     font-size:10px;letter-spacing:.12em;text-transform:uppercase;
-    background:rgba(237,233,224,.06);border:1px solid transparent;border-radius:5px;cursor:pointer;color:var(--muted2);
+    background:rgba(237,233,224,.06);border:none;border-radius:var(--radius-control);cursor:pointer;color:var(--muted2);
     transition:background .1s,color .1s}
   #info-box .ib-close:hover{background:rgba(237,233,224,.10);color:var(--txt)}
   /* ── UPDATE / DOWNLOAD VIEW (replaces About when an update is available) ── */
@@ -582,9 +603,9 @@
   .ib-upd-version .upd-new-tag{color:var(--gold);font-weight:700}
   #upd-changelog{font-size:10.5px;line-height:1.6;color:var(--muted);max-height:160px;overflow-y:auto;padding:2px 0;white-space:pre-wrap;-webkit-user-select:text;user-select:text}
   .ib-upd-btns{display:flex;gap:5px}
-  .ib-upd-btn{flex:1;height:30px;display:flex;align-items:center;justify-content:center;border-radius:6px;
+  .ib-upd-btn{flex:1;height:30px;display:flex;align-items:center;justify-content:center;border-radius:var(--radius-control);
     font-size:9.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;cursor:pointer;transition:background .1s,opacity .1s}
-  .ib-upd-btn.primary{background:rgba(255,220,130,.85);color:#1a1a1a}
+  .ib-upd-btn.primary{background:rgba(255,182,39,.85);color:#15120c}
   .ib-upd-btn.primary:hover{background:var(--gold)}
   .ib-upd-btn.dim{background:rgba(237,233,224,.07);color:var(--muted)}
   .ib-upd-btn.dim:hover{background:rgba(237,233,224,.13);color:var(--txt)}
@@ -599,40 +620,43 @@
   body.strip #upd-show-changelog{display:flex;align-items:center;justify-content:center;font-size:8.5px;color:var(--muted);cursor:pointer;letter-spacing:.04em;text-decoration:underline;text-decoration-color:rgba(237,233,224,.18);margin-top:2px}
   body.strip #upd-show-changelog:hover{color:var(--txt)}
   /* Logo update marker — text pill "↑ vX.Y.Z" (more visible than a dot) */
-  #upd-logo-badge{display:none;margin-left:6px;background:rgba(255,220,130,.18);border:1px solid rgba(255,220,130,.38);border-radius:3px;padding:1px 5px;font-size:8px;font-weight:700;letter-spacing:.06em;color:var(--gold);font-family:var(--sans);vertical-align:middle;position:relative;top:-1px}
+  #upd-logo-badge{display:none;margin-left:6px;background:rgba(255,182,39,.18);border:1px solid rgba(255,182,39,.38);border-radius:3px;padding:1px 5px;font-size:8px;font-weight:700;letter-spacing:.06em;color:var(--gold);font-family:var(--sans);vertical-align:middle;position:relative;top:-1px}
   #brandLogo.has-update #upd-logo-badge{display:inline}
   #info-box .ib-guide{margin-top:2px;height:30px;display:flex;align-items:center;justify-content:center;
     font-size:10px;letter-spacing:.12em;text-transform:uppercase;
-    background:var(--gold-dim);border:1px solid transparent;border-radius:5px;cursor:pointer;color:var(--gold);
+    background:var(--gold-dim);border:none;border-radius:var(--radius-control);cursor:pointer;color:var(--gold);
     transition:background .1s}
-  #info-box .ib-guide:hover{background:rgba(255,220,130,.24)}
+  #info-box .ib-guide:hover{background:rgba(255,182,39,.24)}
 
   /* ── ONBOARDING TOUR (full only) ── */
   #tour-ov{display:none;position:fixed;inset:0;z-index:90;background:rgba(20,19,18,.74)}
   #tour-ov.open{display:block}
   .tour-spot{position:relative;z-index:95!important;border-radius:8px;pointer-events:none;
-    box-shadow:0 0 0 2px var(--gold),0 0 0 6px rgba(255,220,130,.22),0 0 24px rgba(0,0,0,.55)}
+    box-shadow:0 0 0 2px var(--gold)}
   #tour-pop{display:none;position:fixed;z-index:96;width:240px;
-    background:rgba(40,37,34,.98);border:1px solid rgba(237,233,224,.16);border-radius:9px;
-    padding:14px 16px;font-family:var(--sans);color:var(--txt);box-shadow:0 8px 28px rgba(0,0,0,.5)}
+    background:#2a2723;border:1px solid rgba(237,233,224,.16);border-radius:var(--radius-control);
+    padding:14px 16px;font-family:var(--sans);color:var(--txt)}
   #tour-pop.open{display:block}
-  #tour-pop .tp-step{font-size:8.5px;letter-spacing:.16em;text-transform:uppercase;color:rgba(255,220,130,.6);font-weight:600;margin-bottom:5px}
+  #tour-pop .tp-step{font-size:8.5px;letter-spacing:.16em;text-transform:uppercase;color:rgba(255,182,39,.6);font-weight:600;margin-bottom:5px}
   #tour-pop .tp-title{font-size:13px;font-weight:700;color:var(--gold);margin-bottom:5px}
   #tour-pop .tp-text{font-size:11px;line-height:1.45;color:var(--muted)}
   #tour-pop .tp-nav{display:flex;gap:7px;margin-top:12px;align-items:center}
   #tour-pop .tp-btn{height:26px;padding:0 12px;display:flex;align-items:center;justify-content:center;
-    font-size:9px;letter-spacing:.1em;text-transform:uppercase;background:rgba(237,233,224,.06);border:1px solid transparent;
-    border-radius:5px;cursor:pointer;color:var(--muted2);transition:background .1s,color .1s}
+    font-size:9px;letter-spacing:.1em;text-transform:uppercase;background:rgba(237,233,224,.06);border:none;
+    border-radius:var(--radius-control);cursor:pointer;color:var(--muted2);transition:background .1s,color .1s}
   #tour-pop .tp-btn:hover{background:rgba(237,233,224,.10);color:var(--txt)}
-  #tour-pop .tp-btn.primary{background:var(--gold-dim);border-color:transparent;color:var(--gold)}
-  #tour-pop .tp-btn.primary:hover{background:rgba(255,220,130,.24)}
+  #tour-pop .tp-btn.primary{background:var(--gold-dim);color:var(--gold)}
+  #tour-pop .tp-btn.primary:hover{background:rgba(255,182,39,.24)}
   #tour-pop .tp-skip{margin-left:auto;font-size:9px;color:var(--muted2);cursor:pointer;text-decoration:underline}
   #tour-pop .tp-skip:hover{color:var(--txt)}
   /* ── Smart Chords (heat-map) — fond teinté par fonction de transition, intensité = opacité ── */
-  .smart-legend{ display:flex; flex-wrap:wrap; gap:7px 14px; padding:7px 14px 3px; }   /* toujours visible : légende layout (SMART off) ou luminosité (SMART on) ; gridwrap cache en strip */
+  .smart-legend{ display:grid; grid-template-columns:repeat(7,1fr) 1fr; align-items:center; gap:4px; padding:6px var(--sp-panel-pad-h) 10px; }
+  .smart-legend .lg-scale{ grid-column:1/8; display:flex; flex-wrap:wrap; align-items:center; gap:7px 14px; }
+  .smart-legend .lg-bor{ grid-column:8/9; display:flex; align-items:center; justify-content:center; gap:5px; }
+  .smart-legend > span:only-child{ grid-column:1/9; }
   .smart-legend span{ display:inline-flex; align-items:center; gap:5px; font-size:9px; letter-spacing:.06em; color:var(--muted); text-transform:uppercase; font-weight:600; }
-  .smart-legend i{ width:8px; height:8px; border-radius:50%; display:inline-block; flex:0 0 auto; }
-  .smart-legend i.bar{ width:22px; border-radius:3px; }   /* logiques en échelle/séquence (Spectrum/Tension/Fifths) : barre dégradée */
+  .smart-legend i{ width:8px; height:8px; border-radius:50%; display:inline-block; flex:0 0 auto; vertical-align:middle; }
+  .smart-legend i.bar{ width:22px; border-radius:3px; overflow:hidden; background-clip:padding-box; }   /* logiques en échelle/séquence (Spectrum/Tension/Fifths) : barre dégradée */
   /* (têtes : plus d'atténuation en smart — le layout « Smart » les colore par rôle de transition via applyScheme) */
 </style>
 </head>
@@ -708,8 +732,6 @@
         </div>
       </div>
 
-      <div class="sep"></div>
-
       <!-- Zone VOICING -->
       <div class="zone" id="zStyle">
         <div class="lbl">Chord style</div>
@@ -718,8 +740,6 @@
         <div class="btn" id="vl">VOICE LEADING</div>
         <div class="btn lblbtn" id="vlmode"><span class="cl">VL MODE</span><span class="cv" id="vlmodeV">Anchor</span></div>
       </div>
-
-      <div class="sep expr-sep"></div>
 
       <!-- Zone EXPRESSION (full uniquement) — sliders drag + molette, 0 = off -->
       <div class="zone expr-zone" id="zExpr">
@@ -852,7 +872,7 @@
   ];
   var SCHEME_NAMES = ['Spectrum','Function','Tension','Fifths','Quality'];   // SMART n'est PAS un layout : c'est un mode (bouton) qui marche dans tous les layouts
   var colorScheme = 0;
-  var BORCOLOR = '#CDADDC';   // violet emprunts (toutes logiques)
+  var BORCOLOR = '#B47EE8';   // violet emprunts (toutes logiques) — aligné en vivacité sur gold/blue
   // Qualité (chaud/froid) : 0 majeur=chaud · 1 mineur=froid · 2 dim · 3 aug. Reçu du moteur.
   var QUALHEX = ['#D8923C','#4F86C8','#C85555','#C8BE50'];
   var degQual = [0,0,0,0,0,0,0];
@@ -1029,22 +1049,34 @@
       var col=el('div','col');
       var h=el('div','head'); var hd=degOf(c);
       h.innerHTML='<span class="r">'+hd[0]+'</span> <span class="f">'+hd[1]+'</span>';
-      h.style.borderBottom='2px solid '+degColorFor(c); h.style.paddingBottom='2px';
+      h.style.setProperty('--hc',degColorFor(c));
       col.appendChild(h);
       (cols[c]||[]).forEach(function(cell,row){
         var d=el('div','cell'+((activeCol===c&&activeRow===row)?' active':''),cellLabel(cell.label));
         d.setAttribute('data-col',c); d.setAttribute('data-row',row);
+        var _dcHex=degColorFor(c);
+        d.style.setProperty('--dc',_dcHex);
+        d.style.setProperty('--dctext',textColorFor(_dcHex));
+        d.style.setProperty('--cellbg',hexToRgba(_dcHex,.32));
+        d.style.setProperty('--cellbd',hexToRgba(_dcHex,.32));
+        d.style.setProperty('--cellhoverbg',hexToRgba(_dcHex,.46));
         (function(cc,rr,dd){ dd.onmousedown=function(e){ _cellDown(e,cc,rr,dd); }; dd.onmouseenter=function(){ cellHoverEnter(cc,rr); }; dd.onmouseleave=cellHoverLeave; })(c,row,d);
         col.appendChild(d);
       });
       g.appendChild(col);
     }
     var bc=el('div','col bor');
-    var bh=el('div','head'); var bd=degOf(7); bh.innerHTML='<span class="r">'+bd[0]+'</span> <span class="f">'+bd[1]+'</span>'; bh.style.borderBottom='2px solid '+borColorFor(); bh.style.paddingBottom='2px'; bc.appendChild(bh);
+    var bh=el('div','head'); var bd=degOf(7); bh.innerHTML='<span class="r">'+bd[0]+'</span> <span class="f">'+bd[1]+'</span>'; bh.style.setProperty('--hc',borColorFor()); bc.appendChild(bh);
     bor.forEach(function(cell,i){
       var lab=cellLabel(cell.label);  /* pas de roman dans la case → homogène avec les degrés */
       var d=el('div','cell'+((activeCol===7&&activeRow===i)?' active':''),lab);
       d.setAttribute('data-col',7); d.setAttribute('data-row',i);
+      var _borHex=borColorFor();
+      d.style.setProperty('--dc',_borHex);
+      d.style.setProperty('--dctext',textColorFor(_borHex));
+      d.style.setProperty('--cellbg',hexToRgba(_borHex,.32));
+      d.style.setProperty('--cellbd',hexToRgba(_borHex,.32));
+      d.style.setProperty('--cellhoverbg',hexToRgba(_borHex,.46));
       (function(ii,dd){ dd.onmousedown=function(e){ _cellDown(e,7,ii,dd); }; dd.onmouseenter=function(){ cellHoverEnter(7,ii); }; dd.onmouseleave=cellHoverLeave; })(i,d);
       bc.appendChild(d);
     });
@@ -1061,7 +1093,7 @@
     var heads=document.getElementById('grid').getElementsByClassName('head');
     for(var i=0;i<heads.length;i++){
       // mode Smart : couleurs de degré DÉSACTIVÉES (le sens est dynamique → porté par les cases + les cartes, pas par des têtes fixes)
-      heads[i].style.borderBottom = '2px solid '+((i<7)?degColorFor(i):borColorFor());   // couleurs de degré (statiques = layout), visibles aussi en smart
+      heads[i].style.setProperty('--hc', (i<7)?degColorFor(i):borColorFor());   // couleurs de degré (statiques = layout), visibles aussi en smart
     }
     buildLegend();   // pastilles de la légende = layout courant (ou luminosité si smart)
     if(typeof renderProgViews==='function') renderProgViews();   // les cartes de progression suivent le layout
@@ -1102,8 +1134,8 @@
       case 3: h=_lgChip(_lgBar('#4F86C8,#C8BE50,#D05050'),'Near → Far'); break;                          // Fifths
       default: h=_lgChip(_lgDot(QUALHEX[0]),'Major')+_lgChip(_lgDot(QUALHEX[1]),'Minor')+_lgChip(_lgDot(QUALHEX[2]),'Dim')+_lgChip(_lgDot(QUALHEX[3]),'Aug');  // Quality
     }
-    h+=_lgChip(_lgDot(BORCOLOR),'Borrowed');   // emprunt = violet dans toutes les logiques
-    el.innerHTML=h; }
+    var bor=_lgChip(_lgDot(BORCOLOR),'Borrowed');   // emprunt = violet dans toutes les logiques
+    el.innerHTML='<span class="lg-scale">'+h+'</span><span class="lg-bor">'+bor+'</span>'; }
   function buildLegend(){ if(smartOn) buildSmartLegend(); else buildLayoutLegend(); }
   // Couleur = le degré (hex passé) ; LUMINOSITÉ = lvl (signal smart : force ou fluidité selon le mode).
   function _smartPaint(c,hex,lvl){ var bg=[0,.12,.26,.46][lvl], tx=[0,.62,.82,1][lvl];
@@ -1556,20 +1588,20 @@
     }
   };
 
-  document.getElementById('key').onclick = function(e){
-    e.stopPropagation();
+  document.getElementById('key').onmousedown = function(e){
+    if(e)e.preventDefault(); e.stopPropagation();
     openDrop('key','KEY',_activeKeys(),state.root,3,function(i,name){
       state.root=i; document.getElementById('keyV').textContent=name; send('rootidx',i);
     });
   };
-  document.getElementById('scale').onclick = function(e){
-    e.stopPropagation();
+  document.getElementById('scale').onmousedown = function(e){
+    if(e)e.preventDefault(); e.stopPropagation();
     openDrop('scale','SCALE',SCALES,state.scaleIdx,mode==='strip'?3:2,function(i,name){
       state.scaleIdx=i; document.getElementById('scaleV').textContent=name; send('scaleidx',i);
     });
   };
-  document.getElementById('voicing').onclick = function(e){
-    e.stopPropagation();
+  document.getElementById('voicing').onmousedown = function(e){
+    if(e)e.preventDefault(); e.stopPropagation();
     openDrop('voicing','VOICING',VOIC_FAM,FAM_IDX.indexOf(state.voicingIdx),mode==='strip'?3:2,function(p,name){
       var ri=FAM_IDX[p]; state.voicingIdx=ri; document.getElementById('voicingV').textContent=VOICINGS[ri]; send('voicingidx',ri);
     });
@@ -1701,13 +1733,50 @@
   }
   function toggleCapture(){ setCaptureUI(!captureOn); send('capture', captureOn?1:0); }
 
-  // Carte de progression : TEINTE = le degré (couleurs du layout), cohérent avec la grille smart.
-  function _cardCol(idx){
-    var e=prog[idx];
-    var hex=(e && e.deg>=0 && e.deg<7)?degColorFor(e.deg):borColorFor();
-    return { c:hex, bg:hexToRgba(hex,.13) };
-  }
   function hexToRgba(h,a){ h=String(h).replace('#',''); if(h.length===3) h=h.charAt(0)+h.charAt(0)+h.charAt(1)+h.charAt(1)+h.charAt(2)+h.charAt(2); var n=parseInt(h,16); return 'rgba('+((n>>16)&255)+','+((n>>8)&255)+','+(n&255)+','+a+')'; }
+  // Contrast-aware label color for a solid degree-color fill (active grid cells, progression
+  // cards) — same idea as a monochrome pill (pale/deep shade of the SAME hue for the label,
+  // not a flat neutral black/white), so text and fill read as one cohesive color family.
+  function _srgbChan(c){ return c<=0.03928 ? c/12.92 : Math.pow((c+0.055)/1.055,2.4); }
+  function _relLum(hex){
+    var h=String(hex).replace('#','');
+    var r=_srgbChan(parseInt(h.substring(0,2),16)/255);
+    var g=_srgbChan(parseInt(h.substring(2,4),16)/255);
+    var b=_srgbChan(parseInt(h.substring(4,6),16)/255);
+    return 0.2126*r+0.7152*g+0.0722*b;
+  }
+  function _hexToHsl(hex){
+    var h=String(hex).replace('#','');
+    var r=parseInt(h.substring(0,2),16)/255, g=parseInt(h.substring(2,4),16)/255, b=parseInt(h.substring(4,6),16)/255;
+    var mx=Math.max(r,g,b), mn=Math.min(r,g,b), l=(mx+mn)/2, hh=0, s=0;
+    if(mx!==mn){
+      var d=mx-mn; s=l>0.5 ? d/(2-mx-mn) : d/(mx+mn);
+      if(mx===r) hh=(g-b)/d+(g<b?6:0);
+      else if(mx===g) hh=(b-r)/d+2;
+      else hh=(r-g)/d+4;
+      hh/=6;
+    }
+    return {h:hh,s:s,l:l};
+  }
+  function _hue2rgb(p,q,t){ if(t<0)t+=1; if(t>1)t-=1; if(t<1/6)return p+(q-p)*6*t; if(t<1/2)return q; if(t<2/3)return p+(q-p)*(2/3-t)*6; return p; }
+  function _hslToHex(h,s,l){
+    var r,g,b;
+    if(s===0){ r=g=b=l; }
+    else {
+      var q=l<0.5 ? l*(1+s) : l+s-l*s, p=2*l-q;
+      r=_hue2rgb(p,q,h+1/3); g=_hue2rgb(p,q,h); b=_hue2rgb(p,q,h-1/3);
+    }
+    function toHex(v){ var n=Math.round(v*255).toString(16); return n.length<2?'0'+n:n; }
+    return '#'+toHex(r)+toHex(g)+toHex(b);
+  }
+  // Deep or pale shade of the SAME hue as the fill — kept saturated so it still reads as
+  // "that" color, just dark/light enough to stay legible against the solid fill.
+  function _shadeFor(hex, l){ var hsl=_hexToHsl(hex); return _hslToHex(hsl.h, Math.min(1,hsl.s*1.2+0.25), l); }
+  function textColorFor(hex){
+    var hsl=_hexToHsl(hex);
+    var lt = hsl.l<0.5 ? Math.min(0.95, hsl.l+0.5) : Math.max(0.08, hsl.l-0.5);
+    return _shadeFor(hex, lt);
+  }
 
   // Curseur d'insertion : où iront les prochains accords. Posé par le « + » au survol d'une carte.
   function setCursorTo(c){ cursor=c; send('setcursor', c); renderProgViews(); }
@@ -1717,9 +1786,9 @@
   // et « × » en-dessous (supprimer).
   function buildCard(entry, idx){
     var card=el('div','pg-card');
-    var ci=_cardCol(idx);
-    card.style.setProperty('--cardc', ci.c);
-    card.style.setProperty('--cardbg', ci.bg);   // voile léger (survol / appui seulement)
+    var _cardHex=(entry && entry.deg>=0 && entry.deg<7)?degColorFor(entry.deg):borColorFor();
+    card.style.setProperty('--cardc', _cardHex);
+    card.style.setProperty('--cardtext', textColorFor(_cardHex));
     card.appendChild(el('span','pg-r', entry.roman||'·'));
     card.appendChild(el('span','pg-n', entry.name||'?'));
     var ins=el('div','pg-ins','+'); ins.title='Insert next chords after this one';
@@ -1783,7 +1852,7 @@
     return cards.length;
   }
   function _overProg(x,y){
-    var box=gE('cap-dock'); if(!box || getComputedStyle(box).display==='none') return false;
+    var box=gE('cap-dock'); if(!box || !dockOpen) return false;
     var r=box.getBoundingClientRect();
     return x>=r.left && x<=r.right && y>=r.top && y<=r.bottom;
   }
@@ -1859,9 +1928,7 @@
   // Changement de layout (clic ou molette). Le layout « Smart » EST le mode smart : y entrer
   // l'active (écran + Push via « smart 1 »), en sortir le coupe. Les autres layouts → colorscheme au Push.
   // LAYOUT = schéma de couleurs des degrés, INDÉPENDANT du mode SMART (qui marche dans tous les layouts).
-  document.getElementById('colorBtn').onmousedown = function(e){ if(e)e.preventDefault(); };
-  document.getElementById('colorBtn').onclick = function(e){
-    if(e)e.stopPropagation();
+  document.getElementById('colorBtn').onmousedown = function(e){ if(e)e.preventDefault(); e.stopPropagation();
     openDrop('colorBtn','LAYOUT',SCHEME_NAMES,colorScheme,2,function(i,name){   // dropdown (cohérent avec key/scale/voicing) ; la molette cycle toujours
       colorScheme=i; document.getElementById('colorV').textContent=name; applyScheme(); send('colorscheme', colorScheme);
     });
@@ -2019,7 +2086,33 @@
     activeCol=0; activeRow=0; activeChordName='Em7';
     renderConfig(); renderGrid(); buildLegend(); renderNotes([52,55,59,62]);
   }
-  function demoHandle(a){ /* no-op — toggle handled in onclick */ }
+  function demoHandle(a){
+    // No live Max engine in this browser preview, so the progression list normally driven by
+    // the engine's 'prog' echoes is simulated locally here — lets drag-to-insert, reorder,
+    // remove and clear all work for real when previewing outside Ableton.
+    var msg=a[0];
+    if(msg==='captureone'){
+      var name=a[1], target=(a.length>2)?parseInt(a[2]):-1;
+      var entry={ name:String(name), roman:degOf(activeCol)[0], deg:activeCol };
+      if(isNaN(target)||target<0||target>prog.length) prog.push(entry); else prog.splice(target,0,entry);
+      renderProgViews();
+    } else if(msg==='moveprog'){
+      var from=parseInt(a[1]), to=parseInt(a[2]);
+      if(from>=0 && from<prog.length){
+        var it=prog.splice(from,1)[0];
+        if(to>from) to--;
+        prog.splice(Math.max(0,Math.min(to,prog.length)),0,it);
+        renderProgViews();
+      }
+    } else if(msg==='removeat'){
+      var idx=parseInt(a[1]);
+      if(idx>=0 && idx<prog.length){ prog.splice(idx,1); renderProgViews(); }
+    } else if(msg==='clearprog'){
+      prog=[]; renderProgViews();
+    } else if(msg==='setcursor'){
+      cursor=parseInt(a[1]); renderProgViews();
+    }
+  }
 
   // ── CLAVIER ORDINATEUR ──
   // Quand on clique le device, la WebView jweb vole le focus OS → Ableton ne
