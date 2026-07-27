@@ -81,9 +81,12 @@ device/                    → Max for Live device (source of truth)
 manual/                    → user manual (HTML + PDF, ships with the device)
 ```
 
-**Git:** this repo tracks the **device** only (`device/`, `manual/`, `README`, `LICENSE`).
-The website has its own repo (`tuple-site`, deployed to Vercel → tuple.live). Local-only
-folders — `site/`, `docs/`, `brand/`, `discord/`, `font/`, `CLAUDE.md` — are gitignored.
+**Git:** this repo tracks the **device** and what ships with it — `device/`, `manual/`,
+`installer/`, `build_zip.py`, `build_installer.py`, `VERSION`, `.github/` — plus the
+contributor docs (`docs/architecture.md`, `docs/chord-types.md`) and the README assets
+(`docs/images/`). The website has its own repo (`tuple-site`, deployed to Vercel →
+tuple.live). Local-only — `site/`, `brand/`, `discord/`, `font/`, `CLAUDE.md`, and the
+rest of `docs/` (work notes, planning) — are gitignored.
 
 ---
 

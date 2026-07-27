@@ -12,11 +12,13 @@
   @font-face{font-family:'JetBrains Mono';src:url('fonts/JetBrainsMono-Variable.woff2') format('woff2');font-weight:400 600;font-display:swap}
   :root{
     --gold:#FFB627; --gold-dim:rgba(255,182,39,.16); --gold-bd:rgba(255,182,39,.42);
+    --gold-hover:rgba(255,182,39,.24); --gold-glow:rgba(255,182,39,.85);
     --blue:#6EC6E8; --blue-dim:rgba(110,198,232,.14); --blue-bd:rgba(110,198,232,.42);
     --purple:#B47EE8; --purple-dim:rgba(180,126,232,.16); --purple-bd:rgba(180,126,232,.42);
     --txt:#f1eee6; --muted:rgba(241,238,230,.48); --muted2:rgba(241,238,230,.24);
     --cell:rgba(255,255,255,.055); --cell-bd:rgba(255,255,255,.08);
     --glass:#201d19; --glass-bd:rgba(255,255,255,.1);
+    --danger:#E58B8B; --danger-dim:rgba(229,139,139,.16); --danger-bd:rgba(229,139,139,.4);
     --radius-control:10px; --radius-sheet:18px;
     /* Espacement tokenisé (full mode) — rôles fixés une fois, réutilisés partout (voir
        .interface-design/system.md § Discipline anti-dérive). Ne PAS ajouter de nouvelle valeur
@@ -31,12 +33,15 @@
     --sp-panel-margin:10px;  /* marge flottante externe des panneaux config/mon (4 côtés égaux) */
     --sp-grid-gap:5px;       /* écart entre cases, horizontal ET vertical (grille) */
     --sp-sep-margin:6px;     /* marge verticale des séparateurs dégradés */
+    --sp-dialog-pad:16px 18px; /* padding unifié des dialogs/popovers flottants (info-box/clear-dlg/tour-pop) */
     /* Brand fonts: Syne (display) + Space Grotesk (body) — identique au site. Mono pour les notes. */
     --sans:'Space Grotesk',system-ui,-apple-system,sans-serif;
     --mono:'JetBrains Mono',ui-monospace,monospace;
     --display:'Syne',var(--sans);
   }
   *{box-sizing:border-box;margin:0;padding:0;-webkit-user-select:none;user-select:none;outline:none}
+  /* anneau de focus clavier (le * outline:none ci-dessus le retire au pointeur) */
+  a:focus-visible,button:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--gold);outline-offset:2px;border-radius:4px}
   html{height:100%;overflow:hidden;background:radial-gradient(130% 150% at 18% -12%,#2e281f 0%,#211c16 45%,#15110d 100%)}
   body::before{
     content:'';position:fixed;top:0;left:10px;right:10px;height:2px;z-index:999;pointer-events:none;
@@ -97,7 +102,7 @@
     transition:background .1s,border-color .1s;
   }
   .csel .cl{font-size:9px;letter-spacing:.07em;color:var(--muted);flex-shrink:0;font-weight:500}
-  .csel .cv{color:var(--gold);font-size:10px;font-weight:500;margin-left:auto}
+  .csel .cv{color:var(--gold);font-size:10px;font-weight:500;letter-spacing:.06em;margin-left:auto}
   body.strip .csel .cv{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   body.strip .row .csel{min-width:0}
   .csel::after{content:'▾';color:var(--muted2);font-size:8px;flex-shrink:0;margin-left:3px}
@@ -106,7 +111,7 @@
   /* ── DROPDOWN OVERLAY ── */
   .dd-ov{
     position:absolute;left:6px;top:6px;bottom:6px;width:132px;
-    background:#201d19;
+    background:var(--glass);
     z-index:50;
     display:flex;flex-direction:column;
     padding:12px 10px;gap:10px;
@@ -118,6 +123,9 @@
   }
   body.strip .dd-ov{width:193px}
   .dd-ov.open{opacity:1;transform:translateX(0);pointer-events:auto}
+  /* dropdown déclenché depuis .mon (LAYOUT) : glisse depuis la DROITE, pas la gauche */
+  .dd-ov.dd-right{transform:translateX(10px)}
+  .dd-ov.dd-right.open{transform:translateX(0)}
   /* .dd-cell opts back into pointer-events (see below) even while the panel is faded out —
      force it off whenever the panel isn't open so closed cells never block clicks underneath. */
   .dd-ov:not(.open) .dd-cell{pointer-events:none}
@@ -139,8 +147,8 @@
   body.strip .dd-ov{padding:9px 8px;gap:0}
   body.strip .dd-grid{align-content:start;gap:4px}   /* tout tient sans scroll : 3 colonnes (voir openDrop) + cellules compactes */
   .dd-cell:hover{background-color:rgba(255,255,255,.08);color:var(--txt)}
-  .dd-cell.on{background:var(--gold-dim);color:var(--gold);font-weight:600;position:relative;padding-right:22px}
-  .dd-cell.on::after{content:'\2713';position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:10px;font-weight:700}
+  /* pas de checkmark : le fond doré + le texte doré suffisent à signaler la sélection */
+  .dd-cell.on{background:var(--gold-dim);color:var(--gold);font-weight:600}
   /* Full : options plus grandes + bloc centré (la fenêtre est haute → fini le vide en bas) */
   body.full .dd-ov{padding:16px 14px;gap:12px}
   body.full .dd-grid{gap:5px}
@@ -209,7 +217,10 @@
   .btn.on{color:var(--gold);background:var(--gold-dim);font-weight:600}
   /* pousse Device + CLOSE en bas de la colonne monitor (réserve le milieu) */
   .mon-spacer{flex:1;min-height:0}
-  body.full .mon-spacer{flex:none}   /* full : supprime le grand gap avant OPEN/CLOSE → espacement cohérent (gap .mon) */
+  /* full : masqué (display:none, pas juste flex:none) — CLOSE rejoint visuellement le groupe
+     WINDOW juste sous ALWAYS ON TOP (CLAUDE.md : "WINDOW = ALWAYS ON TOP + OPEN/CLOSE, un seul
+     groupe"), pas un CTA séparé épinglé en bas. Reste flex:1 en strip (order:1, écarte le CTA). */
+  body.full .mon-spacer{display:none}
 
   /* ── GRID ── */
   .grid{flex:1;display:flex;gap:4px;padding:7px 6px;min-width:0;position:relative}
@@ -221,7 +232,9 @@
   }
   .head::after{content:'';position:absolute;left:50%;bottom:2px;transform:translateX(-50%);
     width:16px;height:3px;border-radius:2px;background:var(--hc,var(--muted2))}
-  .head .r{color:var(--hc,var(--gold))} .head .f{color:var(--muted)}
+  /* --muted (.48 alpha) mesurait 4.39:1 sur le fond de page — sous le seuil WCAG AA (4.5) pour
+     du texte à cette taille. rgba(241,238,230,.6) donne ~6.1:1, lisible avec marge. */
+  .head .r{color:var(--hc,var(--gold))} .head .f{color:rgba(241,238,230,.6);font-weight:500}
   .grid-sep{display:none}
   .col.bor .head{color:var(--blue)}
   .col.bor{}
@@ -303,9 +316,10 @@
   .exslider{display:flex;align-items:center;gap:9px;height:32px;padding:0 10px;
     background:var(--cell);border:none;border-radius:var(--radius-control);
     transition:opacity .12s,border-color .1s,background .1s}
-  .exslider:hover{background-color:rgba(255,255,255,.05)}
+  .exslider:hover{background-color:rgba(255,255,255,.08)}
   .exslider.dim{opacity:.4;pointer-events:none}
-  .exs-lbl{font-size:9px;letter-spacing:.07em;color:var(--muted);flex:0 0 52px;font-weight:500}
+  /* caps, comme .cl (KEY/SCALE/VOICING/...) — même rôle (label de contrôle), même casse */
+  .exs-lbl{font-size:9px;letter-spacing:.07em;color:var(--muted);flex:0 0 52px;font-weight:500;text-transform:uppercase}
   .exs-track{flex:1;height:6px;background:rgba(255,255,255,.06);border-radius:3px;position:relative;cursor:ew-resize;touch-action:none}
   .exs-track:hover{background:rgba(255,255,255,.11)}
   /* repère central pour les sliders bipolaires (off/flat au milieu) */
@@ -317,21 +331,33 @@
   /* Curve = cycler lblbtn (comme VL MODE) à hauteur de cellule Expression */
   #curveBtn{height:32px;padding:0 10px;font-size:10px}
   #extended{display:flex;align-items:center;justify-content:center}   /* texte centré (en CSS, pas inline → body.strip #extended{display:none} peut l'emporter) */
+  /* VOICING + EXT fusionnés en un seul bloc (une pilule, pas deux avec un gap) — EXT est un
+     modificateur direct de Voicing, pas un contrôle indépendant. Séparateur vertical interne fin. */
+  #voirow{display:flex;align-items:stretch;background:var(--cell);border-radius:var(--radius-control);overflow:hidden}
+  #voirow .csel{background:none;border-radius:0}
+  /* séparateur interne réutilisable (voirow, krow) */
+  .vd{width:1px;flex:none;align-self:center;height:60%;background:rgba(255,255,255,.08)}
+  #voirow #extended{flex:none;padding:0 10px;background:none;border-radius:0}
   /* DEVICE group (Push · Layout) — full uniquement, colonne droite. Caché en strip. */
   .devgrp{display:none}
-  body.full .devgrp{display:flex;flex-direction:column;gap:8px;flex:none;margin-top:12px}
+  /* pas de ligne séparateur ici (cohérent avec le retrait des .sep de .config, 2026-07-12) —
+     le label doré + le même --sp-zone-gap que .config marquent la coupure de zone. */
+  /* margin-top = --sp-side-gap (8px), pas --sp-zone-gap (16px) : le gap de base de .mon (8px)
+     s'ajoute déjà entre chaque enfant → 8+8=16, pour matcher le vrai zone-gap de .config (16px
+     tout court, lui n'a pas ce double-comptage). gap interne 10px (pas 8) : même valeur que
+     .zone à gauche pour l'espacement bouton-à-bouton. */
+  body.full .devgrp{display:flex;flex-direction:column;gap:10px;flex:none;margin-top:var(--sp-side-gap)}
   /* boutons Device/Window = même hauteur standard (32px) que les autres contrôles full */
   body.full .devgrp .btn,body.full .wingrp .btn{height:32px;padding:0 10px;display:flex;align-items:center;justify-content:center;font-size:10px}
-  body.full .devgrp .lbl,body.full .wingrp .lbl{display:block;font-size:9px;letter-spacing:.15em;font-weight:600;
+  /* .08em, pas .15em : mêmes proportions que .lbl (Tonality/Chord style/Expression/Monitor) —
+     le tracking large ici était le seul label du panneau à diverger, ET démo n'a jamais eu ce split. */
+  body.full .devgrp .lbl,body.full .wingrp .lbl{display:block;font-size:9px;letter-spacing:.08em;font-weight:600;
     color:rgba(255,182,39,.3);text-transform:uppercase;margin-bottom:2px}
-  /* Séparateur dégradé avant devgrp et wingrp (full uniquement) */
-  body.full .devgrp::before,body.full .wingrp::before{
-    content:'';display:block;height:1px;margin-bottom:10px;
-    background:linear-gradient(to right, transparent 0%, rgba(255,255,255,.06) 25%, rgba(255,255,255,.06) 75%, transparent 100%);
-  }
   /* WINDOW group (Always on top · Open/Close) */
   .wingrp{display:flex;flex-direction:column;gap:8px;flex:none}
-  body.full .wingrp{margin-top:12px}
+  /* même logique que .devgrp ci-dessus : margin-top=--sp-side-gap (pas --sp-zone-gap) pour ne
+     pas compter le gap de .mon deux fois ; gap interne aligné sur .zone (10px). */
+  body.full .wingrp{gap:10px;margin-top:var(--sp-side-gap)}
   body.strip #ontopBtn{display:none}
   /* strip : WINDOW ne contient que ALWAYS ON TOP (masqué) → groupe vide, on le cache.
      Le CTA OPEN DEVICE descend tout en bas via le spacer. */
@@ -365,10 +391,10 @@
   .pg-card .pg-del:hover{background-color:rgba(229,139,139,.2);color:#E58B8B}
   /* marqueur d'insertion entre deux cartes (où iront les prochains accords) */
   .pg-cursor{flex:0 0 auto;width:3px;align-self:stretch;min-height:22px;border-radius:2px;
-    background:var(--gold);box-shadow:0 0 8px rgba(255,182,39,.85);animation:dropPulse .7s ease-in-out infinite}
+    background:var(--gold);box-shadow:0 0 8px var(--gold-glow);animation:dropPulse .7s ease-in-out infinite}
   /* repère de dépôt (pulse) + carte source estompée + fantôme suivant le curseur */
   .pg-dropmark{flex:0 0 auto;width:3px;align-self:stretch;min-height:22px;border-radius:2px;
-    background:var(--gold);box-shadow:0 0 8px rgba(255,182,39,.85);animation:dropPulse .7s ease-in-out infinite}
+    background:var(--gold);box-shadow:0 0 8px var(--gold-glow);animation:dropPulse .7s ease-in-out infinite}
   @keyframes dropPulse{0%,100%{opacity:1}50%{opacity:.45}}
   body.pg-dragging,body.pg-dragging .pg-card{cursor:grabbing}
   .pg-card.pg-drag-src{opacity:.3;transform:scale(.96)}
@@ -421,8 +447,8 @@
     font-size:9px;letter-spacing:.1em;text-transform:uppercase;font-weight:600;color:var(--muted)}
   #cap-dock .cd-rec:hover{background-color:rgba(255,255,255,.08);color:var(--txt)}
   #cap-dock .cd-rec .cd-dot{width:8px;height:8px;border-radius:50%;background:var(--muted2)}
-  #cap-dock .cd-rec.on{color:var(--gold);background:var(--gold-dim)}
-  #cap-dock .cd-rec.on .cd-dot{background:var(--gold);animation:rbpulse 1.2s infinite}
+  #cap-dock .cd-rec.on{color:var(--danger);background:var(--danger-dim)}
+  #cap-dock .cd-rec.on .cd-dot{background:var(--danger);animation:rbpulse 1.2s infinite}
   @keyframes rbpulse{0%,100%{opacity:1}50%{opacity:.25}}
   #cap-dock .cd-count{flex:0 1 auto;font-family:var(--mono);font-size:9px;color:var(--muted2);
     letter-spacing:.04em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -440,6 +466,24 @@
   #cap-dock .cd-cards{display:flex;flex-wrap:wrap;column-gap:5px;row-gap:20px;align-items:flex-start;align-content:flex-start;
     height:104px;padding:20px 0;overflow-y:auto;overflow-x:hidden}
   #cap-dock .cd-empty{margin:auto;font-size:9px;color:var(--muted)}
+
+  /* ── CLEAR confirm dialog (progression) — CLEAR est destructif et sans undo,
+     donc jamais direct : scrim + petit dialog avant d'envoyer clearprog. ── */
+  #clear-scrim{display:none;position:fixed;inset:0;z-index:97;background:rgba(15,13,10,.7);
+    align-items:center;justify-content:center}
+  #clear-scrim.open{display:flex}
+  #clear-dlg{background:#2a2723;border:1px solid var(--glass-bd);border-radius:var(--radius-control);
+    padding:var(--sp-dialog-pad);width:220px;font-family:var(--sans);color:var(--txt)}
+  #clear-dlg .cd-t{font-size:13px;font-weight:700;margin-bottom:4px}
+  #clear-dlg .cd-b{font-size:11px;line-height:1.45;color:var(--muted);margin-bottom:14px}
+  #clear-dlg .cd-row{display:flex;gap:8px}
+  #clear-dlg .cd-btn{flex:1;height:28px;border-radius:var(--radius-control);border:none;cursor:pointer;
+    font-family:var(--sans);font-size:10px;letter-spacing:.08em;text-transform:uppercase;font-weight:600}
+  #clear-dlg .cd-btn.ghost{background:var(--cell);color:var(--muted)}
+  #clear-dlg .cd-btn.ghost:hover{background:rgba(255,255,255,.09);color:var(--txt)}
+  #clear-dlg .cd-btn.danger{background:var(--danger-dim);color:var(--danger);border:1px solid var(--danger-bd)}
+  #clear-dlg .cd-btn.danger:hover{background:rgba(229,139,139,.26)}
+
   body.strip .mon-spacer{order:1}   /* strip : repousse le CTA en bas (full : l'espace reste en bas) */
   body.strip #toggleBtn{height:47px;order:2}  /* haut du CTA aligné avec le haut de VOICE LEADING (gauche) */
 
@@ -491,7 +535,7 @@
   body.strip .chord .deg .r{font-size:8px}
   body.strip .chord .deg .f{font-size:7px}
   body.strip .chord .cn    {font-size:13px;font-weight:700;letter-spacing:.01em;line-height:1.1;font-family:var(--sans)}
-  body.strip .chord .ns    {font-size:11px;letter-spacing:.04em;color:var(--muted2);font-family:var(--mono)}
+  body.strip .chord .ns    {font-size:11px;letter-spacing:.04em;color:var(--blue);font-family:var(--mono)}
   body.strip .keys         {flex:none;height:36px;margin-top:9px}  /* bas du clavier aligné avec le bas de la case VOICING (gauche) */
 
   /* ── FULL MODE ── */
@@ -507,20 +551,36 @@
 
   /* Full : 32px = hauteur STANDARD de tous les contrôles ; gaps uniformes 8px */
   body.full .row           {height:32px;flex:none;display:flex;gap:8px}
-  body.full .row .csel     {flex:1;height:100%;padding:0 10px;font-size:11px}
+  /* pas de font-size ici : .csel .cl (9px) / .csel .cv (10px) l'emportent déjà sur tout texte réel. */
+  body.full .row .csel     {flex:1;height:100%;padding:0 10px}
+  /* KEY + SCALE fusionnés en un seul bloc (comme VOICING + EXT) — une pilule, pas deux avec un gap. */
+  body.full .krow          {gap:0;background:var(--cell);border-radius:var(--radius-control);overflow:hidden}
+  body.full .krow .csel    {background:none;border-radius:0}
   body.full .lbl-row .lbl  {margin-bottom:0}
   body.full .lbl-row .sync {flex:none;height:24px;padding:0 8px;width:auto;font-size:10px;letter-spacing:.07em}
   body.full .lbl-row .acc-btn{flex:none;height:24px;padding:0 7px;font-size:10px}
   .ton-btns{display:flex;gap:4px;align-items:center;flex:none}
 
   body.full .oct           {height:32px;flex:none;display:flex;gap:8px}
-  body.full .oct span      {font-size:11px;padding:0;display:flex;align-items:center;justify-content:center}
+  /* 10px partout (registre standard des contrôles full, voir ligne "32px = hauteur STANDARD"
+     plus haut) — OCT était à 11px, seul outlier de toute la zone Chord Style. */
+  body.full .oct span      {font-size:10px;padding:0;display:flex;align-items:center;justify-content:center}
 
-  body.full #voicing       {flex:none;height:32px;padding:0 10px;font-size:11px}
+  /* #voicing n'a plus de font-size propre : .csel .cl (9px) / .csel .cv (10px) l'emportent déjà
+     sur tout texte réel — l'ancien "font-size:11px" ici ne s'affichait jamais (mort). */
+  body.full #voicing       {flex:none;height:32px;padding:0 10px}
   body.full #vl            {height:32px;padding:0;font-size:10px;display:flex;align-items:center;justify-content:center}
   body.full #vlmode        {height:32px;padding:0 10px;font-size:10px;display:flex;align-items:center;justify-content:space-between}
+  /* EXT restait au 9px de base .btn, seul bouton de la rangée Chord Style pas remonté à 10px. */
+  body.full #extended      {font-size:10px}
 
-  body.full .dd-ov         {width:218px}
+  /* dd-ov doit COUVRIR EXACTEMENT .config (même boîte : 230px, marge 10px, pas juste la largeur) —
+     sinon le flyout paraît plus petit/mal aligné que le panneau qu'il remplace visuellement. */
+  body.full .dd-ov         {width:230px;left:10px;top:10px;bottom:10px}
+  /* LAYOUT (colorBtn) vit dans .mon (colonne droite) → son dropdown doit couvrir CE panneau,
+     pas .config à gauche. .config/.mon font exactement la même taille (230px) donc un simple
+     flip left→right suffit, pas besoin de recalculer largeur/hauteur. */
+  body.full .dd-ov.dd-right{left:auto;right:10px}
   body.full .grid          {padding:var(--sp-panel-pad-v) var(--sp-panel-pad-h);gap:var(--sp-grid-gap)}
   body.full .col           {gap:var(--sp-grid-gap)}
   /* cellules à hauteur FIXE (l'utilisateur a refusé la grille étirée) */
@@ -536,18 +596,19 @@
   .mon-head{display:none}
   body.full .mon-head      {display:block;flex:none;margin-top:32px}
   body.full .mon-head .lbl {margin-bottom:0}
+  /* espace résiduel en fin de colonne (rien après → inerte en full, pas de push) — priorité à
+     l'espacement uniforme entre zones (16px) plutôt qu'à aligner Humanize sur CLOSE (2026-07-14,
+     annule le "déplacé avant Expression" tenté plus tôt : ça cassait le rythme Chord Style→Expr). */
   body.full .cfg-spacer    {display:block;flex:1;min-height:0}
-  /* full : OPEN/CLOSE = bouton confortable épinglé en bas (le spacer garde l'espace au-dessus).
-     58px (pas 72) : la fenêtre full est de hauteur FIXE (580) et la colonne est top-packée ;
-     le monitor réserve désormais 2 lignes de notes (chord = 88px), donc on rend ces 14px ici
-     pour que le bas de CLOSE garde son espacement de 18px avec le bord (sinon il colle au bord). */
-  body.full .toggle        {height:58px;margin-top:0}
+  /* CLOSE rejoint le groupe WINDOW (CLAUDE.md) : hauteur standard 32px, plus le gros CTA
+     épinglé en bas — voir .mon-spacer plus haut (display:none en full) pour le gap resserré. */
+  body.full .toggle        {height:32px;margin-top:2px;font-size:10px}   /* +2px = 10px total avec le gap .mon (8px), même rythme que le reste de WINDOW */
   body.full .chord         {flex:none;height:88px;min-height:88px;padding:0;flex-direction:column;align-items:flex-start;justify-content:center;gap:6px;background:transparent;border:none}  /* hauteur FIXE (constante vide↔accord) : les notes d'un accord large/5+ notes passent sur 2 lignes — 88px les réserve pour que l'affichage ne pousse JAMAIS DEVICE/WINDOW vers le bas */
   body.full .chord .deg    {display:flex;gap:5px}
   body.full .chord .deg .r {font-size:13px}
   body.full .chord .deg .f {font-size:9px}
   body.full .chord .cn     {font-size:32px;font-weight:700;letter-spacing:-.01em;line-height:1;color:var(--gold)}
-  body.full .chord .ns     {font-size:13px;letter-spacing:.06em;color:var(--muted2);font-family:var(--mono)}
+  body.full .chord .ns     {font-size:13px;letter-spacing:.06em;color:var(--blue);font-family:var(--mono)}
   body.full .keys          {flex:none;height:52px}
   body.full .chord,body.full .keys{border-radius:var(--radius-sheet)}
 
@@ -564,7 +625,7 @@
   #info-overlay.open{display:flex}
   #info-box{
     background:rgba(237,233,224,.06);border:1px solid rgba(237,233,224,.14);
-    border-radius:var(--radius-control);padding:28px 32px;min-width:260px;max-width:320px;
+    border-radius:var(--radius-control);padding:var(--sp-dialog-pad);min-width:260px;max-width:320px;
     display:flex;flex-direction:column;gap:14px;
     font-family:var(--sans);color:var(--txt);
     max-height:calc(100vh - 24px);overflow-y:auto;   /* jamais tronqué : scrolle si la fenêtre est courte (strip) */
@@ -605,14 +666,14 @@
   .ib-upd-btns{display:flex;gap:5px}
   .ib-upd-btn{flex:1;height:30px;display:flex;align-items:center;justify-content:center;border-radius:var(--radius-control);
     font-size:9.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;cursor:pointer;transition:background .1s,opacity .1s}
-  .ib-upd-btn.primary{background:rgba(255,182,39,.85);color:#15120c}
+  .ib-upd-btn.primary{background:var(--gold-glow);color:#15120c}
   .ib-upd-btn.primary:hover{background:var(--gold)}
   .ib-upd-btn.dim{background:rgba(237,233,224,.07);color:var(--muted)}
   .ib-upd-btn.dim:hover{background:rgba(237,233,224,.13);color:var(--txt)}
   #upd-reload-note{font-size:9px;color:var(--muted2);text-align:center;letter-spacing:.03em;line-height:1.4;display:none}
   #ib-update-view.active #upd-reload-note{display:block}
   #upd-reload-note.ok{color:var(--gold)}
-  #upd-reload-note.err{color:#E88E8E}
+  #upd-reload-note.err{color:var(--danger)}
   #upd-show-changelog{display:none}
   body.strip #upd-changelog{display:none}
   body.strip #ib-update-view{gap:6px}
@@ -626,7 +687,7 @@
     font-size:10px;letter-spacing:.12em;text-transform:uppercase;
     background:var(--gold-dim);border:none;border-radius:var(--radius-control);cursor:pointer;color:var(--gold);
     transition:background .1s}
-  #info-box .ib-guide:hover{background:rgba(255,182,39,.24)}
+  #info-box .ib-guide:hover{background:var(--gold-hover)}
 
   /* ── ONBOARDING TOUR (full only) ── */
   #tour-ov{display:none;position:fixed;inset:0;z-index:90;background:rgba(20,19,18,.74)}
@@ -635,7 +696,7 @@
     box-shadow:0 0 0 2px var(--gold)}
   #tour-pop{display:none;position:fixed;z-index:96;width:240px;
     background:#2a2723;border:1px solid rgba(237,233,224,.16);border-radius:var(--radius-control);
-    padding:14px 16px;font-family:var(--sans);color:var(--txt)}
+    padding:var(--sp-dialog-pad);font-family:var(--sans);color:var(--txt)}
   #tour-pop.open{display:block}
   #tour-pop .tp-step{font-size:8.5px;letter-spacing:.16em;text-transform:uppercase;color:rgba(255,182,39,.6);font-weight:600;margin-bottom:5px}
   #tour-pop .tp-title{font-size:13px;font-weight:700;color:var(--gold);margin-bottom:5px}
@@ -646,7 +707,7 @@
     border-radius:var(--radius-control);cursor:pointer;color:var(--muted2);transition:background .1s,color .1s}
   #tour-pop .tp-btn:hover{background:rgba(237,233,224,.10);color:var(--txt)}
   #tour-pop .tp-btn.primary{background:var(--gold-dim);color:var(--gold)}
-  #tour-pop .tp-btn.primary:hover{background:rgba(255,182,39,.24)}
+  #tour-pop .tp-btn.primary:hover{background:var(--gold-hover)}
   #tour-pop .tp-skip{margin-left:auto;font-size:9px;color:var(--muted2);cursor:pointer;text-decoration:underline}
   #tour-pop .tp-skip:hover{color:var(--txt)}
   /* ── Smart Chords (heat-map) — fond teinté par fonction de transition, intensité = opacité ── */
@@ -710,6 +771,18 @@
       <div class="tp-skip" id="tpSkip">Skip</div>
     </div>
   </div>
+
+  <!-- CLEAR confirm (progression) -->
+  <div id="clear-scrim">
+    <div id="clear-dlg">
+      <div class="cd-t">Clear this progression?</div>
+      <div class="cd-b" id="clearDlgBody">This can't be undone.</div>
+      <div class="cd-row">
+        <button class="cd-btn ghost" id="clearCancel" type="button">CANCEL</button>
+        <button class="cd-btn danger" id="clearConfirm" type="button">CLEAR</button>
+      </div>
+    </div>
+  </div>
   <div class="bar">
 
     <!-- CONFIG -->
@@ -728,6 +801,7 @@
         </div>
         <div class="row krow">
           <div class="csel" id="key" style="flex:1"><span class="cl">KEY</span><span class="cv" id="keyV">E</span></div>
+          <div class="vd"></div>
           <div class="csel" id="scale" style="flex:2"><span class="cl">SCALE</span><span class="cv" id="scaleV">Minor</span></div>
         </div>
       </div>
@@ -736,7 +810,7 @@
       <div class="zone" id="zStyle">
         <div class="lbl">Chord style</div>
         <div class="oct" id="oct"></div>
-        <div id="voirow" style="display:flex;gap:8px"><div class="csel" id="voicing" style="flex:1"><span class="cl">VOICING</span><span class="cv" id="voicingV">Classic</span></div><div class="btn" id="extended" style="flex:none;padding:0 10px" title="Extended — enrichit chaque accord avec ses tensions (9/11/13)">EXT</div></div>
+        <div id="voirow"><div class="csel" id="voicing" style="flex:1"><span class="cl">VOICING</span><span class="cv" id="voicingV">Classic</span></div><div class="vd"></div><div class="btn" id="extended" title="Extended — enriches each chord with its upper tensions (9/11/13)">EXT</div></div>
         <div class="btn" id="vl">VOICE LEADING</div>
         <div class="btn lblbtn" id="vlmode"><span class="cl">VL MODE</span><span class="cv" id="vlmodeV">Anchor</span></div>
       </div>
@@ -888,6 +962,7 @@
   var windowOpen = false;
   var _updTag = '';
   var _updAssetUrl = '';
+  var _updAssetShaUrl = '';    // matching .sha256 sidecar for _updAssetUrl (empty = pre-checksum release, skip verify)
   var _updReinstall = false;   // true = .amxd changed → installer ; false = JS/HTML → in-place
   var _updChangelog = '';
   var _autoOn = false;         // SYNC auto-follow Live key/scale (toggle), locks KEY/SCALE
@@ -988,6 +1063,10 @@
       grid.appendChild(c);
     });
     _dropOpen=id;
+    // LAYOUT (colorBtn) vit dans .mon (colonne droite) — le dropdown doit couvrir SON panneau,
+    // pas systématiquement .config à gauche (Bug: LAYOUT ouvrait son menu à gauche, 2026-07-14).
+    var trigger=document.getElementById(id);
+    ov.classList.toggle('dd-right', !!(trigger && trigger.closest('.mon')));
     ov.classList.add('open');
     document.body.classList.add('dd-open');   // masque les séparateurs dégradés pendant l'ouverture
     // JAMAIS DE SCROLL : assez de colonnes pour que les rangées tiennent (≥22px), puis grid-auto-rows:1fr remplit jusqu'en bas.
@@ -1095,6 +1174,17 @@
       // mode Smart : couleurs de degré DÉSACTIVÉES (le sens est dynamique → porté par les cases + les cartes, pas par des têtes fixes)
       heads[i].style.setProperty('--hc', (i<7)?degColorFor(i):borColorFor());   // couleurs de degré (statiques = layout), visibles aussi en smart
     }
+    // Bug: LAYOUT ne recolorait que les degrés (--hc des .head) — les cases (--dc/--cellbg/...)
+    // gardaient l'ancien schéma jusqu'au prochain renderGrid() (changement key/scale/octave/voicing).
+    var cells=document.getElementById('grid').getElementsByClassName('cell');
+    for(var j=0;j<cells.length;j++){
+      var cc=parseInt(cells[j].getAttribute('data-col'));
+      var hex=(cc<7)?degColorFor(cc):borColorFor();
+      cells[j].style.setProperty('--dc',hex);
+      cells[j].style.setProperty('--dctext',textColorFor(hex));
+      cells[j].style.setProperty('--cellbg',hexToRgba(hex,.32));
+      cells[j].style.setProperty('--cellhoverbg',hexToRgba(hex,.46));
+    }
     buildLegend();   // pastilles de la légende = layout courant (ou luminosité si smart)
     if(typeof renderProgViews==='function') renderProgViews();   // les cartes de progression suivent le layout
   }
@@ -1125,7 +1215,7 @@
   //    dot = rond plein (logiques en groupes) · bar = barre dégradée (logiques en échelle/séquence).
   function _lgDot(hex){ return '<i style="background:'+hex+'"></i>'; }
   function _lgBar(stops){ return '<i class="bar" style="background:linear-gradient(90deg,'+stops+')"></i>'; }
-  function _lgChip(inner,label){ return '<span>'+inner+'&nbsp; '+label+'</span>'; }
+  function _lgChip(inner,label){ return '<span>'+inner+'<span class="lg-txt">'+label+'</span></span>'; }
   function buildLayoutLegend(){ var el=document.getElementById('smart-legend'); if(!el)return; var h='';
     switch(colorScheme){
       case 0: h=_lgChip(_lgBar(SCHEMES[0].join(',')),'Scale degree (I → VII)'); break;                  // Spectrum
@@ -1541,17 +1631,23 @@
       if (tag === _ignoredVersion()) { console.log('[tuple upd] version ' + tag + ' ignored'); return; }
       _updChangelog = String(data.body || '');
       var assets = data.assets || [];
-      var zipUrl = '', installerUrl = '', versionJsonUrl = '';
+      var zipUrl = '', installerUrl = '', versionJsonUrl = '', zipShaUrl = '', installerShaUrl = '';
       for (var i = 0; i < assets.length; i++) {
-        if (assets[i].name === 'tuple.zip')           zipUrl         = assets[i].browser_download_url;
-        if (assets[i].name === 'Tuple-Installer.exe') installerUrl   = assets[i].browser_download_url;
-        if (assets[i].name === 'version.json')        versionJsonUrl = assets[i].browser_download_url;
+        if (assets[i].name === 'tuple.zip')             zipUrl          = assets[i].browser_download_url;
+        if (assets[i].name === 'Tuple-Installer.exe')   installerUrl    = assets[i].browser_download_url;
+        if (assets[i].name === 'version.json')          versionJsonUrl  = assets[i].browser_download_url;
+        if (assets[i].name === 'tuple.zip.sha256')       zipShaUrl       = assets[i].browser_download_url;
+        if (assets[i].name === 'Tuple-Installer.exe.sha256') installerShaUrl = assets[i].browser_download_url;
       }
       function proceed(requiresReinstall) {
         _updReinstall = !!requiresReinstall;
         // reinstall+Win → installer .exe ; otherwise the zip (in-place)
-        _updAssetUrl = (_isWin && _updReinstall && installerUrl) ? installerUrl : (zipUrl || installerUrl);
-        console.log('[tuple upd] reinstall=' + _updReinstall + ' url=' + _updAssetUrl);
+        var useInstaller = _isWin && _updReinstall && installerUrl;
+        _updAssetUrl = useInstaller ? installerUrl : (zipUrl || installerUrl);
+        // Matching .sha256 sidecar (empty string if the release predates checksums —
+        // tuple_dl.js skips verification when no checksum URL is given, see its comments).
+        _updAssetShaUrl = useInstaller ? installerShaUrl : (zipUrl ? zipShaUrl : installerShaUrl);
+        console.log('[tuple upd] reinstall=' + _updReinstall + ' url=' + _updAssetUrl + ' sha=' + _updAssetShaUrl);
         _showUpdateUI(tag);
       }
       if (versionJsonUrl) {
@@ -1840,7 +1936,20 @@
   // Câblage : barre toggle en bas + contrôles du tiroir.
   noSelect(gE('prog-toggle'), function(){ if(dockOpen) closeDock(); else openDock(); });
   noSelect(gE('dockCap'),     toggleCapture);
-  noSelect(gE('dockClear'),   function(){ send('clearprog'); });
+  // CLEAR est destructif et sans undo (efface toute la progression) → jamais direct,
+  // toujours confirmé via #clear-scrim (voir CSS ci-dessus).
+  function openClearConfirm(){
+    if(!prog.length) return;
+    var n=prog.length, body=gE('clearDlgBody');
+    if(body) body.textContent = n+(n>1?' chords will be removed. ':' chord will be removed. ')+"This can't be undone.";
+    var s=gE('clear-scrim'); if(s) s.classList.add('open');
+  }
+  function closeClearConfirm(){ var s=gE('clear-scrim'); if(s) s.classList.remove('open'); }
+  noSelect(gE('dockClear'),   openClearConfirm);
+  noSelect(gE('clearCancel'), closeClearConfirm);
+  noSelect(gE('clearConfirm'),function(){ closeClearConfirm(); send('clearprog'); });
+  noSelect(gE('clear-scrim'), function(e){ if(e && e.target===gE('clear-scrim')) closeClearConfirm(); });
+  document.addEventListener('keydown', function(e){ if(e.key==='Escape'){ var s=gE('clear-scrim'); if(s && s.classList.contains('open')) closeClearConfirm(); } });
   noSelect(gE('dockClip'),    function(){ send('sendclip'); });
   noSelect(gE('dockChordify'),function(){ send('chordify'); });
 
@@ -1973,14 +2082,14 @@
       if (!_isWin) { send('openurl', 'https://github.com/c0remusic/tuple/releases/latest'); _closeInfo(); return; }
       var b0 = document.getElementById('ib-upd-install'); b0.textContent='Installing…'; b0.style.pointerEvents='none'; b0.style.opacity='0.6';
       document.getElementById('upd-reload-note').textContent = 'Installer launched — restart Ableton when it finishes.';
-      send('installupdate', url, 'win');
+      send('installupdate', url, 'win', _updAssetShaUrl);
       return;
     }
     // in-place (JS/HTML only)
     var btn = document.getElementById('ib-upd-install');
     btn.textContent = 'Installing…'; btn.style.pointerEvents = 'none'; btn.style.opacity = '0.6';
     document.getElementById('upd-reload-note').textContent = 'Downloading… keep Ableton open.';
-    send('installupdate', url, _isWin ? 'win-inplace' : 'mac');
+    send('installupdate', url, _isWin ? 'win-inplace' : 'mac', _updAssetShaUrl);
   };
   document.getElementById('ib-upd-later').onclick = function(){ _closeInfo(); };
   // "Ignore this version" — remember the tag so we stop notifying for it.
@@ -2002,6 +2111,7 @@
       localStorage.setItem('tuple-pending-upd-body',      _updChangelog);
       localStorage.setItem('tuple-pending-upd-reinstall', _updReinstall ? '1' : '0');
       localStorage.setItem('tuple-pending-upd-url',       _updAssetUrl  || '');
+      localStorage.setItem('tuple-pending-upd-sha-url',   _updAssetShaUrl || '');
     } catch(e) {}
     _closeInfo(); windowOpen = true; setToggle(true); send('openwindow', 'full');
   };
@@ -2163,10 +2273,12 @@
       _updChangelog  = localStorage.getItem('tuple-pending-upd-body')      || '';
       _updReinstall  = localStorage.getItem('tuple-pending-upd-reinstall') === '1';
       _updAssetUrl   = localStorage.getItem('tuple-pending-upd-url')       || '';
+      _updAssetShaUrl = localStorage.getItem('tuple-pending-upd-sha-url')  || '';
       localStorage.removeItem('tuple-pending-upd-tag');
       localStorage.removeItem('tuple-pending-upd-body');
       localStorage.removeItem('tuple-pending-upd-reinstall');
       localStorage.removeItem('tuple-pending-upd-url');
+      localStorage.removeItem('tuple-pending-upd-sha-url');
       setTimeout(function(){
         _showUpdateUI(_updTag);
         document.getElementById('info-box').classList.add('vis');

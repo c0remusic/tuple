@@ -14,6 +14,7 @@ var os     = require('os');
 var path   = require('path');
 var cp     = require('child_process');
 var zlib   = require('zlib');
+var crypto = require('crypto');
 
 // ── feedback → outlet → obj-CE (engine handleprogress) → outlet 7 → jweb ──
 // The engine retries 'dl' up to 6×, so the FIRST one sets _busy and the rest are
@@ -23,19 +24,70 @@ var _busy = false;
 function done()      { _busy = false; maxApi.outlet('progress', 'done'); }
 function fail(tok)   { _busy = false; maxApi.post('tuple_dl: FAIL ' + tok); maxApi.outlet('progress', 'error'); }
 
-maxApi.addHandler('dl', function(url, platform, amxdPath) {
+maxApi.addHandler('dl', function(url, platform, amxdPath, shaUrl) {
     if (_busy) { maxApi.post('tuple_dl: busy — ignoring duplicate dl (engine retry)'); return; }
     platform  = String(platform  || '');
     url       = String(url       || '');
     amxdPath  = String(amxdPath  || '');
-    maxApi.post('tuple_dl: platform=' + platform + ' amxdPath=' + amxdPath);
+    shaUrl    = String(shaUrl    || '');   // '' = release predates checksums, or asset missing — skip verification
+    maxApi.post('tuple_dl: platform=' + platform + ' amxdPath=' + amxdPath + ' sha=' + (shaUrl ? 'yes' : 'no'));
     try {
-        if      (platform === 'win')         { _busy = true; dlWin(url); }
-        else if (platform === 'win-inplace') { _busy = true; dlWinInPlace(url, amxdPath); }
-        else if (platform === 'mac')         { _busy = true; dlMac(url, amxdPath); }
+        if      (platform === 'win')         { _busy = true; dlWin(url, shaUrl); }
+        else if (platform === 'win-inplace') { _busy = true; dlWinInPlace(url, amxdPath, shaUrl); }
+        else if (platform === 'mac')         { _busy = true; dlMac(url, amxdPath, shaUrl); }
         else { maxApi.post('tuple_dl: unknown platform ' + platform); }
     } catch (e) { maxApi.post('tuple_dl: dispatch error: ' + e.message); fail('dispatch'); }  // never leave _busy stuck
 });
+
+// ── checksum verification (SHA256) ──────────────────────────────────────────
+// shaUrl points at a plain-text sidecar (just the hex digest, written by
+// build_zip.py's write_sha256_sidecar()). Empty shaUrl = no sidecar on this
+// release (older release, or asset omitted) → verification is skipped, not
+// failed: this is a corruption/tamper check layered on top of HTTPS, not the
+// only gate, so a missing sidecar degrades to "no extra check" rather than
+// bricking updates from before this feature existed.
+function fetchText(url, cb) {
+    var mod = url.indexOf('https') === 0 ? https : http;
+    mod.get(url, function(res) {
+        if (res.statusCode === 301 || res.statusCode === 302 || res.statusCode === 303) {
+            fetchText(res.headers.location, cb); return;
+        }
+        if (res.statusCode !== 200) { cb(new Error('HTTP ' + res.statusCode)); return; }
+        var body = '';
+        res.on('data', function(chunk) { body += chunk; });
+        res.on('end', function() { cb(null, body); });
+    }).on('error', cb);
+}
+function sha256File(filePath, cb) {
+    var hash = crypto.createHash('sha256');
+    var stream = fs.createReadStream(filePath);
+    stream.on('data', function(chunk) { hash.update(chunk); });
+    stream.on('error', cb);
+    stream.on('end', function() { cb(null, hash.digest('hex')); });
+}
+// Downloads dest, verifies against shaUrl if given, THEN calls cb(err). On
+// checksum mismatch the bad file is deleted before cb(err) — never left
+// behind for a caller to accidentally use.
+function downloadVerified(url, dest, shaUrl, cb) {
+    download(url, dest, function(err) {
+        if (err) { cb(err); return; }
+        if (!shaUrl) { cb(null); return; }
+        fetchText(shaUrl, function(shaErr, expected) {
+            if (shaErr) { maxApi.post('tuple_dl: checksum fetch failed (' + shaErr.message + ') — aborting, not risking an unverified binary'); cb(shaErr); return; }
+            expected = String(expected || '').trim().split(/\s+/)[0].toLowerCase();
+            sha256File(dest, function(hashErr, actual) {
+                if (hashErr) { cb(hashErr); return; }
+                if (actual !== expected) {
+                    maxApi.post('tuple_dl: CHECKSUM MISMATCH expected=' + expected + ' actual=' + actual);
+                    try { fs.unlinkSync(dest); } catch (_) {}
+                    cb(new Error('checksum mismatch')); return;
+                }
+                maxApi.post('tuple_dl: checksum OK (' + actual + ')');
+                cb(null);
+            });
+        });
+    });
+}
 
 // ── download helper (follows 301/302/303 redirects) ──────────────────────────
 function download(url, dest, cb) {
@@ -69,11 +121,11 @@ function maxToPosix(p) {
 }
 
 // ── Windows: launch branded installer (requires_reinstall=true) ───────────────
-function dlWin(url) {
+function dlWin(url, shaUrl) {
     var dest = path.join(os.tmpdir(), 'Tuple-Installer.exe');
     maxApi.post('tuple_dl: downloading → ' + dest);
-    download(url, dest, function(err) {
-        if (err) { maxApi.post('tuple_dl: download error: ' + err.message); fail('download'); return; }
+    downloadVerified(url, dest, shaUrl, function(err) {
+        if (err) { maxApi.post('tuple_dl: download error: ' + err.message); fail(/checksum/.test(err.message) ? 'checksum' : 'download'); return; }
         maxApi.post('tuple_dl: launching installer');
         var proc = cp.spawn(dest, [], { detached: true, stdio: 'ignore' });
         proc.unref();
@@ -85,11 +137,11 @@ function dlWin(url) {
 }
 
 // ── Windows: extract zip in-place (requires_reinstall=false, .amxd EBUSY skipped) ──
-function dlWinInPlace(url, amxdPath) {
+function dlWinInPlace(url, amxdPath, shaUrl) {
     var dest = path.join(os.tmpdir(), 'tuple-update.zip');
     maxApi.post('tuple_dl: downloading → ' + dest);
-    download(url, dest, function(err) {
-        if (err) { maxApi.post('tuple_dl: download error: ' + err.message); fail('download'); return; }
+    downloadVerified(url, dest, shaUrl, function(err) {
+        if (err) { maxApi.post('tuple_dl: download error: ' + err.message); fail(/checksum/.test(err.message) ? 'checksum' : 'download'); return; }
         var installDir = amxdPath ? path.dirname(path.dirname(amxdPath)) : '';
         if (!installDir) {
             maxApi.post('tuple_dl: no amxd path — cannot determine install dir');
@@ -105,11 +157,11 @@ function dlWinInPlace(url, amxdPath) {
 }
 
 // ── macOS: extract zip in-place via shell (POSIX allows replacing open files) ─
-function dlMac(url, amxdPath) {
+function dlMac(url, amxdPath, shaUrl) {
     var tempZip = path.join(os.tmpdir(), 'tuple-update.zip');
     maxApi.post('tuple_dl: downloading → ' + tempZip);
-    download(url, tempZip, function(err) {
-        if (err) { maxApi.post('tuple_dl: download error: ' + err.message); fail('download'); return; }
+    downloadVerified(url, tempZip, shaUrl, function(err) {
+        if (err) { maxApi.post('tuple_dl: download error: ' + err.message); fail(/checksum/.test(err.message) ? 'checksum' : 'download'); return; }
         // Prefer amxdPath-derived dir; fall back to saved install path file.
         // amxdPath is a Max path ("Macintosh HD:/Users/…") → convert to POSIX for the shell.
         var installDir = '';
@@ -185,14 +237,24 @@ function extractZip(zipPath, destDir, cb) {
             var outDir  = path.dirname(outPath);
             try { fs.mkdirSync(outDir, { recursive: true }); } catch(_) {}
 
+            // Write to a sidecar .tmp then fs.rename() onto outPath (same-volume rename is atomic on
+            // both Windows and POSIX) instead of writing outPath directly — a mid-write crash/EBUSY
+            // used to leave the real target half-written; now it only ever leaves an orphan .tmp, the
+            // real file stays whatever it was before (audit 2026-07-15, dlWinInPlace non-atomic).
             function write(data) {
-                fs.writeFile(outPath, data, function(werr) {
-                    if (werr && (werr.code === 'EBUSY' || werr.code === 'EPERM')) {
+                var tmpPath = outPath + '.tmp';
+                function settle(err) {
+                    if (err && (err.code === 'EBUSY' || err.code === 'EPERM')) {
                         maxApi.post('tuple_dl: skip locked: ' + e.name);
-                    } else if (werr) {
-                        errors.push(e.name + ': ' + werr.message);
+                    } else if (err) {
+                        errors.push(e.name + ': ' + err.message);
                     }
+                    if (err) { try { fs.unlinkSync(tmpPath); } catch(_) {} }
                     if (--pending === 0) cb(errors.length ? errors.join('; ') : null);
+                }
+                fs.writeFile(tmpPath, data, function(werr) {
+                    if (werr) { settle(werr); return; }
+                    fs.rename(tmpPath, outPath, settle);
                 });
             }
 

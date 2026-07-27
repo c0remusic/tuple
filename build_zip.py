@@ -6,6 +6,7 @@ Then deploy site/tuple.zip via the tuple-site worktree (see CLAUDE.md).
 
 Keep the device files validated in Max BEFORE rebuilding + deploying.
 """
+import hashlib
 import json
 import os
 import re
@@ -33,6 +34,27 @@ FILES = [
 
 CMD_SRC = os.path.join(ROOT, "installer", "Install Tuple.command")
 
+def sha256_file(path):
+    """SHA256 hex digest of a file, streamed (safe for large binaries)."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def write_sha256_sidecar(path):
+    """Writes <path>.sha256 next to the file (plain hex digest, no filename —
+    matches the format tuple_dl.js expects). Used for release integrity checks
+    (see docs/decisions.md § auto-updater checksum verification)."""
+    digest = sha256_file(path)
+    sidecar = path + ".sha256"
+    with open(sidecar, "w", encoding="utf-8") as f:
+        f.write(digest)
+    print("  sha256 " + digest + "  -> " + sidecar)
+    return digest
+
+
 missing = [src for _, src in FILES if not os.path.exists(os.path.join(ROOT, src))]
 if not os.path.exists(CMD_SRC):
     missing.append("installer/Install Tuple.command")
@@ -45,23 +67,31 @@ def sync_version():
     the version, so a release = edit VERSION only, then run this script. No more 5-place
     hand-editing / device<->site drift."""
     ver = open(os.path.join(ROOT, "VERSION"), encoding="utf-8").read().strip()
+    # critical=True targets drive the in-device auto-updater (engine + UI version
+    # strings) — a silently-missed anchor there can ship a release with a stale
+    # version and desync the updater (see docs/decisions.md, release-amxd-requires-
+    # reinstall). Site/installer targets stay WARN-only: cosmetic, not update-critical.
     targets = [
-        ("device/tuple_chord_engine.js",  r'(var TUPLE_VERSION = ")[^"]*(";)'),
-        ("device/ui/tuple_ui.html",   r'(var LOCAL_VERSION = ")[^"]*(";)'),
-        ("device/ui/tuple_ui.html", r'(<div class="ib-label">Version</div><div class="ib-val">)[^<]*(</div>)'),
-        ("site/index.html",         r'(&middot; v)[0-9][0-9.]*(</span>)'),
-        ("site/index.html",         r'("softwareVersion": ")[^"]*(",)'),
-        ("site/manual/index.html",  r'(<div>Version<b>v)[0-9][0-9.]*(</b></div>)'),
-        ("installer/tuple.iss",     r'(#define AppVersion ")[^"]*(")')
+        ("device/tuple_chord_engine.js",  r'(var TUPLE_VERSION = ")[^"]*(";)', True),
+        ("device/ui/tuple_ui.html",   r'(var LOCAL_VERSION = ")[^"]*(";)', True),
+        ("device/ui/tuple_ui.html", r'(<div class="ib-label">Version</div><div class="ib-val">)[^<]*(</div>)', False),
+        ("site/index.html",         r'(&middot; v)[0-9][0-9.]*(</span>)', False),
+        ("site/index.html",         r'("softwareVersion": ")[^"]*(",)', False),
+        ("site/manual/index.html",  r'(<div>Version<b>v)[0-9][0-9.]*(</b></div>)', False),
+        ("installer/tuple.iss",     r'(#define AppVersion ")[^"]*(")', False)
     ]
-    for rel, pat in targets:
+    for rel, pat, critical in targets:
         p = os.path.join(ROOT, rel)
         if not os.path.exists(p):
+            if critical:
+                raise SystemExit("FATAL: critical version target missing: " + rel)
             print("  SKIP: %s (not in device repo)" % rel)
             continue
         s = open(p, encoding="utf-8").read()
         ns, n = re.subn(pat, r'\g<1>' + ver + r'\g<2>', s, count=1)
         if n == 0:
+            if critical:
+                raise SystemExit("FATAL: version anchor not found in " + rel + " — auto-updater would ship a stale version")
             print("  WARN: version anchor not found in " + rel)
         elif ns != s:
             with open(p, "w", encoding="utf-8", newline="") as f:
@@ -101,6 +131,7 @@ print("built " + OUT)
 with zipfile.ZipFile(OUT) as z:
     for info in z.infolist():
         print("  %8d  %s" % (info.file_size, info.filename))
+write_sha256_sidecar(OUT)
 
 # tuple-mac.zip — macOS installer: Install Tuple.command + Tuple/ folder
 with zipfile.ZipFile(OUT_MAC, "w", zipfile.ZIP_DEFLATED) as z:
@@ -141,3 +172,4 @@ with zipfile.ZipFile(OUT_MAC) as z:
             "fail with 'bad interpreter: /bin/bash^M'. Re-checkout with LF (see .gitattributes)."
         )
     print("  guard OK: Install Tuple.command is Unix-executable (create_system=3, +x) and LF-only")
+write_sha256_sidecar(OUT_MAC)

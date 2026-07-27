@@ -1,0 +1,101 @@
+# Agent tooling & local working state — never on GitHub.
+# Directory pattern is safe here: no child negation is left to be blocked by it.
+.claude/
+.claude-crosscheck
+.worktreeinclude
+.remember/
+CLAUDE.md
+CONTEXT.md
+FUNCTIONS_GUIDE.md
+
+# docs/ policy: whitelist block at the END of this file (it must come after the
+# *.png rule below — the last matching pattern wins).
+
+# Website & legacy (not for this repo)
+website/
+push/
+*BACKUP*
+*.bak*
+Capture.PNG
+
+# Max console tee (dev tool — chord_engine.js / push2_spike.js write post() here)
+device/max_console.log
+device/push_console.log
+
+# local release helper (rebuilds site/tuple.zip)
+build_zip.py
+
+# Remotion video project (local-only video production tool — not part of the device)
+video/
+# Remotion official templates (reference checkout — all 22, local-only)
+video-templates/
+
+# Device — dev/dead/scratch files kept local, NOT on GitHub
+# chord_ui*.js = old dead jsui UI (chord_ui.js still referenced by a leftover read box)
+device/chord_ui.js
+device/chord_ui_modern.js
+# ui/ design scratch (the device only loads ui/tuple_ui.html)
+device/ui/mockups.html
+device/ui/typo.html
+# old device backup + local dev helper + vestigial npm metadata
+device/_backups/
+device/sync_ui.bat
+device/package.json
+# vl2/ = the engine's Node test bench (run locally, not part of the shipped device)
+device/vl2/
+
+# Screenshots/Media
+*.JPG
+*.PNG
+*.jpg
+*.png
+
+# Dependencies
+node_modules/
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Build outputs
+.next/
+dist/
+build/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local-only working folders (not part of the device repo)
+site/
+brand/
+discord/
+font/
+tuple-site-work/
+
+# superpowers local tooling state
+.superpowers/
+
+# interface-design skill state (extracted tokens/structure, local tooling like docs/)
+.interface-design/
+
+# docs/ is internal by default (session journals, planning, competitive notes).
+# Whitelist ONLY what an external contributor needs — one named negation each.
+# Placed LAST on purpose: the last matching pattern wins, so these negations must
+# come after the `*.png` rule above for docs/images/*.png to survive.
+docs/*
+!docs/images/
+!docs/images/**
+!docs/architecture.md
+!docs/chord-types.md

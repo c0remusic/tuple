@@ -267,7 +267,7 @@ function onbeforeload() {}
 function onloadstart()  {}
 function onloadend()    {
 	// jweb finished loading — safe to init the LiveAPI auto-sync observers now.
-	if (typeof Task !== 'undefined') { var t = new Task(function(){ _initAutoSync(); }, this); t.schedule(300); }
+	if (typeof Task !== 'undefined') { var t = new Task(function(){ _initAutoSync(); }, this); _deferredTasks.push(t); t.schedule(300); }
 	else { _initAutoSync(); }
 }
 function url()          {}
@@ -291,8 +291,8 @@ function openurl(u) {
 // ignores the duplicate 'dl' once a download is running (→ a single download).
 // handleprogress('done') clears _dlUrl, which makes the next _doDl tick stop the
 // retry loop. THIS retry/kick is what made the in-app install actually work.
-var _dlUrl = null, _dlPlatform = null, _dlAmxdPath = null, _dlAttempts = 0;
-function installupdate(url, platform) {
+var _dlUrl = null, _dlPlatform = null, _dlAmxdPath = null, _dlAttempts = 0, _dlShaUrl = null;
+function installupdate(url, platform, shaUrl) {
 	var ndl = _patcher ? _patcher.getnamed('tuple_dl') : null;
 	if (!ndl) {
 		post('tuple: installupdate — tuple_dl not found, fallback to browser\n');
@@ -303,6 +303,7 @@ function installupdate(url, platform) {
 	post('tuple: installupdate → starting node.script (platform=' + platform + ')\n');
 	_dlUrl = String(url); _dlPlatform = String(platform);
 	_dlAmxdPath = _patcher ? String(_patcher.filepath) : '';
+	_dlShaUrl = String(shaUrl || '');   // '' = no checksum asset on this release, tuple_dl skips verification
 	_dlAttempts = 0;
 	ndl.message('script', 'start');   // kick the Node.js process (no-op if already running)
 	var t = new Task(_doDl); t.schedule(1500);
@@ -311,11 +312,11 @@ function _doDl() {
 	if (!_dlUrl) return;              // cleared by handleprogress('done') → stops the retry
 	_dlAttempts++;
 	var ndl = _patcher ? _patcher.getnamed('tuple_dl') : null;
-	if (!ndl) { post('tuple: _doDl — tuple_dl gone\n'); _dlUrl = null; _dlPlatform = null; _dlAmxdPath = null; _dlAttempts = 0; return; }
+	if (!ndl) { post('tuple: _doDl — tuple_dl gone\n'); _dlUrl = null; _dlPlatform = null; _dlAmxdPath = null; _dlShaUrl = null; _dlAttempts = 0; return; }
 	post('tuple: _doDl attempt ' + _dlAttempts + '\n');
-	ndl.message('dl', _dlUrl, _dlPlatform, _dlAmxdPath);
+	ndl.message('dl', _dlUrl, _dlPlatform, _dlAmxdPath, _dlShaUrl);
 	if (_dlAttempts < 6) { var t = new Task(_doDl); t.schedule(1500); }
-	else { post('tuple: _doDl — gave up after 6 attempts\n'); _dlUrl = null; _dlPlatform = null; _dlAmxdPath = null; _dlAttempts = 0; }
+	else { post('tuple: _doDl — gave up after 6 attempts\n'); _dlUrl = null; _dlPlatform = null; _dlAmxdPath = null; _dlShaUrl = null; _dlAttempts = 0; }
 }
 // tuple_dl reports back via its outlet → obj-CE (this js) → handleprogress.
 // The message arrives as the SELECTOR 'progress <state>' (node.script outlet,
@@ -326,11 +327,11 @@ function useflats(v) { outlet(7, 'useflats', parseInt(v) !== 0 ? 1 : 0); }
 
 function handleprogress(state) {
 	if (String(state) === 'done') {
-		_dlUrl = null; _dlPlatform = null; _dlAmxdPath = null; _dlAttempts = 0;
+		_dlUrl = null; _dlPlatform = null; _dlAmxdPath = null; _dlShaUrl = null; _dlAttempts = 0;
 		outlet(7, 'updatedone');
 		post('tuple: update installed — reload the device to apply\n');
 	} else if (String(state) === 'error') {
-		_dlUrl = null; _dlPlatform = null; _dlAmxdPath = null; _dlAttempts = 0;
+		_dlUrl = null; _dlPlatform = null; _dlAmxdPath = null; _dlShaUrl = null; _dlAttempts = 0;
 		outlet(7, 'updateerror');
 		post('tuple: update download failed\n');
 	}
@@ -340,9 +341,15 @@ function handleprogress(state) {
 // CONFIG
 // =====================================================
 
+// Règle (2026-07-15) : tout changement de config qui affecte la réalisation d'un accord
+// (root/scale/octave/voicing/VL/extended) libère d'abord toute note tenue — sinon une note
+// jouée sous l'ancienne config reste sonner alors que son "identité" a changé sous elle.
+// EXT et Voice Leading le faisaient déjà ; étendu ici à key/scale/octave/voicing pour la
+// même raison (cf. audit bug-hunter du 2026-07-15).
 function key(k) {
 	k = String(k);
 	if (NOTE_TO_PC[k] !== undefined) {
+		_releaseHeld();
 		root = NOTE_TO_PC[k];
 		pushUIState();
 	}
@@ -408,6 +415,9 @@ function synclive() {
 		rn = parseInt(rn);
 		sn = String(sn).toLowerCase().trim();
 
+		// SYNC peut arriver de manière asynchrone (observateur auto-sync) pendant qu'une note
+		// est tenue — même règle que key()/rootidx() : libérer avant de changer root/scale.
+		_releaseHeld();
 		if (rn >= 0 && rn <= 11) root = rn;
 		if (LIVE_SCALE_MAP[sn] !== undefined) setscale(SCALE_NAMES_ARR[LIVE_SCALE_MAP[sn]]);
 
@@ -426,8 +436,18 @@ function synclive() {
 var _liveSyncApiRoot  = null;
 var _liveSyncApiScale = null;
 var _autoSync = false;
+// Garde-fou : onloadend (chargement jweb réel) ET le Task global (survie à un reload autowatch
+// du JS seul) planifient TOUS DEUX _initAutoSync — sur un cold load les deux tirent, créant 2 paires
+// de LiveAPI observers (double synclive() par changement Live + fuite de la 1re paire). Réinitialisé
+// à chaque (re)chargement du script (portée globale), donc reste correct après un autowatch reload.
+var _autoSyncInited = false;
+// Références retenues (au lieu de laisser `t` sortir de portée) : Max peut annuler une Task one-shot
+// dont la référence JS a été collectée avant qu'elle ne se déclenche — gotcha connu de l'engine JS de
+// Max, cf. gridInitTask/_autoSyncInitTask déjà retenues en global plus bas. Simple tableau, pas de
+// nettoyage : le volume d'appels (sync, smart-broadcast différé) est trop faible pour justifier plus.
+var _deferredTasks = [];
 function _taskDefer(fn) {
-	if (typeof Task !== 'undefined') { var t = new Task(fn, this); t.schedule(1); }
+	if (typeof Task !== 'undefined') { var t = new Task(fn, this); _deferredTasks.push(t); t.schedule(1); }
 	else { fn(); }
 }
 function setautosync(v) {
@@ -437,17 +457,20 @@ function setautosync(v) {
 }
 function _initAutoSync() {
 	if (typeof LiveAPI === 'undefined') return;
+	if (_autoSyncInited) return;   // déjà armé par l'autre planificateur (onloadend / Task global)
 	try {
 		_liveSyncApiRoot  = new LiveAPI(function(){ if (_autoSync) _taskDefer(synclive); }, 'live_set');
 		_liveSyncApiRoot.property  = 'root_note';
 		_liveSyncApiScale = new LiveAPI(function(){ if (_autoSync) _taskDefer(synclive); }, 'live_set');
 		_liveSyncApiScale.property = 'scale_name';
+		_autoSyncInited = true;
 		post('tuple: auto-sync observers ready\n');
 	} catch(e) { post('tuple: auto-sync init error: ' + e + '\n'); }
 }
 
 // Reçoit un index int (0-11) depuis live.menu
 function rootidx(v) {
+	_releaseHeld();
 	root = parseInt(v);
 	_vl2_reset();
 	pushUIState();
@@ -463,6 +486,7 @@ function scaleidx(v) {
 function setscale(s) {
 	s = String(s).toLowerCase();
 	if (SCALES[s]) {
+		_releaseHeld();
 		scale = SCALES[s];
 		scaleName = s;
 		_vl2_reset();
@@ -483,6 +507,7 @@ function pentamin()   { setscale("pentamin"); }
 function lydiandom()  { setscale("lydiandom"); }
 
 function octave(v) {
+	_releaseHeld();
 	currentOctave = parseInt(v);
 	_vl2_reset();        // le registre change : on repart à zéro (sinon la mémoire VL de
 	                     // l'ancienne octave biaise le 1er accord du nouveau registre)
@@ -490,6 +515,7 @@ function octave(v) {
 }
 
 function voicing(v) {
+	_releaseHeld();
 	currentVoicing = String(v);
 	pushConfigState();   // pas de rebuild grille : le voicing n'affecte pas les cellules
 }
@@ -497,6 +523,7 @@ function voicing(v) {
 // Reçoit un index int (0-12) depuis live.menu
 var VOICING_NAMES = ["classic","piano","open","spread","house","prog","rootlessa","rootlessb","rootless","drop2","drop3","jazz","nuhouse","trance","funk","quartal","upper","organ","frenchtouch","broken","deeptech","detroit","soul","jamiroquai","rave","sus","wide","power"];
 function voicingidx(v) {
+	_releaseHeld();
 	currentVoicing = VOICING_NAMES[parseInt(v)] || "classic";
 	_vl2_reset();
 	pushConfigState();   // pas de rebuild grille
@@ -505,7 +532,7 @@ function voicingidx(v) {
 function voiceleading(v) {
 	// Accepte "on"/"off" (toggle jsui) ET 1/0 (toggle jweb)
 	var s = String(v).toLowerCase();
-	sendNoteOff(); activeMidiNote = -1;   // libère toute note tenue → le toggle ne peut pas laisser de note coincée (no-op si rien ne sonne)
+	_releaseHeld();   // libère toute note tenue → le toggle ne peut pas laisser de note coincée (no-op si rien ne sonne)
 	voiceLeadingEnabled = (s === "on" || s === "1" || s === "true");
 	_vl2_reset();
 	pushConfigState();   // pas de rebuild grille
@@ -517,7 +544,7 @@ function resetvoiceleading() {
 
 // Reçoit "vlmode anchored" ou "vlmode relative"
 function vlmode(m) {
-	sendNoteOff(); activeMidiNote = -1;   // idem : pas de note orpheline au changement de mode
+	_releaseHeld();   // idem : pas de note orpheline au changement de mode
 	vlMode = String(m);
 	_vl2_reset();
 	pushConfigState();   // pas de rebuild grille
@@ -1141,6 +1168,12 @@ function playFlatCell(cell) {
 		case "sus2":        sus2(cell.degree);  break;
 		case "sus4":        sus4(cell.degree);  break;
 		case "m7s5":        m7s5(cell.degree);  break;
+		default:
+			// Un type absent d'ici alors qu'il est valide dans GRID_TYPES/gridTypeValid rend la case
+			// cliquable dans la grille/Push/MIDI mais SILENCIEUSE (zéro son, zéro diagnostic) — c'est
+			// exactement la classe du bug A7sus4/quartal du 2026-07-15. Échouer bruyamment ici.
+			post("playFlatCell: type de cellule inconnu '" + cell.fn + "'\n");
+			break;
 	}
 }
 
@@ -1336,8 +1369,8 @@ function _vl2_lowIntervalViolations(notes, shift) {
 }
 function _vl2_dominantThirdPc(spec) {
 	if (!spec.isDominant) return null;
-	for (var i = 0; i < spec.pcs.length; i++) if (spec.pcs[i].role==='third') return spec.pcs[i].pc;
-	return null;
+	var e = _vl2_rolePc(spec.pcs, 'third');
+	return e ? e.pc : null;
 }
 
 // --- identity ---
@@ -1345,16 +1378,16 @@ function _vl2_checkIdentity(voicing, notes, spec) {
 	var v = [], m = function(n){return((n%12)+12)%12;};
 	var ns = notes.slice().sort(function(a,b){return a-b;});
 	var pcs = new Set(ns.map(m));
-	var has = function(role){ var e=null; for(var i=0;i<spec.pcs.length;i++) if(spec.pcs[i].role===role){e=spec.pcs[i];break;} return e&&pcs.has(e.pc); };
+	var has = function(role){ var e=_vl2_rolePc(spec.pcs,role); return e&&pcs.has(e.pc); };
 	if (spec.hasSeventh) {   // guide tones sur les 7e. EXCEPTION house : 6/9 en EXT (lâche la 7e, GARDE la 3ce).
 		if (voicing !== 'house' && voicing !== 'sus' && voicing !== 'power' && !has('seventh')) v.push('guide:7e absente');
-		var hasThird = false; for(var i=0;i<spec.pcs.length;i++) if(spec.pcs[i].role==='third'){hasThird=true;break;}
+		var hasThird = !!_vl2_rolePc(spec.pcs, 'third');
 		if (voicing !== 'sus' && voicing !== 'power' && hasThird && !has('third')) v.push('guide:3ce absente');
 	}
-	if (voicing==='rootlessa'){if(pcs.has(spec.rootPc))v.push('rootless:fondamentale présente');var t3=null;for(var ii=0;ii<spec.pcs.length;ii++)if(spec.pcs[ii].role==='third'){t3=spec.pcs[ii];break;}if(t3&&m(ns[0])!==t3.pc)v.push('rootlessa:3ce absente du bas');}
-	else if (voicing==='rootlessb'){if(pcs.has(spec.rootPc))v.push('rootless:fondamentale présente');var t7=null;for(var ji=0;ji<spec.pcs.length;ji++)if(spec.pcs[ji].role==='seventh'){t7=spec.pcs[ji];break;}if(t7&&m(ns[0])!==t7.pc)v.push('rootlessb:7e absente du bas');}
+	if (voicing==='rootlessa'){if(pcs.has(spec.rootPc))v.push('rootless:fondamentale présente');var t3=_vl2_rolePc(spec.pcs,'third');if(t3&&m(ns[0])!==t3.pc)v.push('rootlessa:3ce absente du bas');}
+	else if (voicing==='rootlessb'){if(pcs.has(spec.rootPc))v.push('rootless:fondamentale présente');var t7=_vl2_rolePc(spec.pcs,'seventh');if(t7&&m(ns[0])!==t7.pc)v.push('rootlessb:7e absente du bas');}
 	else if (voicing==='jazz'||voicing==='nuhouse'||voicing==='house'||voicing==='quartal'||voicing==='upper'||voicing==='rootless'||voicing==='organ'||voicing==='broken'||voicing==='deeptech') { if (pcs.has(spec.rootPc)) v.push('rootless:fondamentale présente'); }
-	else if (voicing==='sus') { var t=null,ti; for(ti=0;ti<spec.pcs.length;ti++)if(spec.pcs[ti].role==='third'){t=spec.pcs[ti];break;} if(t&&pcs.has(t.pc))v.push('sus:3ce présente'); }
+	else if (voicing==='sus') { var t=_vl2_rolePc(spec.pcs,'third'); if(t&&pcs.has(t.pc))v.push('sus:3ce présente'); }
 	else if (voicing==='power') { var fp=m(spec.rootPc+7),pi; for(pi=0;pi<ns.length;pi++)if(m(ns[pi])!==spec.rootPc&&m(ns[pi])!==fp){v.push('power:note hors root/5te');break;} }
 	else if (voicing==='drop2'||voicing==='drop3') {
 		if (ns.length < 4) { v.push('dropN:<4 voix'); }
@@ -1416,10 +1449,10 @@ var extendedOn = false;   // toggle EXTENDED : enrichit chaque accord avec ses t
 // Réutilise scalePcs. Sans scalePcs (emprunts) ou sans 3ce (sus) : inchangé.
 function _vl2_enrichSpec(spec){
 	if(!spec||!spec.scalePcs)return spec;
-	var hasRole=function(r){for(var j=0;j<spec.pcs.length;j++)if(spec.pcs[j].role===r)return true;return false;};
-	var third=null,i;for(i=0;i<spec.pcs.length;i++)if(spec.pcs[i].role==='third'){third=spec.pcs[i];break;}
+	var hasRole=function(r){return !!_vl2_rolePc(spec.pcs,r);};
+	var third=_vl2_rolePc(spec.pcs,'third');
 	if(!third){   // sus / sans 3ce
-		var sus=null;for(i=0;i<spec.pcs.length;i++)if(spec.pcs[i].role==='sus'){sus=spec.pcs[i];break;}
+		var sus=_vl2_rolePc(spec.pcs,'sus');
 		if(sus&&spec.hasSeventh&&!hasRole('ninth'))   // 7sus4 -> 9sus4 (la 9 est diatonique)
 			return {pcs:spec.pcs.slice().concat([{pc:spec.scalePcs[(spec.degree+1)%7],role:'ninth'}]),rootPc:spec.rootPc,fn:spec.fn,degree:spec.degree,scalePcs:spec.scalePcs,hasSeventh:spec.hasSeventh,isDominant:spec.isDominant};
 		return spec;   // sus sans 7e : laissé tel quel
@@ -1443,7 +1476,7 @@ function _vl2_specFor(fn,d,colorSemis,colorType){
 }
 // Toggle UI : "extended 1/0". Orthogonal au voicing.
 function extended(v){
-	sendNoteOff(); activeMidiNote = -1;    // libère toute note tenue (comme voiceleading/vlmode) → le toggle ne laisse pas de note coincée
+	_releaseHeld();    // libère toute note tenue (comme voiceleading/vlmode) → le toggle ne laisse pas de note coincée
 	extendedOn=(parseInt(v)===1);
 	_vl2_reset();                          // changer de mode = nouvelle réalisation
 	outlet(7,'extended',extendedOn?1:0);   // reflète l'état au bouton EXT
@@ -1458,6 +1491,18 @@ function _vl2_specKey(s) {
 var _vl2_ROLE_ORDER=['root','sus','third','fifth','sixth','seventh','ninth','eleventh','thirteenth'];
 function _vl2_vs(a){return a.slice().sort(function(x,y){return x-y;});}
 function _vl2_m(n){return((n%12)+12)%12;}
+// "Trouver le pc-entry d'un rôle donné" était réimplémenté ~15x en boucle inline (closures roleP/role/has,
+// boucles nues) à travers checkIdentity et les transforms de voicing — dédup pure, sortie identique
+// (audit 2026-07-15). Retourne l'entry {pc,role} entière (pas juste .pc) : la plupart des sites l'utilisent
+// telle quelle ou lisent .pc dessus, quelques-uns ont juste besoin d'un test d'existence (!!résultat).
+function _vl2_rolePc(pcs,role){for(var i=0;i<pcs.length;i++)if(pcs[i].role===role)return pcs[i];return null;}
+// pc-placement (méthode house) : place chaque pitch-class dans [floor,floor+11], trie, dédup —
+// dédup de nuhouse/organ/broken (audit tech-debt 2026-07-18, sortie identique). NE remplace PAS
+// les variantes pm(pc-floor) de jazz/deeptech (floor non-mult-12 → comportement volontairement différent).
+function _vl2_pcCluster(pcs,floor,pm){
+	return pcs.map(function(pc){return floor+pm(pc);}).sort(function(a,b){return a-b;})
+		.filter(function(n,i,a){return i===0||n!==a[i-1];});
+}
 function _vl2_rotOf(arr){
 	var out=[],r=_vl2_vs(arr);
 	for(var i=0;i<arr.length;i++){out.push(r.slice());r=_vl2_vs(r.slice(1).concat([r[0]+12]));}
@@ -1536,7 +1581,7 @@ var _vl2_T={
 	house:function(c,oct,spec){
 		if(c.length<3)return[_vl2_vs(c)];oct=oct||0;
 		var hm=function(n){return((n%12)+12)%12;};
-		var roleP=function(r){if(!spec)return null;var e=null,j;for(j=0;j<spec.pcs.length;j++)if(spec.pcs[j].role===r){e=spec.pcs[j];break;}return e?e.pc:null;};
+		var roleP=function(r){if(!spec)return null;var e=_vl2_rolePc(spec.pcs,r);return e?e.pc:null;};
 		var thirteenth=roleP('thirteenth'),ninth=roleP('ninth');
 		if(thirteenth!=null&&ninth!=null){   // EXTENDED → 6/9 (3-5-6-9, sans la 7e)
 			var i6=[roleP('third'),roleP('fifth'),thirteenth,ninth],seq=[],q;
@@ -1577,7 +1622,7 @@ var _vl2_T={
 	// en #11 sur accord majeur (lydien). 1 main, rootless, ABSOLUTE. Besoin de scalePcs (sinon fallback).
 	quartal:function(c,oct,spec){
 		if(!spec||!spec.scalePcs||c.length<3)return[_vl2_vs(c)];
-		var roleP=function(r){var e=null,i;for(i=0;i<spec.pcs.length;i++)if(spec.pcs[i].role===r){e=spec.pcs[i];break;}return e?e.pc:null;};
+		var roleP=function(r){var e=_vl2_rolePc(spec.pcs,r);return e?e.pc:null;};
 		var third=roleP('third'),fifth=roleP('fifth'),seventh=roleP('seventh');
 		if(third==null||seventh==null)return[_vl2_vs(c)];
 		var eleven=spec.scalePcs[(spec.degree+3)%7];
@@ -1590,10 +1635,10 @@ var _vl2_T={
 	// Dominantes uniquement (fallback en amont). Pas de scalePcs (triade chromatique depuis la fonda).
 	upper:function(c,oct,spec){
 		if(!spec||!spec.isDominant)return[_vl2_vs(c)];
-		var roleP=function(r){var e=null,i;for(i=0;i<spec.pcs.length;i++)if(spec.pcs[i].role===r){e=spec.pcs[i];break;}return e?e.pc:null;};
+		var roleP=function(r){var e=_vl2_rolePc(spec.pcs,r);return e?e.pc:null;};
 		var third=roleP('third'),seventh=roleP('seventh');
 		if(third==null||seventh==null)return[_vl2_vs(c)];
-		var ninth=null,ni;for(ni=0;ni<spec.pcs.length;ni++)if(spec.pcs[ni].role==='ninth'){ninth=spec.pcs[ni];break;}
+		var ninth=_vl2_rolePc(spec.pcs,'ninth');
 		var iv9=ninth?_vl2_m(ninth.pc-spec.rootPc):-1;
 		var usRoot=_vl2_m(spec.rootPc+((iv9===1||iv9===3)?1:2));   // US bII (altered) ou US II (lydien)
 		var shell=_vl2_stackFromFloor([third,seventh],48+(oct||0));                         // main gauche ~C3
@@ -1607,8 +1652,7 @@ var _vl2_T={
 	nuhouse:function(c,oct){
 		if(c.length<3)return[_vl2_vs(c)];oct=oct||0;
 		var pm=function(n){return((n%12)+12)%12;},pcs=c.slice(1).map(pm),floor=48+oct;
-		var cl=pcs.map(function(pc){return floor+pm(pc);}).sort(function(a,b){return a-b;})
-			.filter(function(n,i,a){return i===0||n!==a[i-1];});
+		var cl=_vl2_pcCluster(pcs,floor,pm);
 		if(cl.length>=2)cl[1]+=12;
 		return _vl2_rotOf(_vl2_vs(cl));   // rotations → VL chaud (canonique = cluster aéré, 1re)
 	},
@@ -1657,7 +1701,7 @@ var _vl2_T={
 	organ:function(c,oct){
 		if(c.length<3)return[_vl2_vs(c)];
 		var pm=function(n){return((n%12)+12)%12;},pcs=c.slice(1).map(pm),floor=60+(oct||0);
-		var cl=pcs.map(function(pc){return floor+pm(pc);}).sort(function(a,b){return a-b;}).filter(function(n,i,a){return i===0||n!==a[i-1];}).slice(0,5);
+		var cl=_vl2_pcCluster(pcs,floor,pm).slice(0,5);
 		if(cl.length>=2){var r=_vl2_vs(cl);r[r.length-2]-=12;cl=_vl2_vs(r);}   // OPEN : aère le voicing
 		return _vl2_rotOf(cl);
 	},
@@ -1676,16 +1720,30 @@ var _vl2_T={
 	broken:function(c,oct){   // FIX REGISTRE : placement par pitch-class (méthode house), registre borné [48,59]
 		if(c.length<3)return[_vl2_vs(c)];
 		var pm=function(n){return((n%12)+12)%12;},pcs=c.slice(1).map(pm),floor=48+(oct||0);
-		var cl=pcs.map(function(pc){return floor+pm(pc);}).sort(function(a,b){return a-b;}).filter(function(n,i,a){return i===0||n!==a[i-1];});
+		var cl=_vl2_pcCluster(pcs,floor,pm);
 		return _vl2_rotOf(_vl2_vs(cl).slice(0,6));
 	},
 	// deeptech — dub techno : m7 rootless, dark mais PROPRE. pc-placement borné [44,55] (remonté de 40
 	// → moins boueux) + anti-boue (écarte les secondes mineures des 9e/étendus). floor 44 ≠ mult-12 → pm(pc-floor).
-	deeptech:function(c,oct){
+	deeptech:function(c,oct,spec){
 		if(c.length<3)return[_vl2_vs(c)];
 		var pm=function(n){return((n%12)+12)%12;},pcs=c.slice(1).map(pm),floor=44+(oct||0);
 		var cl=pcs.map(function(pc){return floor+pm(pc-floor);}).sort(function(a,b){return a-b;}).filter(function(n,i,a){return i===0||n!==a[i-1];});
-		return _vl2_rotOf(_vl2_deMud(_vl2_vs(cl).slice(0,4)));
+		if(cl.length>4&&spec){
+			// EXTENDED ajoute 9e/11e/13e au spec -> cl peut dépasser 4 notes. Le .slice(0,4) aveugle coupait
+			// alors la 3ce ou la 7e selon leur position dans le cluster (checkIdentity rejette ENSUITE tous
+			// les candidats, sur tous les octaves -> silence total). Fix : garder la 3ce+7e (guide tones,
+			// identité du m7) en priorité, ne compléter qu'avec les tensions les plus graves. Bug trouvé le
+			// 2026-07-15 en prouvant l'atteignabilité du fallback legacy v1 (item #7 de l'audit).
+			var g3=_vl2_rolePc(spec.pcs,'third'),g7=_vl2_rolePc(spec.pcs,'seventh');
+			var guidePcs={};if(g3)guidePcs[_vl2_m(g3.pc)]=1;if(g7)guidePcs[_vl2_m(g7.pc)]=1;
+			var kept=cl.filter(function(n){return guidePcs[pm(n)];});
+			var rest=cl.filter(function(n){return !guidePcs[pm(n)];});   // cl déjà trié croissant -> rest = tensions du grave à l'aigu
+			cl=kept.concat(rest.slice(0,Math.max(0,4-kept.length)));
+		} else {
+			cl=cl.slice(0,4);
+		}
+		return _vl2_rotOf(_vl2_deMud(_vl2_vs(cl)));
 	},
 	detroit:function(c,oct){
 		if(c.length<3)return[_vl2_vs(c)];
@@ -1724,7 +1782,7 @@ var _vl2_T={
 	sus:function(c,oct,spec){
 		if(!spec||!spec.scalePcs)return[_vl2_vs(c)];
 		var pm=function(n){return((n%12)+12)%12;};
-		var role=function(r){var e=null,k;for(k=0;k<spec.pcs.length;k++)if(spec.pcs[k].role===r){e=spec.pcs[k];break;}return e?e.pc:null;};
+		var role=function(r){var e=_vl2_rolePc(spec.pcs,r);return e?e.pc:null;};
 		var two=spec.scalePcs[(spec.degree+1)%7],fifth=role('fifth'),seventh=role('seventh');
 		var seq=[spec.rootPc,two];if(fifth!=null)seq.push(fifth);if(seventh!=null)seq.push(seventh);
 		var floor=48+(oct||0),out=[],cur=floor-1,i,n;
@@ -1755,7 +1813,7 @@ function _vl2_stabilize(notes,spec,target){
 		out.push(top+1+m(pc-m(top+1)));
 	}
 	while(out.length>Math.min(target,6)){
-		var fifth=null;for(var i=0;i<spec.pcs.length;i++){if(spec.pcs[i].role==='fifth'){fifth=spec.pcs[i];break;}}
+		var fifth=_vl2_rolePc(spec.pcs,'fifth');
 		var idx=-1;if(fifth){for(var i=0;i<out.length;i++){if(m(out[i])===fifth.pc){idx=i;break;}}}
 		out.splice(idx>=0?idx:out.length-1,1);
 	}
@@ -1769,12 +1827,21 @@ function _vl2_realize(spec,voicing,opts){
 	var octShift=regBase-48;
 	var want=(opts&&opts.targetVoices!=null)?opts.targetVoices:null;
 	var vc=voicing,fallback=null;
-	if((vc==='rootlessa'||vc==='rootlessb')&&!spec.hasSeventh){fallback=vc;vc='classic';}   // rootlessa/b : triade rootless = 2 notes trop maigres (besoin de ≥3 via rootlessClose) → fallback classic. jazz/house/nuhouse font LEUR triade rootless (cohérent avec leur 7e, fini le saut fonda-présente↔rootless).
-	if(vc==='quartal'&&(!spec.hasSeventh||!spec.scalePcs)){fallback=vc;vc='classic';}   // quartal a besoin de la 7e + la gamme
+	if((vc==='rootlessa'||vc==='rootlessb'||vc==='rootless')&&!spec.hasSeventh){fallback=vc;vc='classic';}   // rootlessa/b/rootless : triade rootless = 2 notes trop maigres (besoin de ≥3 via rootlessClose) → fallback classic. jazz/house/nuhouse font LEUR triade rootless (cohérent avec leur 7e, fini le saut fonda-présente↔rootless). ⚠️ 'rootless' (générique, A↔B fusionnés) manquait ici alors qu'il partage EXACTEMENT le même transform _vl2_rootlessClose que rootlessa/b → sur triade, 100% des candidats rejetés (checkIdentity exige rootless, le fallback interne renvoie la fondamentale) — Bug trouvé le 2026-07-15 en prouvant l'atteignabilité du fallback legacy v1 (item #7 de l'audit).
+	// quartal a besoin de la 7e + la gamme + une VRAIE 3ce (sus4/sus2 n'en ont pas — son fallback
+	// interne renvoie alors l'accord AVEC la fondamentale, ce qui viole l'identité rootless de
+	// quartal et vide silencieusement tous les candidats — Bug: A7sus4 muet, 2026-07-14).
+	if(vc==='quartal'&&(!spec.hasSeventh||!spec.scalePcs||!spec.pcs.some(function(p){return p.role==='third';}))){fallback=vc;vc='classic';}
 	if(vc==='sus'&&!spec.scalePcs){fallback=vc;vc='classic';}   // sus a besoin de la gamme (le 2)
 	if(vc==='upper'&&!spec.isDominant){fallback=vc;vc='classic';}   // upper n'a de sens que sur les dominantes
 	if(vc==='drop3'&&spec.pcs.length<4){fallback=vc;vc='drop2';}
 	if(vc==='drop2'&&spec.pcs.length<4){fallback=fallback||vc;vc='classic';}
+	// Garde inerte aujourd'hui (tous les specs ont ≥3 pcs) mais évite la classe de bug A7sus4 : ces 6
+	// voicings rootless-identity ont un early-return interne `c.length<3 -> [vsort(c)]` qui renvoie un
+	// accord AVEC la fondamentale dès qu'il manque une note — _vl2_checkIdentity le rejetterait (identité
+	// rootless violée) et viderait tous les candidats en silence, comme quartal avant son fix. Fallback
+	// explicite au lieu de compter sur l'early-return interne, cohérent avec les gardes ci-dessus.
+	if((vc==='house'||vc==='jazz'||vc==='nuhouse'||vc==='organ'||vc==='broken'||vc==='deeptech')&&spec.pcs.length<3){fallback=vc;vc='classic';}
 	// classic VL off : position fondamentale (root en basse, empilé au-dessus). VL ON : la boucle générale
 	// génère les renversements et le VL invertit pour lisser — MAIS à froid (1er accord / hover) le sélecteur
 	// VERROUILLE la canonique (= position fondamentale, cf. cold-lock classic dans _vl2_select). Défaut = root, VL peut inverser.
@@ -1837,9 +1904,13 @@ var _vl2_W_jazz={
 };
 var _vl2_JAZZ_VC={rootlessa:1,rootlessb:1,rootless:1,drop2:1,drop3:1,house:1,jazz:1,nuhouse:1,quartal:1,upper:1,organ:1,frenchtouch:1,broken:1,deeptech:1,sus:1,wide:1};
 function _vl2_pickW(vc){return _vl2_JAZZ_VC[vc]?_vl2_W_jazz:_vl2_W;}
-function _vl2_movCost(prev,cand,w){
+// prevSorted=true : `prev` est déjà trié (appelant l'a mis en cache — voir _vl2_select) -> saute le tri
+// interne. Défaut false (comportement inchangé) car aussi appelé depuis _sg_fluid avec un `ref` non garanti
+// trié (lastChordNotes/activeNotes) — audit perf 2026-07-15 : évite de retrier l'invariant st.voices à
+// chaque candidat de la boucle chaude de sélection VL.
+function _vl2_movCost(prev,cand,w,prevSorted){
 	if(!w)w=_vl2_W;
-	var a=_vl2_vs(prev),b=_vl2_vs(cand),n=Math.min(a.length,b.length);
+	var a=prevSorted?prev:_vl2_vs(prev),b=_vl2_vs(cand),n=Math.min(a.length,b.length);
 	var tot=Math.abs(a.length-b.length)*w.countDiff;
 	var bObj={},_bi,commons=0;
 	for(_bi=0;_bi<b.length;_bi++) bObj[b[_bi]]=true;
@@ -1863,20 +1934,19 @@ function _vl2_movCost(prev,cand,w){
 	if(crosses)tot+=crosses*w.crossing;
 	return tot;
 }
-function _vl2_harmBonus(prev,cand,opts,w){
+function _vl2_harmBonus(prev,cand,opts,w,prevSorted){
 	var ps=opts.prevSpec,sp=opts.spec;if(!ps||!sp||!prev||!prev.length)return 0;
 	if(!w)w=_vl2_W;
-	var a=_vl2_vs(prev),b=_vl2_vs(cand),n=Math.min(a.length,b.length),bonus=0,chrom=0;
+	var a=prevSorted?prev:_vl2_vs(prev),b=_vl2_vs(cand),n=Math.min(a.length,b.length),bonus=0,chrom=0;
 	var apcs={},bpcs={},_pc;
 	for(_pc=0;_pc<a.length;_pc++) apcs[_vl2_m(a[_pc])]=true;
 	for(_pc=0;_pc<b.length;_pc++) bpcs[_vl2_m(b[_pc])]=true;
 	if(ps.isDominant){
-		var tri3=null,tri7=null;
-		for(var i=0;i<ps.pcs.length;i++){if(ps.pcs[i].role==='third')tri3=ps.pcs[i];if(ps.pcs[i].role==='seventh')tri7=ps.pcs[i];}
+		var tri3=_vl2_rolePc(ps.pcs,'third'),tri7=_vl2_rolePc(ps.pcs,'seventh');
 		if(tri3&&apcs[tri3.pc]&&bpcs[_vl2_m(tri3.pc+1)])bonus+=w.tendency;
 		if(tri7&&apcs[tri7.pc]&&bpcs[_vl2_m(tri7.pc-1)])bonus+=w.tendency;
 		if(_vl2_m(ps.rootPc-sp.rootPc)===7){
-			var thi=null;for(var i=0;i<sp.pcs.length;i++) if(sp.pcs[i].role==='third'){thi=sp.pcs[i];break;}
+			var thi=_vl2_rolePc(sp.pcs,'third');
 			if(tri7&&thi&&apcs[tri7.pc]&&bpcs[thi.pc]&&!bpcs[tri7.pc])bonus+=w.tendency;
 		}
 	}
@@ -1894,12 +1964,16 @@ function _vl2_select(cands,opts){
 	var same=function(a,b){if(a.length!==b.length)return false;for(var i=0;i<a.length;i++)if(a[i]!==b[i])return false;return true;};
 	if(mode==='anchor'&&st.recall.has(key)){var nn=st.recall.get(key).slice();st.voices=nn.slice();return nn;}
 	var first=st.voices===null,best=null,bestC=Infinity;
+	// st.voices est invariant sur toute la boucle candidats -> trié UNE fois ici plutôt que 2x par
+	// candidat dans movCost+harmBonus (audit perf 2026-07-15). c.notes (varie par candidat) reste
+	// trié à l'intérieur de chaque fonction, inchangé.
+	var stSorted=first?null:_vl2_vs(st.voices);
 	for(var ci=0;ci<cands.length;ci++){
 		var c=cands[ci],cost;
 		// ABSOLUTE (registre fixe) : à froid on VERROUILLE la forme canonique signature (sinon la proximité-centre choisirait une rotation/octave secondaire et casserait l'identité). Les candidats ne servent qu'au VL chaud.
 		if(first){cost=(c.canonical?((opts.absolute||opts.voicing==='classic')?-1000:0):3)+Math.abs(mean(c.notes)-center);}   // classic : à froid = position fondamentale (canonique verrouillée) ; le VL chaud peut inverser
 		else{
-			cost=_vl2_movCost(st.voices,c.notes,w)+_vl2_harmBonus(st.voices,c.notes,opts,w);
+			cost=_vl2_movCost(stSorted,c.notes,w,true)+_vl2_harmBonus(stSorted,c.notes,opts,w,true);
 			if(mode==='flow'){
 				var dev=Math.abs(mean(c.notes)-center);
 				cost+=w.spring*dev*dev;
@@ -1961,6 +2035,63 @@ function _vl2_previewNotes(fn,d,colorSemis,colorType){
 	_vl2_st.voices=sv;_vl2_st.recall=sr;                               // restore (zéro pollution)
 	return notes;
 }
+// Re-réalise les notes d'UNE entrée de progression selon son (fn,deg,colorSemis,
+// colorType,voicing,vlMode), en isolation TOTALE de l'état VL live (_vl2_st /
+// _vl2_prevSpec) — sinon re-voicer une carte de progression casserait le
+// prochain accord joué sur la grille (cross-review 2026-07-20).
+// prevEntry = l'entrée PRÉCÉDENTE de la progression (ou null si idx===0 / hors
+// contexte) — sert de "prevSpec" local pour le lissage vlMode==="auto".
+// Ne modifie PAS l'entrée passée ; retourne le tableau de notes ou null.
+function _revoiceEntry(entry, prevEntry) {
+	if (!entry) return null;
+	var spec = _vl2_specFor(entry.fn, entry.deg, entry.colorSemis, entry.colorType);
+	if (!spec) return null;
+	var vc = entry.voicing || currentVoicing;
+	var regBase = _vl2_regBase();
+	var rootPos = (entry.vlMode !== "auto");   // lock (ou tout mode futur ≠ auto) : position canonique, pas de lissage
+	var cands = _vl2_realize(spec, vc, { regBase: regBase, rootPos: rootPos });
+	if (!cands.length) return null;
+	var selCtr = _vl2_selCtr(cands);
+	var key = _vl2_specKey(spec) + '|' + vc + '|' + selCtr;
+	var prevSpec = null;
+	if (entry.vlMode === "auto" && prevEntry) {
+		prevSpec = _vl2_specFor(prevEntry.fn, prevEntry.deg, prevEntry.colorSemis, prevEntry.colorType);
+	}
+	var mode = (entry.vlMode === "auto" && prevSpec) ? "flow" : "anchor";
+	// État VL LOCAL — jamais _vl2_st global. Seedé avec les notes de l'entrée
+	// précédente quand auto+prevEntry existent, sinon null (anchor, pas de lissage) :
+	// sans ce seed, select() voit toujours st.voices===null (first=true) et le
+	// lissage/harmonicBonus/flow (selector.js branche "else") ne s'exécute JAMAIS —
+	// bug trouvé par le bench Tâche 4 (_f0_revoice_bench.mjs), confirmé sur
+	// site/vl2/selector.js:120-158.
+	var seedVoices = (entry.vlMode === "auto" && prevEntry && prevEntry.notes && prevEntry.notes.length) ? prevEntry.notes.slice() : null;
+	var localSt = { voices: seedVoices, recall: new Map() };
+	var savedSt = _vl2_st, savedPrev = _vl2_prevSpec;   // filet supplémentaire : si _vl2_select touchait _vl2_st par accident
+	_vl2_st = localSt;
+	var notes;
+	try {
+		notes = _vl2_select(cands, { mode: mode, center: selCtr, key: key, voicing: vc, spec: spec, prevSpec: prevSpec, absolute: _vl2_ABSOLUTE.has(cands[0].voicing) });
+	} finally {
+		_vl2_st = savedSt; _vl2_prevSpec = savedPrev;   // restore inconditionnel (même si _vl2_select lève)
+	}
+	return notes;
+}
+
+// Re-réalise progression[idx] PUIS propage aux entrées SUIVANTES tant qu'elles
+// sont en vlMode "auto" (elles dépendent du prevSpec de la précédente, qui vient
+// de changer). S'arrête à la première entrée "lock" (figée, on ne la touche pas)
+// ou à la fin de la progression. Mute progression[] EN PLACE. Ne broadcast pas.
+function _recascadeFrom(idx) {
+	if (idx < 0 || idx >= progression.length) return;
+	var i, prev, notes;
+	for (i = idx; i < progression.length; i++) {
+		prev = (i > 0) ? progression[i - 1] : null;
+		notes = _revoiceEntry(progression[i], prev);
+		if (notes) progression[i].notes = notes;
+		if (i > idx && progression[i].vlMode !== "auto") break;   // entrée figée suivante : stop la propagation
+	}
+}
+
 function preview(fn,d){
 	var notes=_vl2_previewNotes(String(fn),parseInt(d),0,'');
 	if(notes&&notes.length)outlet(7,['previewnotes'].concat(notes));
@@ -2052,6 +2183,17 @@ function sendNoteOff() {
 	outlet(7, "clearnotes");  // efface le clavier moniteur
 }
 
+// Libère toute note tenue AVANT de muter une config qui change l'identité de la note (root/
+// scale/octave/voicing/VL/extended/sync) — sinon une note jouée sous l'ancienne config reste
+// sonner alors que sa config a changé sous elle. sendNoteOff() seul ne suffit pas : il faut
+// aussi armer activeMidiNote=-1, sinon le dédoublonnage de midinote() (pitch===activeMidiNote)
+// avale silencieusement le prochain appui de la même touche ("touche morte", trouvé à l'audit
+// du 2026-07-15 — état caché sur 2 globals qui doivent rester réinitialisés ensemble).
+function _releaseHeld() {
+	sendNoteOff();
+	activeMidiNote = -1;
+}
+
 function sendChord(name, notes) {
 	// Voicing TOUJOURS via vl2 (15 voicings) ; le bouton VL ne pilote que le lissage dynamique.
 	// ⚠️ La VÉRITÉ = lastFn/lastDegree (posés par chaque fonction d'accord) ; l'argument `notes`
@@ -2065,7 +2207,9 @@ function sendChord(name, notes) {
 	_emitNotes(notes);
 	if (captureMode) captureChord(name);       // progression -> clip (capture si ON)
 	outlet(7, "active", lastFn, lastDegree);   // highlight grille
-	if (smartOn) { _sg_remember(); _sg_broadcast(); }   // smart chords : recompute heat-map
+	if (smartOn) { _sg_remember(); _taskDefer(_sg_broadcast); }   // smart chords : _sg_remember (léger) reste inline,
+	// _sg_broadcast (recalcule _vl2_realize sur ~50 cellules) est différé hors du chemin d'émission de l'accord —
+	// sinon il ajoute du jitter sur le thread bas-priorité de Max juste après avoir joué la note (audit 2026-07-15).
 	outlet(7, ["notes"].concat(activeNotes));  // → clavier moniteur
 }
 
@@ -2109,7 +2253,10 @@ function _progEntry(name, notesArr) {
 		deg: (lastFn === "color" ? -1 : lastDegree),   // -1 = emprunt (violet) ; 0..6 = degré
 		fn: lastFn,                                     // re-dérivation (substituts/voicings/suite Push)
 		colorSemis: lastColorSemis, colorType: lastColorType,
-		notes: notesArr.slice()
+		notes: notesArr.slice(),
+		voicing: currentVoicing,   // style figé à la capture (F0 : toujours explicite, jamais "auto" — cf. design §2.1)
+		vlMode: "auto",            // "auto" = VL lisse relativement à l'entrée précédente ; "lock" = inversion figée (tranche I)
+		inv: 0                     // offset d'inversion, pertinent seulement si vlMode==="lock" (tranche I)
 	};
 }
 
@@ -2429,6 +2576,34 @@ function _readClipNotes(clip) {
 }
 
 // Transforme le clip sélectionné : chaque déclencheur -> son accord Tuple, au même temps/durée/vélo.
+// Transform PUR : déclencheurs -> notes d'accords. AUCUN appel LiveAPI ici — ne touche
+// que l'état harmonique (grille, VL, dispatch d'accord). Extrait de chordify() pour que
+// la logique "trigger -> accord" soit testable/portable sans LiveAPI factice (2026-07-15,
+// item d'audit "extraire LiveAPI du moteur").
+function _chordifyNotes(trigs) {
+	trigs = trigs.slice().sort(function(a, b){ return a.start - b.start; });
+	var _sv = _vl2_st.voices, _sr = _vl2_st.recall, _sp = _vl2_prevSpec;   // snapshot VL (+ prevSpec, sinon le
+	// prochain accord live après un Chordify est scoré contre le dernier accord chordifié — bug latent trouvé
+	// à l'audit du 2026-07-15, _vl2_play() mute _vl2_prevSpec en dehors de ce snapshot).
+	_vl2_st.voices = null; _vl2_st.recall = new Map();  // repart à zéro -> rejoue la séquence proprement (VL)
+	var out = [], i, k;
+	_chordifyMode = true;
+	for (i = 0; i < trigs.length; i++) {
+		var idx = trigs[i].pitch - MIDI_BASE;
+		if (idx < 0 || idx >= flatGrid.length) continue;   // pas une note de la grille Tuple -> on saute
+		_chordifyResult = null;
+		playFlatCell(flatGrid[idx]);                       // -> sendChord (mode chordify) -> _chordifyResult = voicing
+		var ch = _chordifyResult;
+		if (ch && ch.length) for (k = 0; k < ch.length; k++) {
+			out.push({ pitch: ch[k], start_time: trigs[i].start, duration: trigs[i].dur, velocity: (trigs[i].vel > 0 ? trigs[i].vel : 100) });
+		}
+	}
+	_chordifyMode = false;
+	_vl2_st.voices = _sv; _vl2_st.recall = _sr; _vl2_prevSpec = _sp;   // restore VL (le jeu live n'est pas perturbé)
+	return out;
+}
+
+// Orchestration LiveAPI SEULE : lit le clip, délègue le transform à _chordifyNotes(), réécrit le clip.
 function chordify() {
 	try {
 		var clip = new LiveAPI(function(){}, "live_set view detail_clip");
@@ -2436,23 +2611,7 @@ function chordify() {
 		if (!clip || !clip.id || parseInt(clip.id) === 0) { outlet(7, "clipnoslot"); post("chordify: aucun clip selectionne\n"); return; }
 		var trigs = _readClipNotes(clip);
 		if (!trigs.length) { outlet(7, "clipempty"); post("chordify: clip vide\n"); return; }
-		trigs.sort(function(a, b){ return a.start - b.start; });
-		var _sv = _vl2_st.voices, _sr = _vl2_st.recall;     // snapshot VL
-		_vl2_st.voices = null; _vl2_st.recall = new Map();  // repart à zéro -> rejoue la séquence proprement (VL)
-		var out = [], i, k;
-		_chordifyMode = true;
-		for (i = 0; i < trigs.length; i++) {
-			var idx = trigs[i].pitch - MIDI_BASE;
-			if (idx < 0 || idx >= flatGrid.length) continue;   // pas une note de la grille Tuple -> on saute
-			_chordifyResult = null;
-			playFlatCell(flatGrid[idx]);                       // -> sendChord (mode chordify) -> _chordifyResult = voicing
-			var ch = _chordifyResult;
-			if (ch && ch.length) for (k = 0; k < ch.length; k++) {
-				out.push({ pitch: ch[k], start_time: trigs[i].start, duration: trigs[i].dur, velocity: (trigs[i].vel > 0 ? trigs[i].vel : 100) });
-			}
-		}
-		_chordifyMode = false;
-		_vl2_st.voices = _sv; _vl2_st.recall = _sr;         // restore VL (le jeu live n'est pas perturbé)
+		var out = _chordifyNotes(trigs);
 		clip.call("remove_notes_extended", 0, 128, 0, 1000000);
 		clip.call("add_new_notes", { notes: out });
 		outlet(7, "chordifydone", out.length);
