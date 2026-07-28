@@ -7,6 +7,7 @@
 CLAUDE.md
 CONTEXT.md
 FUNCTIONS_GUIDE.md
+PORTABILITE-CONFIG.md
 
 # docs/ policy: whitelist block at the END of this file (it must come after the
 # *.png rule below — the last matching pattern wins).
