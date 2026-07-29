@@ -1,0 +1,69 @@
+name: Test Mac Installer
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'device/**'
+      - 'installer/**'
+      - 'build_zip.py'
+      - '.github/workflows/test-installer.yml'
+  pull_request:
+    paths:
+      - 'device/**'
+      - 'installer/**'
+      - 'build_zip.py'
+
+jobs:
+  # Build the mac zip on WINDOWS — that's the real release machine. zipfile defaults
+  # create_system to 0 (FAT) on Windows, which makes macOS drop the .command exec bit.
+  # Building here (not on macOS) is what reproduces the actual shipping artifact.
+  build-mac-zip-on-windows:
+    name: Build mac zip on Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build ZIP (build_zip.py self-guards the exec bit)
+        run: python build_zip.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tuple-mac-zip
+          path: site/tuple-mac.zip
+
+  test-mac-installer:
+    name: macOS installer mechanics
+    needs: build-mac-zip-on-windows
+    runs-on: macos-latest
+    steps:
+      - name: Download the Windows-built zip
+        uses: actions/download-artifact@v4
+        with:
+          name: tuple-mac-zip
+          path: dist
+
+      - name: Unzip to temp dir
+        run: |
+          mkdir /tmp/tuple-test
+          # Extract the WINDOWS-built tuple-mac.zip on macOS — the exact user scenario.
+          cd /tmp/tuple-test && unzip "$GITHUB_WORKSPACE/dist/tuple-mac.zip"
+
+      - name: Executable bit on .command
+        run: |
+          test -x "/tmp/tuple-test/Install Tuple.command"
+          echo "Executable bit: OK"
+
+      - name: ZIP layout integrity
+        run: |
+          test -d  "/tmp/tuple-test/Tuple"
+          test -f  "/tmp/tuple-test/Tuple/tuple.amxd"
+          test -f  "/tmp/tuple-test/Tuple/ui/tuple_ui.html"
+          test -f  "/tmp/tuple-test/Tuple/ui/fonts/SpaceGrotesk-Variable.woff2"
+          echo "Layout: OK"
+
+      - name: cp -R and xattr -dr
+        run: |
+          mkdir -p "/tmp/tuple-dest/Presets/Max MIDI Effect"
+          cp -R "/tmp/tuple-test/Tuple" "/tmp/tuple-dest/Presets/Max MIDI Effect/"
+          xattr -dr com.apple.quarantine "/tmp/tuple-dest/Presets/Max MIDI Effect/Tuple" 2>/dev/null || true
+          test -f "/tmp/tuple-dest/Presets/Max MIDI Effect/Tuple/tuple.amxd"
+          echo "cp + xattr: OK"

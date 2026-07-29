@@ -1,0 +1,4 @@
+# Force LF for shell scripts so they remain executable on macOS/Linux
+# regardless of the checkout platform.
+*.command  text eol=lf
+*.sh       text eol=lf
