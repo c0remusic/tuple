@@ -1,0 +1,38 @@
+name: Slack notifications
+
+on:
+  release:
+    types: [published]
+  workflow_run:
+    workflows: ["Test Mac Installer"]
+    types: [completed]
+
+# Posts extra Slack messages that the GitHub Slack app does not send by
+# default. No-op unless a SLACK_WEBHOOK_URL repository secret is configured.
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    env:
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+    steps:
+      - name: Announce published release
+        if: ${{ github.event_name == 'release' && env.SLACK_WEBHOOK_URL != '' }}
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+          URL: ${{ github.event.release.html_url }}
+        run: |
+          msg=":rocket: *Tuple ${TAG}* published — ${URL}"
+          jq -n --arg t "$msg" '{text:$t}' \
+            | curl -sS -X POST -H 'Content-type: application/json' --data @- "$SLACK_WEBHOOK_URL"
+
+      - name: Report installer test result
+        if: ${{ github.event_name == 'workflow_run' && env.SLACK_WEBHOOK_URL != '' }}
+        env:
+          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+          URL: ${{ github.event.workflow_run.html_url }}
+        run: |
+          if [ "$CONCLUSION" = "success" ]; then icon=":white_check_mark:"; else icon=":x:"; fi
+          msg="${icon} *Test Mac Installer* ${CONCLUSION} on \`${BRANCH}\` — ${URL}"
+          jq -n --arg t "$msg" '{text:$t}' \
+            | curl -sS -X POST -H 'Content-type: application/json' --data @- "$SLACK_WEBHOOK_URL"
