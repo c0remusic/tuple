@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Tuple Discord
+    url: https://discord.gg/N52jGhGE
+    about: Questions, help, and chat with the community.
+  - name: User manual
+    url: https://tuple.live/manual/
+    about: Read the manual first — your answer may already be there.
