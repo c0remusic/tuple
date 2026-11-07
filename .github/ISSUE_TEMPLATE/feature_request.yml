@@ -1,0 +1,26 @@
+name: Feature request
+description: Suggest an idea or improvement for Tuple
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for the idea! Tell us the problem first — it helps us find the best solution.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: What are you trying to do that Tuple doesn't let you do today?
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: Your idea
+      description: How do you imagine it working?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives or references (optional)
+      description: Other tools that do this well, workarounds you currently use, etc.

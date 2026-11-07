@@ -1,0 +1,52 @@
+name: Bug report
+description: Something isn't working as expected
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for taking the time to report this. Please fill in as much as you can.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the problem, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: tuple-version
+    attributes:
+      label: Tuple version
+      description: See the device's About panel.
+      placeholder: e.g. 1.0.12
+    validations:
+      required: true
+  - type: input
+    id: live-version
+    attributes:
+      label: Ableton Live version
+      placeholder: e.g. Live 12.1
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - macOS
+    validations:
+      required: true
+  - type: textarea
+    id: extra
+    attributes:
+      label: Screenshots / logs (optional)

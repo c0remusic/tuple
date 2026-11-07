@@ -1,0 +1,6189 @@
+autowatch = 1;
+
+// =====================================================
+// LOGGER FICHIER — tee de post() vers un fichier lisible hors Max.
+// Permet de relire la console Max depuis l'extérieur (outil dev).
+// Le fichier est remis à zéro à chaque (re)chargement du script.
+// Chemin: device/max_console.log (à côté de ce .js).
+// =====================================================
+// DEBUG = 1 : active le tee fichier (outil dev — écrit device/max_console.log).
+// DEBUG = 0 (release) : post() reste la console Max native — AUCUNE écriture disque,
+// donc le chemin absolu DBG_LOG n'est jamais utilisé (portable sur toute machine).
+var DEBUG = 0;
+// ⚠️ NE PAS remettre un chemin absolu ici. Jusqu'au 2026-08-13 cette ligne valait en dur
+// "C:/Users/LEETJ/Desktop/Tuple/device/max_console.log" — dossier qui n'existe plus (vérifié).
+// `new File(...)` sur un dossier absent échoue en silence : DEBUG = 1 écrivait donc dans le
+// vide, sans la moindre erreur, sur toute machine sauf une — et le § Troubleshooting de
+// CLAUDE.md envoyait lire un fichier qui ne pouvait pas exister. Le chemin se déduit
+// maintenant du patch lui-même, à côté du .amxd, donc partout.
+var DBG_LOG = "";        // résolu à la première écriture, puis mémorisé
+var _dbgThis = this;     // au sommet du fichier, `this` est l'objet [js] ; absent sous le harnais
+var _dbgFresh = false;   // le fichier a-t-il déjà été remis à zéro pour ce chargement ?
+var _origPost = post;
+// `patcher.filepath` est vide tant que le patch n'est pas chargé, donc la résolution est
+// PARESSEUSE : les tout premiers post() (avant loadbang) restent console-seule.
+function _dbgResolve() {
+	if (DBG_LOG) return DBG_LOG;
+	try {
+		// Deux sources, dans cet ordre. `_patcher` est posé par loadbang() et c'est la
+		// voie fiable ; `this` au sommet du fichier N'EST PAS toujours l'objet [js] —
+		// mesuré le 2026-08-13, DEBUG = 1 n'écrivait rien avec cette seule source.
+		var pat = (typeof _patcher !== 'undefined' && _patcher) ? _patcher
+		        : ((_dbgThis && _dbgThis.patcher) ? _dbgThis.patcher : null);
+		var fp = pat ? pat.filepath : "";
+		if (fp && fp.length) {
+			// `new File` veut un chemin Max-style : "C:/…" et "Macintosh HD:/…" passent
+			// tels quels, pas de conversion POSIX ici (contrairement à _uiUrl, qui bâtit
+			// une URL pour jweb — deux besoins différents, ne pas les fusionner).
+			fp = fp.replace(/\\/g, '/');
+			DBG_LOG = fp.substring(0, fp.lastIndexOf('/') + 1) + "max_console.log";
+		}
+	} catch(e) {}
+	return DBG_LOG;
+}
+if (DEBUG) {
+	post = function(){
+		var s = Array.prototype.slice.call(arguments).join(" ");
+		_origPost(s);                              // console Max normale
+		try {
+			var p = _dbgResolve(); if (!p) return;
+			if (!_dbgFresh) {
+				var t = new File(p, "write");          // crée/tronque, une fois par chargement
+				if (t.isopen) { t.writestring("=== chord_engine.js (re)chargé ===\n"); t.close(); }
+				_dbgFresh = true;
+			}
+			var f = new File(p, "readwrite");        // append
+			if (f.isopen) { f.position = f.eof; f.writestring(s); f.close(); }
+		} catch(e) {}
+	};
+}
+
+post("CHORD ENGINE v5 LOADED\n");
+// outlet 0   = velocity (partagé, tire TOUJOURS en premier)
+// outlets 1..6 = pitch voix 1..6
+// outlet 7   = feedback UI → "active <fn> <degree>" → UI jweb
+// outlet 8   = [pattr] Blob : la progression sauvée avec le set (tuple-dev#150) ; il revient par [prepend persist]
+outlets = 9;
+inlets  = 2;  // inlet 0 = messages accord/config, inlet 1 = velocity
+
+// =====================================================
+// POLYFILLS ES5 — le moteur JS de Max n'a PAS Set/Map (ES6).
+// Le code vl2 (porté du bench Node) les utilise → on les fournit ici.
+// Clés internes préfixées par type pour éviter toute collision avec
+// les membres hérités d'Object.prototype (toString, constructor…).
+// =====================================================
+if (typeof Set === 'undefined') {
+	Set = function(arr){
+		this._k = {}; this._a = []; this.size = 0;
+		if (arr) for (var i = 0; i < arr.length; i++) this.add(arr[i]);
+	};
+	Set.prototype.add = function(v){
+		var k = (typeof v) + ':' + v;
+		if (!this._k[k]) { this._k[k] = true; this._a.push(v); this.size++; }
+		return this;
+	};
+	Set.prototype.has = function(v){ return !!this._k[(typeof v) + ':' + v]; };
+}
+if (typeof Map === 'undefined') {
+	Map = function(){ this._k = {}; this._order = []; this.size = 0; };
+	Map.prototype.has = function(k){ return !!this._k[(typeof k) + ':' + k]; };
+	Map.prototype.get = function(k){ var e = this._k[(typeof k) + ':' + k]; return e ? e.v : undefined; };
+	Map.prototype.set = function(k, v){
+		var mk = (typeof k) + ':' + k;
+		if (!this._k[mk]) { this._order.push(k); this.size++; }
+		this._k[mk] = { v: v };
+		return this;
+	};
+	Map.prototype['delete'] = function(k){
+		var mk = (typeof k) + ':' + k;
+		if (this._k[mk]) {
+			delete this._k[mk];
+			for (var i = 0; i < this._order.length; i++) if (this._order[i] === k) { this._order.splice(i, 1); break; }
+			this.size--; return true;
+		}
+		return false;
+	};
+	Map.prototype.clear = function(){ this._k = {}; this._order = []; this.size = 0; };
+	Map.prototype.keys = function(){
+		var a = this._order.slice(), i = 0;
+		return { next: function(){ return i < a.length ? { value: a[i++], done: false } : { value: undefined, done: true }; } };
+	};
+}
+
+var lastFn           = "triad";
+var lastDegree       = 0;
+
+// =====================================================
+// GAMMES
+// =====================================================
+
+var SCALES = {
+	"major":      [0,2,4,5,7,9,11],
+	"minor":      [0,2,3,5,7,8,10],
+	"dorian":     [0,2,3,5,7,9,10],
+	"phrygian":   [0,1,3,5,7,8,10],
+	"lydian":     [0,2,4,6,7,9,11],
+	"mixolydian": [0,2,4,5,7,9,10],
+	"harmminor":  [0,2,3,5,7,8,11],
+	"melminor":   [0,2,3,5,7,9,11],
+	"locrian":    [0,1,3,5,6,8,10],
+	"pentamaj":   [0,2,4,5,7,9,11],   // intervals = full major scale; SCALE_VALID_DEGREES mask hides IV+VII columns → pentatonic layout, major-scale voicings
+	"pentamin":   [0,2,3,5,7,8,10],   // intervals = full natural minor scale; mask hides II+VI columns → pentatonic layout, minor-scale voicings
+	"lydiandom":  [0,2,4,6,7,9,10],   // Lydian Dominant — 4e mode mél. min. ; I7(#11) caractéristique
+	// ── Familles modales complètes (2026-10-21, inspiré de TBOSS — idées, pas de code : GPL-3) ──
+	// Les sept modes du mineur mélodique, du mineur harmonique et du majeur harmonique. Tout
+	// est heptatonique : getIntervals/isValid/chordQuality sont génériques en 7 notes, rien
+	// d'autre à toucher que la validation de la M7♯5 (isValid "seven"). Mesuré : sur les 30
+	// gammes, zéro case muette, normal et EXT (device/tests/gammes-familles.test.mjs).
+	// ⚠️ AJOUTÉS EN FIN : l'index circule moteur ↔ UI (scaleidx) ↔ key observer. Ne jamais
+	// insérer au milieu de SCALE_NAMES_ARR.
+	// Mineur mélodique (melminor et lydiandom existent déjà) :
+	"dorianb2":    [0,1,3,5,7,9,10],  // 2e mode — Dorien ♭2 (phrygien ♮6)
+	"lydianaug":   [0,2,4,6,8,9,11],  // 3e mode — Lydien augmenté
+	"mixob6":      [0,2,4,5,7,8,10],  // 5e mode — Mixolydien ♭6 (mélodique majeur)
+	"locrians2":   [0,2,3,5,6,8,10],  // 6e mode — Locrien ♮2
+	"altered":     [0,1,3,4,6,8,10],  // 7e mode — Altérée (super-locrien)
+	// Mineur harmonique (harmminor existe déjà) :
+	"locrians6":   [0,1,3,5,6,9,10],  // 2e mode — Locrien ♮6
+	"ionians5":    [0,2,4,5,8,9,11],  // 3e mode — Ionien ♯5
+	"dorians4":    [0,2,3,6,7,9,10],  // 4e mode — Dorien ♯4 (ukrainien)
+	"phrygdom":    [0,1,4,5,7,8,10],  // 5e mode — Phrygien dominant (flamenco, hijaz)
+	"lydians2":    [0,3,4,6,7,9,11],  // 6e mode — Lydien ♯2
+	"ultralocrian":[0,1,3,4,6,8,9],   // 7e mode — Ultralocrien (altérée ♭♭7)
+	// Majeur harmonique et ses modes :
+	"harmmajor":   [0,2,4,5,7,8,11],  // 1er mode — Majeur harmonique
+	"dorianb5":    [0,2,3,5,6,9,10],  // 2e mode — Dorien ♭5
+	"phrygianb4":  [0,1,3,4,7,8,10],  // 3e mode — Phrygien ♭4
+	"lydianb3":    [0,2,3,6,7,9,11],  // 4e mode — Lydien ♭3 (mélodique mineur ♯4)
+	"mixob2":      [0,1,4,5,7,9,10],  // 5e mode — Mixolydien ♭2
+	"lydianaugs2": [0,3,4,6,8,9,11],  // 6e mode — Lydien augmenté ♯2
+	"locrianbb7":  [0,1,3,5,6,8,9]    // 7e mode — Locrien ♭♭7
+};
+
+// Degrés actifs (0-6) pour les gammes pentatoniques.
+// Les degrés absents sont ignorés dans broadcastGrid → colonnes vides.
+//
+// ⚠️ Cacher la COLONNE ne suffisait pas. Mesuré le 2026-09-14 en do majeur pentatonique :
+// 23 cases sur 37 des colonnes GARDÉES jouaient un fa ou un si — les deux notes que la gamme
+// n'a pas. Les accords s'empilent en tierces dans la gamme PARENTE à sept notes (pentamaj a
+// les intervalles de la majeure), donc `Dm` ramassait le fa et `G` le si. `_scaleAllowsSpec`
+// ci-dessous ferme la porte : une case dont l'accord sort du set est invalide, comme une
+// colonne masquée. Il reste 14 cases, réparties sur quatre colonnes — C, Csus2, Cadd9, C6,
+// C6/9, Dsus4, Dsus2, D7sus4, Gsus4, Gsus2, Am, Am7, Asus4, A7sus4.
+var SCALE_VALID_DEGREES = {
+	"pentamaj": {0:1, 1:1, 2:1, 4:1, 5:1},   // I  II  III  V   VI
+	"pentamin": {0:1, 2:1, 3:1, 4:1, 6:1}    // I  bIII IV  V  bVII
+};
+
+var NOTE_NAMES = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+var NOTE_TO_PC = {
+	"C":0,"C#":1,"D":2,"D#":3,"E":4,"F":5,
+	"F#":6,"G":7,"G#":8,"A":9,"A#":10,"B":11
+};
+// Intervalles des accords empruntés (par type) — SOURCE UNIQUE : colorchord + _vl2_buildColorSpec.
+// `sub7` (2026-10-21) = un dom7 servi par la page Tritone (EXT : 7#11). Mêmes notes que `dom7` ; le TYPE porte
+// l'identité « sub tritonique », pour qu'EXT lui donne sa ♯11 où qu'il soit joué (carte, rekey,
+// page changée) — la page étant dynamique, plus aucune table fixe ne peut le reconnaître.
+var COLOR_IV = { min:[0,3,7], dim7:[0,3,6,9], maj7:[0,4,7,11], dom7:[0,4,7,10], maj:[0,4,7], sub7:[0,4,7,10] };
+
+var root                = 0;
+var scale               = SCALES["major"];
+var scaleName           = "major";
+var currentOctave       = 0;
+var currentVelocity     = 100;
+// Style CONCRET joué par la grille — toujours un des SPACING_NAMES.
+// Il n'existe PLUS de seconde clé de picker : le choix automatique de style est mort le
+// 2026-08-11 (mesuré : « auto » libre ne rendait que 4 styles sur 28, et chaque clé de
+// catégorie rendait un seul membre sur 42/42 cases). Un style est désormais toujours
+// désigné par l'utilisateur, donc « ce qui joue » et « ce qui est choisi » ne peuvent
+// plus diverger — d'où une seule variable au lieu de deux.
+var currentVoicing      = "classic";
+var voiceLeadingEnabled = false;
+var activeNotes         = [];
+var lastChordNotes      = [];         // dernier accord JOUÉ (non vidé par sendNoteOff) — pour le glisser → ajout
+var vlMode              = "anchored";  // "anchored" | "flow"
+var lastColorSemis      = 0;          // dernier accord emprunté (pour vl2)
+var lastColorType       = "maj";
+var _strumMs            = 0;          // ms/note SIGNÉ : 0 = off, >0 = montant (grave→aigu), <0 = descendant (aigu→grave). Slider -60..60
+var strumRamp           = 0;          // -100..100 : rampe de vélocité sur le strum. <0 = 1ère note forte puis fade, >0 = crescendo
+// ── LA GÉOMÉTRIE DU STRUM, ÉCRITE UNE FOIS ──────────────────────────────────
+//
+// Le jeu et le clip partagent la FORME du strum et divergent sur le reste, légitimement :
+// le jeu compte en millisecondes et tire `_bell()` à chaque note, le clip compte en TEMPS
+// (donc lit le tempo) et tire un hasard REPRODUCTIBLE, sans quoi éditer le 5e accord
+// changerait le feel des quatre premiers. Trois choses étaient malgré tout recopiées des
+// deux côtés, à mille lignes d'écart, et rien ne les appariait.
+//
+// ⚠️ LE RANG EST PAR HAUTEUR, PAS PAR ORDRE DE STOCKAGE. L'ordre interne d'un voicing n'est
+// pas trié : un `drop2` range la note descendue là où la transformée l'a mise. Jouer dans
+// l'ordre de stockage donnerait un strum qui saute.
+function _strumRank(notes) {
+	var n = notes.length, order = [], rank = [], j;
+	for (j = 0; j < n; j++) order.push(j);
+	order.sort(function (a, b) { return notes[a] - notes[b]; });
+	for (j = 0; j < n; j++) rank[order[j]] = j;
+	return rank;
+}
+
+// Position dans la SÉQUENCE de jeu : 0 = première note jouée. `up` inverse le sens.
+function _strumSeq(rank, idx, n, up) { return up ? rank[idx] : (n - 1 - rank[idx]); }
+
+// La courbe, en FRACTION de la durée nominale : 0 pour la première note, 1 pour la
+// dernière, et l'exposant entre les deux. Chaque appelant la multiplie par sa propre
+// durée — c'est là que les unités se séparent.
+function _strumFrac(seq, n, p) { return Math.pow(n > 1 ? seq / (n - 1) : 0, p); }
+
+// Rampe de vélocité le long de la séquence : facteur 1 ± 0,5 · ramp. Le « 0,5 » borne
+// l'écart total à la moitié du réglage, sans quoi ramp = 100 éteindrait la première note.
+function _strumRampFactor(seq, n, ramp) {
+	var pos = (n > 1) ? seq / (n - 1) : 0;
+	return 1 + (ramp / 100) * (pos * 2 - 1) * 0.5;
+}
+
+var STRUM_CURVE_P       = [1.0, 0.55, 1.8];  // exposant : Linear · Accel · Decel
+var strumCurve          = 0;          // Linear par défaut
+var humanizeAmt         = 0;          // 0-100 : 0 = off ; variation vélocité ±55 + timing ±60ms
+var _emitTasks          = [];         // Tasks de notes différées (strum/humanize) en cours
+
+var TUPLE_VERSION = "1.7.0";
+
+var _patcher = null;
+
+// Construit l'URL file:// de l'UI depuis patcher.filepath, multi-plateforme.
+// macOS renvoie un chemin "Max-style" : "<Volume>:/chemin" (séparateur '/'). Conversion en POSIX :
+//   - volume de DÉMARRAGE (chemin → /Users, /Applications…) : on retire le volume (le boot EST "/").
+//   - autre volume (disque EXTERNE) : "<Vol>:/…" → "/Volumes/<Vol>/…" (point de montage macOS).
+//   - déjà POSIX (commence par '/') : inchangé.
+// Windows "C:/…" (lettre de lecteur) : laissé tel quel. Puis POSIX → file:///… ; Windows → file:///C:/…
+function _uiUrl() {
+	if (!_patcher) return "";
+	var fp = _patcher.filepath;
+	if (!fp || !fp.length) return "";
+	fp = fp.replace(/\\/g, '/');
+	if (!/^[A-Za-z]:\//.test(fp) && fp.charAt(0) !== '/') {
+		var vol  = fp.substring(0, fp.indexOf(':'));
+		var rest = fp.replace(/^[^/:]*:\//, '/');
+		fp = /^\/(Users|Applications|Library|System|private|opt|usr|Volumes)\//.test(rest) ? rest : ('/Volumes/' + vol + rest);
+	}
+	var dir = fp.substring(0, fp.lastIndexOf('/') + 1).replace(/ /g, '%20');
+	return 'file://' + (dir.charAt(0) === '/' ? '' : '/') + dir + 'ui/tuple_ui.html';
+}
+
+// Envoie l'URL au jweb de la GRANDE fenêtre (sous-patcher tuple_fullview).
+// Rendu onscreen d'abord (tuple-dev#139) : en offscreen, la valeur du patch, la page plafonnait à 30 images
+// par seconde dans Live (mesuré par CDP, 33,3 ms par image) ; onscreen, elle suit l'écran (6,1 ms). Posé ici
+// plutôt que dans le .amxd : aucune réinstallation, et le strip garde son rendu.
+function _sendFullUrl() {
+	if (!_patcher) return;
+	var url = _uiUrl(); if (!url) return;
+	var fvp = _patcher.getnamed('tuple_fullview_patcher'); if (!fvp) return;
+	var sub = fvp.subpatcher(); if (!sub) return;
+	var fw = sub.getnamed('tuple_full_jweb'); if (!fw) return;
+	fw.message('rendermode', 1);
+	fw.message('url', url + '?full&v=' + TUPLE_VERSION + '&t=' + (new Date()).getTime());
+}
+
+function loadbang() {
+	try {
+		_patcher = this.patcher;
+		post('Tuple v' + TUPLE_VERSION + ' — loadbang\n');
+		post('tuple: raw filepath=' + this.patcher.filepath + '\n');   // DIAGNOSTIC
+		var url = _uiUrl();
+		if (!url) { post('tuple: patcher.filepath vide — impossible de localiser ui/tuple_ui.html\n'); return; }
+		post('tuple: url=' + url + '\n');
+		var sw = this.patcher.getnamed('tuple_strip_jweb');
+		post('tuple: strip_jweb=' + (sw ? 'found' : 'null') + '\n');
+		if (sw) sw.message('url', url + '?v=' + TUPLE_VERSION + '&t=' + (new Date()).getTime());
+		_sendFullUrl();
+		transportwatch();   // PLAY / STOP de la façade suivent l'état de lecture de Live
+	} catch(e) { post('tuple: loadbang error: ' + e + '\n'); }
+}
+
+// OPEN DEVICE → l'UI envoie 'openwindow full'. On RE-ENVOIE l'URL au jweb de la grande fenêtre :
+// le loadbang peut tourner avant que ce jweb (dans le sous-patcher) soit prêt, donc sur macOS il
+// gardait le chemin dev codé en dur → grande fenêtre blanche. Le re-send à l'ouverture le corrige.
+function openwindow(which) {
+	if (String(which) === 'full') { _sendFullUrl(); }
+}
+
+// =====================================================
+// INLET 1 — velocity
+// =====================================================
+
+function msg_int(v) {
+	if (inlet === 1) {
+		currentVelocity = parseInt(v);
+	}
+}
+
+// Adaptateur d'entrée jweb. Un [jweb] qui fait window.max.outlet('nine', 5)
+// n'émet PAS un message-sélecteur "nine 5" mais une LISTE [nine, 5]. Max appelle
+// donc list() au lieu de nine(). On redispatch ici le 1er élément (sélecteur) vers
+// la vraie fonction du moteur. Aucune logique harmonique ici — pur routage.
+// (Les messages à 1 seul argument — requestgrid, requeststate, synclive — arrivent
+//  bien comme messages-sélecteurs natifs et n'ont pas besoin de cet adaptateur.)
+// Table de dispatch jweb → moteur. Construite UNE SEULE FOIS (les cibles sont des function
+// declarations, hoisted) au lieu de réallouer ~45 clés à CHAQUE message reçu (chemin chaud).
+var LIST_DISPATCH = {
+	triad: triad, seven: seven, nine: nine, add9: add9, sus2: sus2, sus4: sus4,
+	six: six, sixnine: sixnine, sevensus4: sevensus4, mmaj7: mmaj7,
+	sevenflat9: sevenflat9, sevensharp9: sevensharp9, m7s5: m7s5,
+	colorchord: colorchord, octave: octave, rootidx: rootidx, scaleidx: scaleidx,
+	spacingidx: spacingidx, voicingkey: voicingkey, voiceleading: voiceleading, vlmode: vlmode,
+	voicing: voicing, synclive: synclive, requestgrid: requestgrid,
+	requeststate: requeststate, midinote: midinote, key: key,
+	keynote: keynote, keynoteup: keynoteup, pushmode: pushmode, smart: smart, smartmode: smartmode,
+	colorscheme: colorscheme, strumms: strumms, strumramp: strumramp,
+	strumcurve: strumcurve, humanizeamt: humanizeamt, velmin: velmin, velmax: velmax,   // #38
+	openurl: openurl, openwindow: openwindow, installupdate: installupdate,
+	capture: capture, clearprog: clearprog,
+	removeat: removeat, playprog: playprog,
+	setinv: setinv, resetinv: resetinv, setoct: setoct, settension: settension, avoidnotes: avoidnotes,   // tuple-dev#68
+	progvoicing: progvoicing,
+	captureone: captureone, capturecommit: capturecommit, autosync: setautosync, progress: handleprogress,   // capturecommit : tuple-dev#146
+	useflats: useflats, theme: theme, preview: preview, previewcolor: previewcolor, previewprog: previewprog, extended: extended,
+	progmode: progmode, progmodecycle: progmodecycle, selprog: selprog, selopt: selopt,
+	voiceleadall: voiceleadall,
+	capturetoggle: capturetoggle,
+	borpage: borpage,
+	// ⚠️ Tout send('x', args…) du jweb DOIT avoir sa clé ici : multi-argument = liste,
+	// et une clé absente meurt en silence dans list(). `progbars` et `cliptarget`
+	// manquaient — deux contrôles UI livrés morts (audit 2026-08-18). La garde
+	// device/tests/ui-fil-contract.test.mjs lit désormais l'UI et vérifie la table.
+	progbars: progbars, progapercu: progapercu, progplace: progplace, cliptarget: cliptarget,   // progplace : tuple-dev#141
+	clipfollow: clipfollow, clipreplace: clipreplace, progmulti: progmulti, progloop: progloop, progtrim: progtrim,   // tuple-dev#77 ; progloop, progtrim (bord gauche) : façade v4
+	midiout: midiout   // tuple-dev#94
+};
+function list() {
+	var a = Array.prototype.slice.call(arguments);
+	var sel = String(a[0]);
+	if (LIST_DISPATCH[sel]) { LIST_DISPATCH[sel].apply(null, a.slice(1)); }
+	else { post("list: selecteur jweb inconnu '" + sel + "' (" + a.slice(1).join(" ") + ")\n"); }
+}
+
+// =====================================================
+// CLAVIER ORDINATEUR — via [key] dans le patch Max
+// =====================================================
+// Quand le jweb a le focus OS, Max peut encore intercepter les frappes
+// via [key] (son propre loop d'événements). [key] envoie keynote/keynoteup
+// à cet inlet → même chemin que notein → midinote.
+//
+// Layout piano standard (correspond au "Computer MIDI Keyboard" d'Ableton,
+// base C3 = MIDI 48 = MIDI_BASE) :
+//   rangée basse  : z s x d c v g b h n j m   → C3..B3 (48..59)
+//   rangée haute  : q 2 w 3 e r 5 t 6 y 7 u i → C4..C5 (60..72)
+// (KEY_TO_MIDI / KEY_VEL retirés : morts depuis que keynote()/keynoteup() sont des no-op.
+//  Le clavier ORDINATEUR est géré par l'UI jweb — KB_MAP dans tuple_ui.html — qui envoie 'midinote'.)
+
+// [key] (clavier ORDINATEUR interne au device) DÉSACTIVÉ : il faisait DOUBLON avec le « Computer
+// MIDI Keyboard » d'Ableton (→ notein). Quand les deux sont actifs (surtout à des octaves
+// différentes), UNE touche déclenchait DEUX accords (et polluait la capture). On joue désormais
+// uniquement via l'entrée MIDI (notein / Computer MIDI Keyboard d'Ableton).
+function keynote(ascii)   { }
+function keynoteup(ascii) { }
+
+// Absorbeurs d'événements émis par l'objet [jweb] sur son outlet lors du chargement
+// de page (onloadstart, url <url>, title <titre>, onloadend...). Ils n'ont aucun sens
+// pour le moteur : on les avale pour ne pas polluer la console Max.
+function onbeforeload() {}
+function onloadstart()  {}
+function onloadend()    {
+	// jweb finished loading — safe to init the LiveAPI auto-sync observers now.
+	if (typeof Task !== 'undefined') { var t = new Task(function(){ _initAutoSync(); }, this); _deferredTasks.push(t); t.schedule(300); }
+	else { _initAutoSync(); }
+}
+function url()          {}
+function title()        {}
+
+// Liens externes : le [jweb] n'a pas d'onglets — un <a href> ferait naviguer le
+// device EN PLACE (UI perdue, device inutilisable). L'UI intercepte le clic et nous
+// envoie l'URL ici ; on l'ouvre dans le navigateur système via "; max launchbrowser".
+function openurl(u) {
+	try {
+		max.message('launchbrowser', String(u));
+		post('tuple: launchbrowser ' + u + '\n');
+	} catch (e) {
+		post('tuple: openurl error: ' + e + '\n');
+	}
+}
+// ── Auto-updater install (node.script tuple_dl) ──────────────────────────────
+// The node.script boots its Node process lazily — the FIRST 'dl' message hits
+// "Node script not ready can't handle message dl". So: kick the script, then
+// RETRY 'dl' up to 6× (1.5 s apart) until Node answers. tuple_dl's _busy lock
+// ignores the duplicate 'dl' once a download is running (→ a single download).
+// handleprogress('done') clears _dlUrl, which makes the next _doDl tick stop the
+// retry loop. THIS retry/kick is what made the in-app install actually work.
+var _dlUrl = null, _dlPlatform = null, _dlAmxdPath = null, _dlAttempts = 0, _dlShaUrl = null;
+function installupdate(url, platform, shaUrl) {
+	var ndl = _patcher ? _patcher.getnamed('tuple_dl') : null;
+	if (!ndl) {
+		post('tuple: installupdate — tuple_dl not found, fallback to browser\n');
+		openurl(String(url));
+		return;
+	}
+	if (_dlUrl) { post('tuple: installupdate — already pending, ignoring\n'); return; }
+	post('tuple: installupdate → starting node.script (platform=' + platform + ')\n');
+	_dlUrl = String(url); _dlPlatform = String(platform);
+	_dlAmxdPath = _patcher ? String(_patcher.filepath) : '';
+	_dlShaUrl = String(shaUrl || '');   // '' = no checksum asset on this release, tuple_dl skips verification
+	_dlAttempts = 0;
+	ndl.message('script', 'start');   // kick the Node.js process (no-op if already running)
+	var t = new Task(_doDl); t.schedule(1500);
+}
+function _doDl() {
+	if (!_dlUrl) return;              // cleared by handleprogress('done') → stops the retry
+	_dlAttempts++;
+	var ndl = _patcher ? _patcher.getnamed('tuple_dl') : null;
+	if (!ndl) { post('tuple: _doDl — tuple_dl gone\n'); _dlUrl = null; _dlPlatform = null; _dlAmxdPath = null; _dlShaUrl = null; _dlAttempts = 0; return; }
+	post('tuple: _doDl attempt ' + _dlAttempts + '\n');
+	ndl.message('dl', _dlUrl, _dlPlatform, _dlAmxdPath, _dlShaUrl);
+	if (_dlAttempts < 6) { var t = new Task(_doDl); t.schedule(1500); }
+	else { post('tuple: _doDl — gave up after 6 attempts\n'); _dlUrl = null; _dlPlatform = null; _dlAmxdPath = null; _dlShaUrl = null; _dlAttempts = 0; }
+}
+// tuple_dl reports back via its outlet → obj-CE (this js) → handleprogress.
+// The message arrives as the SELECTOR 'progress <state>' (node.script outlet,
+// NOT a jweb list), so Max calls progress() directly — define it explicitly.
+// (The LIST_DISPATCH entry only covers the jweb-list path, which never fires here.)
+function progress(state) { handleprogress(state); }
+function useflats(v) { outlet(7, 'useflats', parseInt(v) !== 0 ? 1 : 0); }
+// Thème de la façade (jour | nuit). LE MOTEUR EN EST LA SOURCE DE VÉRITÉ depuis le 2026-09-15.
+//
+// ⚠️ Il ne faisait que relayer, et deux pages pouvaient rester en désaccord indéfiniment.
+// Mesuré dans Live ce jour-là : la fenêtre pleine avait `tuple_theme = 'nuit'` en mémoire et un
+// `body` SANS la classe `nuit` — elle stockait nuit et rendait jour — pendant que le strip
+// stockait `jour`. Le thème vivait dans le `localStorage` de CHAQUE page, sans personne pour
+// trancher, et rien ne le ré-affirmait au chargement : tant que la bascule n'était pas rejouée,
+// la divergence tenait. Dans une chaîne de devices sombre, un strip clair se voit.
+//
+// Désormais `currentTheme` est l'état, et `pushConfigState()` le rediffuse — même raison que
+// `avoidnotes` juste à côté : après un rechargement du jweb, la surface doit
+// refléter le moteur. Le `localStorage` de chaque page reste, mais comme un CACHE qui évite le
+// flash au boot, plus comme la vérité.
+//
+// ⚠️ Ce qui n'est PAS réglé ici, et que #46 laisse ouvert : la PERSISTANCE. `currentTheme` vit
+// dans le moteur, donc il meurt avec l'instance — il n'est pas sauvegardé avec le set. Le mettre
+// dans un paramètre Live est l'autre moitié de la question, et c'est une énumération de plus
+// dans le `.amxd`, à ajouter EN FIN.
+var currentTheme = "nuit";   // nuit par défaut (2026-09-10, Antoine) — même défaut que themeGet() côté UI
+function theme(v) {
+	currentTheme = (String(v) === 'nuit') ? 'nuit' : 'jour';
+	outlet(7, 'theme', currentTheme);
+}
+// ── TRANSPORT (2026-09-11) : PLAY / STOP sur la façade lancent et arrêtent la lecture de Live ──
+// Deux messages d'un atome (routés vers la fonction du même nom), et un observateur de `is_playing`
+// qui renvoie `playing 0|1` à l'UI — c'est Live qui dit s'il joue, jamais le bouton.
+var _transportObs = null;
+function transportplay() { try { new LiveAPI(function(){}, "live_set").call("start_playing"); } catch (e) { post("transportplay: " + e + "\n"); } }
+function transportstop() { try { new LiveAPI(function(){}, "live_set").call("stop_playing"); } catch (e) { post("transportstop: " + e + "\n"); } }
+// ── MIDI OUT (tuple-dev#94) : la sortie de la piste de Tuple, le « MIDI To » de Live ──
+// Tuple ne route rien lui-même : il lit les sorties que Live propose à SA piste et écrit le choix.
+// Live sauve ce routage avec le set. Une piste qui porte un instrument après Tuple n'a plus de
+// sortie MIDI (sa liste serait audio) : on n'y écrit rien, l'UI affiche « Instrument ».
+var _midiOutIds = [];
+function _midiOutTrack() { return new LiveAPI(function(){}, "this_device canonical_parent"); }
+// Le [js] reçoit une propriété-dictionnaire comme une chaîne JSON, dans un tableau d'un élément.
+function _lomDict(v) { return JSON.parse((v instanceof Array) ? v.join(" ") : String(v)); }
+function midioutlist() {
+	try {
+		var tr = _midiOutTrack();
+		if (Number(tr.get("has_audio_output")) === 1) { _midiOutIds = []; outlet(7, ["midiouts", -1, "Instrument"]); return; }
+		var types = _lomDict(tr.get("available_output_routing_types")).available_output_routing_types || [];
+		var cur = _lomDict(tr.get("output_routing_type")).output_routing_type || {};
+		var noms = [], ci = -1, i;
+		_midiOutIds = [];
+		for (i = 0; i < types.length; i++) {
+			_midiOutIds.push(types[i].identifier);
+			noms.push(types[i].display_name);
+			if (types[i].identifier === cur.identifier) ci = i;
+		}
+		outlet(7, ["midiouts", ci].concat(noms));
+	} catch (e) { post("midioutlist: " + e + "\n"); }
+}
+function midiout(i) {
+	if (i < 0 || i >= _midiOutIds.length) return;
+	try { _midiOutTrack().set("output_routing_type", { identifier: _midiOutIds[i] }); }
+	catch (e) { post("midiout: " + e + "\n"); }
+	midioutlist();
+}
+// Espace dans la fenêtre de Tuple (tuple-dev#129) : la page garde le focus, Live ne reçoit plus la touche. Bascule
+// d'après ce que LIVE a rapporté (`_transportOn`, posé par l'observateur is_playing), pas d'après le bouton.
+function transporttoggle() { if (_transportOn) transportstop(); else transportplay(); }
+function _transportCb(args) {
+	// LiveAPI livre [ "is_playing", 0|1 ] ; un observateur fraîchement posé peut recevoir autre chose d'abord.
+	if (!args || String(args[0]) !== "is_playing") return;
+	var on = parseInt(args[1]) ? 1 : 0;
+	_transportOn = !!on;
+	if (!on) _seqStop();                 // l'arrêt éteint la carte en cours (séquenceur interne)
+	outlet(7, "playing", on);
+}
+// La TÊTE DE LECTURE : `current_song_time` (en temps) devient une position en MESURES sur la piste
+// (modulo la boucle en blocs entamés, calée sur la mesure 1 du set), envoyée à l'UI quand elle change
+// d'au moins un centième. Une mesure fait toujours PROG_BEATS_PER_BAR temps (tuple-dev#122) : la
+// signature de Live n'est plus lue — dans un set qui n'est pas en 4/4, Tuple compte en temps.
+var _playheadObs = null, _playheadLast = -1;
+function _playheadCb(args) {
+	if (!args || String(args[0]) !== "current_song_time") return;
+	var beats = parseFloat(args[1]); if (!(beats >= 0)) return;
+	var pos = (beats / PROG_BEATS_PER_BAR) % _loopBars();
+	pos = Math.round(pos * 100) / 100;
+	if (pos === _playheadLast) return;
+	_playheadLast = pos;
+	outlet(7, "playhead", pos);
+	_seqTick(pos);
+}
+
+// ── SÉQUENCEUR INTERNE (2026-09-18, Antoine : « les cartes doivent jouer du midi peu
+// importe la présence d'un clip ») ──────────────────────────────────────────────────
+// Nouveau contrat de lecture, qui REMPLACE « Tuple écrit un clip, il ne le joue pas
+// lui-même » (CONTEXT.md mis à jour le même jour) : transport de Live en marche, Tuple
+// joue LUI-MÊME la carte sous la tête de lecture — la fin du dernier bloc est un silence,
+// et la position boucle sur les blocs entamés (déjà modulo _loopBars dans _playheadCb). Le clip lié
+// reste l'EXPORT de la progression vers Live ; quand ce clip JOUE, son passthrough est
+// la seule voix (_linkPlaying) et le séquenceur se tait — jamais deux émissions du même
+// accord. Une tête qui bouge transport arrêté (scrub) ne joue rien.
+// Émission par _emitNotes : strum, humanize et la plage de vélocité s'appliquent comme
+// au jeu, base 100 comme l'écriture de clip (_progToNotes). La carte est identifiée par
+// RÉFÉRENCE, pas par index : une édition pendant la lecture (déplacement, insertion) déplace
+// les index sous le curseur.
+var _transportOn = false, _seqCard = null, _seqHeld = null;
+function _seqStop() {
+	if (_seqHeld && _seqHeld.length) {
+		_cancelEmit();                   // strum/humanize encore en vol
+		_emitVel(0);
+		for (var i = 0; i < _seqHeld.length && i < 6; i++) outlet(i + 1, _seqHeld[i]);
+	}
+	_seqHeld = null; _seqCard = null;
+}
+function _seqTick(pos) {
+	if (!_transportOn || _linkPlaying) return;
+	var i, card = null;
+	for (i = 0; i < progression.length; i++) {
+		var st = _entryStart(i), b = _entryBars(progression[i]);
+		if (pos >= st - 1e-9 && pos < st + b - 1e-9) { card = progression[i]; break; }
+	}
+	if (card === _seqCard) return;
+	_seqStop();
+	_seqCard = card;
+	if (!card || !card.notes || !card.notes.length) return;
+	var sv = currentVelocity;
+	currentVelocity = 100;               // la base du clip : même son écrit, même son joué
+	_emitNotes(card.notes);
+	currentVelocity = sv;
+	_seqHeld = card.notes.slice();
+	_progContexte(card);
+	_progEcran(card, card.notes, true);
+}
+function transportwatch() {
+	try {
+		if (_transportObs) { try { _transportObs.property = ""; } catch (e) {} }
+		_transportObs = new LiveAPI(_transportCb, "live_set");
+		_transportObs.property = "is_playing";
+		if (_playheadObs) { try { _playheadObs.property = ""; } catch (e) {} }
+		_playheadObs = new LiveAPI(_playheadCb, "live_set");
+		_playheadObs.property = "current_song_time";
+	} catch (e) { post("transportwatch: " + e + "\n"); }
+}
+
+function handleprogress(state) {
+	if (String(state) === 'done') {
+		_dlUrl = null; _dlPlatform = null; _dlAmxdPath = null; _dlShaUrl = null; _dlAttempts = 0;
+		outlet(7, 'updatedone');
+		post('tuple: update installed — reload the device to apply\n');
+	} else if (String(state) === 'error') {
+		_dlUrl = null; _dlPlatform = null; _dlAmxdPath = null; _dlShaUrl = null; _dlAttempts = 0;
+		outlet(7, 'updateerror');
+		post('tuple: update download failed\n');
+	} else if (String(state) === 'launched') {
+		// Installeur Windows lancé (chemin réinstall) : on coupe les réessais, et l'UI rend le
+		// bouton — un installeur ANNULÉ doit pouvoir se relancer (audit 2026-10-21).
+		_dlUrl = null; _dlPlatform = null; _dlAmxdPath = null; _dlShaUrl = null; _dlAttempts = 0;
+		outlet(7, 'updatelaunched');
+		post('tuple: installer launched — restart Ableton when it finishes\n');
+	}
+}
+
+// =====================================================
+// CONFIG
+// =====================================================
+
+// Règle (2026-07-15) : tout changement de config qui affecte la réalisation d'un accord
+// (root/scale/octave/voicing/VL/extended) libère d'abord toute note tenue — sinon une note
+// jouée sous l'ancienne config reste sonner alors que son "identité" a changé sous elle.
+// EXT et Voice Leading le faisaient déjà ; étendu ici à key/scale/octave/voicing pour la
+// même raison (cf. audit bug-hunter du 2026-07-15).
+function key(k) {
+	k = String(k);
+	if (NOTE_TO_PC[k] !== undefined) {
+		_releaseHeld();
+		root = NOTE_TO_PC[k];
+		_borDynReset();        // page Tritone : repart de l'état de départ dans la nouvelle tonalité
+		_tensPrune();         // tuple-dev#68 : une carte ne porte jamais une tension hors gamme
+		_progRekeyDefer();     // les cartes suivent la tonalité (session 73), coalescé
+		pushUIState();
+	}
+}
+
+// Relaie uniquement l'état de config (octave, voicing, vl, vlmode) SANS rebuild de grille.
+// À appeler quand seuls ces paramètres changent — la grille ne dépend pas d'eux.
+function pushConfigState() {
+	outlet(7, "octave", currentOctave);
+	// Retour vers le live.menu "Voice Spacing" (route -> prepend set -> live.menu ; `set`
+	// écrit SANS faire sortir l'objet, donc pas de boucle de retour).
+	var si = SPACING_NAMES.indexOf(currentVoicing);
+	if (si >= 0) outlet(7, "spacing", si);
+	outlet(7, "voicingkey", currentVoicing);   // la clé du picker EST le style concret depuis le retrait du choix automatique — le message reste pour ne pas changer le protocole UI
+	outlet(7, "vl", voiceLeadingEnabled ? 1 : 0);
+	outlet(7, "vlmode", vlMode);
+	outlet(7, "strumms",    _strumMs);
+	outlet(7, "strumramp",  strumRamp);
+	outlet(7, "strumcurve", strumCurve);
+	outlet(7, "humanize",   humanizeAmt);
+	outlet(7, "velmin",     velMin);
+	outlet(7, "velmax",     velMax);   // publie sans `_cc` : un rechargement ne doit pas bouger l'instrument (#38)
+	if (smartOn && smartMode === "voiceleading") _sg_broadcast();   // seul le voice-leading dépend du voicing/octave/VL ; en function les suggestions sont inchangées → pas de recalcul
+}
+
+// Relaie l'état complet (tonalité + config) ET rebuilde la grille.
+// À appeler uniquement quand root ou scale change — pas pour octave/voicing/vl/vlmode.
+//  - à l'UI jweb via outlet 7 (déjà câblé) → readout + grille
+//    (les messnamed root_idx/scale_idx sont partis le 2026-10-21 — voir le bloc plus bas)
+function pushUIState() {
+	outlet(7, "root", root);
+	var si = SCALE_NAMES_ARR.indexOf(scaleName);
+	if (si >= 0) outlet(7, "scale", si);
+	outlet(7, "autosync", _autoSync ? 1 : 0);   // keep the SYNC button + KEY/SCALE lock in sync after a jweb reload
+	outlet(7, "avoidnotes", avoidNotesOn ? 1 : 0);   // tuple-dev#68 : même raison — le bouton AVOID NOTES doit refléter le moteur
+	outlet(7, "theme", currentTheme);                // le moteur tranche le thème : une page qui recharge adopte le sien, les deux jweb ne peuvent plus diverger
+
+	pushConfigState();
+
+	// ⚠️ Les deux `messnamed("root_idx"/"scale_idx")` ont été RETIRÉS le 2026-10-21 : leurs
+	// seuls récepteurs étaient les handlers VIDES de midi_map (root()/scale(){}) et un `r`
+	// câblé vers rien — et `messnamed` est GLOBAL à Live : avec plusieurs instances, chaque
+	// changement de tonalité partait chez les voisines (session 82, bugs multi-instances).
+	// Les `s/r root_idx|scale_idx` du patch (alimentés par le key observer) portent `---`
+	// depuis la même journée : privés à leur instance, ils ne fuient plus chez les voisines.
+	// Retrait structurel, s'il vaut la peine : issue #80.
+
+	_sg_reset();          // key/scale a changé → on efface la mémoire smart live AVANT de rediffuser
+	broadcastSurface();   // grille (dépend de root/scale) + heat-map smart repartie de zéro
+}
+
+// SYNC : relit la tonalité du set Live (bouton SYNC de l'UI)
+var LIVE_SCALE_MAP = {
+	"major":0, "minor":1, "natural minor":1, "dorian":2, "phrygian":3,
+	"lydian":4, "mixolydian":5, "harmonic minor":6, "harmminor":6,
+	"melodic minor":7, "melminor":7, "locrian":8,
+	"major pentatonic":9, "pentatonic major":9, "pentamaj":9,
+	"minor pentatonic":10, "pentatonic minor":10, "pentamin":10,
+	"lydian dominant":11, "lydiandom":11
+};
+// Repli de SYNC quand le NOM de gamme de Live n'est pas dans LIVE_SCALE_MAP : on compare ses
+// INTERVALLES (`Song.scale_intervals`, get/observe, LOM — vérifié dans la doc le 2026-10-21) à
+// ceux de SCALES. Robuste à l'orthographe de Live, qui n'est documentée nulle part, et fait
+// suivre les modes ajoutés le même jour sans deviner leur nom côté Live. Ordre = celui de
+// SCALE_NAMES_ARR : la majeure passe avant pentamaj, qui en porte les intervalles parents.
+function _scaleParIntervalles(api) {
+	try {
+		var raw = api.get("scale_intervals");
+		if (!raw || !raw.length) return null;
+		var cle = [], i, j;
+		for (i = 0; i < raw.length; i++) cle.push(parseInt(raw[i]));
+		for (i = 0; i < SCALE_NAMES_ARR.length; i++) {
+			var s = SCALES[SCALE_NAMES_ARR[i]];
+			if (!s || s.length !== cle.length) continue;
+			for (j = 0; j < s.length && s[j] === cle[j]; j++) {}
+			if (j === s.length) return SCALE_NAMES_ARR[i];
+		}
+	} catch (e) { /* propriété absente (Live < 12) : on garde le comportement d'avant */ }
+	return null;
+}
+// `synclive load` : la synchro de CHARGEMENT, envoyée par tuple_live_key_observer.js quand le
+// LOM répond. Même traduction que le bouton SYNC (30 gammes + repli par intervalles), sans le
+// flash du bouton — personne ne l'a pressé.
+function synclive(origine) {
+	// Un set qui a rendu sa progression garde SA tonalité : la synchro de chargement ne s'applique
+	// qu'à un set sans progression enregistrée (tuple-dev#150, décision #116). Le bouton SYNC, lui, passe.
+	if (String(origine) === "load" && _persistRendu) { post("SYNC load ignoré : la progression du set porte sa tonalité\n"); return; }
+	try {
+		var api = new LiveAPI(function(){}, "live_set");
+		if (!api.id || api.id == 0) { post("SYNC : Live pas prêt\n"); return; }
+
+		var rn = api.get("root_note");
+		var sn = api.get("scale_name");
+		if (rn instanceof Array) rn = rn[0];
+		if (sn instanceof Array) sn = sn[0];
+		rn = parseInt(rn);
+		sn = String(sn).toLowerCase().trim();
+
+		// SYNC peut arriver de manière asynchrone (observateur auto-sync) pendant qu'une note
+		// est tenue — même règle que key()/rootidx() : libérer avant de changer root/scale.
+		_releaseHeld();
+		if (rn >= 0 && rn <= 11) root = rn;
+		var parInt = (LIVE_SCALE_MAP[sn] === undefined) ? _scaleParIntervalles(api) : null;
+		if (LIVE_SCALE_MAP[sn] !== undefined) setscale(SCALE_NAMES_ARR[LIVE_SCALE_MAP[sn]]);
+		else if (parInt) setscale(parInt);
+		else _progRekeyDefer();   // gamme Live inconnue : seule la tonique a bougé, les cartes suivent quand même (session 73)
+
+		pushUIState();
+		if (String(origine) !== "load") outlet(7, "sync", 1);   // flash the SYNC button in the jweb
+		post("SYNC → " + NOTE_NAMES[root] + " " + scaleName + "\n");
+	} catch(e) {
+		post("SYNC erreur : " + e + "\n");
+	}
+}
+
+// ── Auto-sync : observe Live's root_note + scale_name, re-sync on every change ──
+// Same pattern as Tupline: the observers are ALWAYS attached; the callback checks
+// the _autoSync flag before acting. The SYNC button toggles _autoSync via 'autosync'
+// and locks KEY/SCALE in the UI while ON.
+var _liveSyncApiRoot  = null;
+var _liveSyncApiScale = null;
+var _autoSync = false;
+// Garde-fou : onloadend (chargement jweb réel) ET le Task global (survie à un reload autowatch
+// du JS seul) planifient TOUS DEUX _initAutoSync — sur un cold load les deux tirent, créant 2 paires
+// de LiveAPI observers (double synclive() par changement Live + fuite de la 1re paire). Réinitialisé
+// à chaque (re)chargement du script (portée globale), donc reste correct après un autowatch reload.
+var _autoSyncInited = false;
+// Références retenues (au lieu de laisser `t` sortir de portée) : Max peut annuler une Task one-shot
+// dont la référence JS a été collectée avant qu'elle ne se déclenche — gotcha connu de l'engine JS de
+// Max, cf. gridInitTask/_autoSyncInitTask déjà retenues en global plus bas. Simple tableau, pas de
+// nettoyage : le volume d'appels (sync, smart-broadcast différé) est trop faible pour justifier plus.
+var _deferredTasks = [];
+function _taskDefer(fn) {
+	if (typeof Task !== 'undefined') { var t = new Task(fn, this); _deferredTasks.push(t); t.schedule(1); }
+	else { fn(); }
+}
+function setautosync(v) {
+	_autoSync = parseInt(v) !== 0;
+	post('tuple: auto-sync ' + (_autoSync ? 'ON' : 'OFF') + '\n');
+	if (_autoSync) _taskDefer(synclive);   // immediate sync on enable
+}
+// Le nom que l'UI envoie. La fenêtre pleine arrive ici en message-sélecteur, pas par list() (voir ui-fil-contract).
+function autosync(v) { setautosync(v); }
+function _initAutoSync() {
+	if (typeof LiveAPI === 'undefined') return;
+	if (_autoSyncInited) return;   // déjà armé par l'autre planificateur (onloadend / Task global)
+	try {
+		_liveSyncApiRoot  = new LiveAPI(function(){ if (_autoSync) _taskDefer(synclive); }, 'live_set');
+		_liveSyncApiRoot.property  = 'root_note';
+		_liveSyncApiScale = new LiveAPI(function(){ if (_autoSync) _taskDefer(synclive); }, 'live_set');
+		_liveSyncApiScale.property = 'scale_name';
+		_autoSyncInited = true;
+		post('tuple: auto-sync observers ready\n');
+	} catch(e) { post('tuple: auto-sync init error: ' + e + '\n'); }
+}
+
+// Reçoit un index int (0-11) depuis live.menu
+// VALIDATION : root DOIT rester dans 0..11. Un index hors plage (ou NaN) se propage
+// jusqu'à buildNotes, où `root + scale[...]` sort de 0..127 : toutes les notes sont
+// filtrées, le voicing part vide, et le sélecteur VL ne trouve plus aucun candidat au
+// coût fini. Le moteur se retrouve alors coincé — accord après accord — au lieu de
+// simplement ignorer une entrée absurde. On filtre à la SOURCE.
+function rootidx(v) {
+	var i = parseInt(v);
+	if (isNaN(i) || i < 0 || i > 11) { post("rootidx: index hors plage 0..11 ignoré (" + v + ")\n"); return; }
+	_releaseHeld();
+	root = i;
+	_vl2_reset();
+	_borDynReset();        // idem key()
+	_progRekeyDefer();    // idem key() : la progression suit la tonique (session 73), coalescé
+	pushUIState();
+}
+
+// Reçoit un index int = position dans SCALE_NAMES_ARR (30 gammes)
+// ⚠️ Ordre = INDEX transporté par scaleidx (UI) et par le key observer : ajouts EN FIN seulement.
+var SCALE_NAMES_ARR = ["major","minor","dorian","phrygian","lydian","mixolydian","harmminor","melminor","locrian","pentamaj","pentamin","lydiandom",
+	"dorianb2","lydianaug","mixob6","locrians2","altered",
+	"locrians6","ionians5","dorians4","phrygdom","lydians2","ultralocrian",
+	"harmmajor","dorianb5","phrygianb4","lydianb3","mixob2","lydianaugs2","locrianbb7"];
+function scaleidx(v) {
+	setscale(SCALE_NAMES_ARR[parseInt(v)]);
+	pushUIState();
+}
+
+function setscale(s) {
+	s = String(s).toLowerCase();
+	if (SCALES[s]) {
+		_releaseHeld();
+		var _nAvant = borPagesDispo().length;
+		scale = SCALES[s];
+		scaleName = s;
+		// ⚠️ La page du cycleur Borrowed est revalidée ICI, pas paresseusement. La page Mediants
+		// n'existe qu'en majeur et en mineur : rester sur une page devenue vide viderait la
+		// colonne en silence, et rien ne le dirait. La retombée est explicite et immédiate —
+		// et ANNONCÉE : sans ré-émission, l'UI et le paramètre Live restaient sur l'ancienne
+		// page pendant que le moteur servait la page 1 (audit 2026-08-18). Mêmes deux messages
+		// que borpage(), même raison ([sel] d'un côté, libellé UI de l'autre).
+		_borDynReset();        // l'historique de la page Tritone était dans l'ancienne gamme
+		if (borPage > 0 && borPagesDispo().indexOf(borPage) < 0) {   // Ext vide reste une page (voir borPagesDispo)
+			borPage = 0;
+			outlet(7, "borpage", 0);
+			_borPagesEcho(borPagesDispo());
+		} else {
+			// La page reste mais le COMPTE peut changer (majeur 4 pages → dorien 3, Mediants
+			// absente) : la pastille MED de l'en-tête doit s'éteindre, y compris en page 1. Le
+			// paramètre Live, lui, n'a rien à apprendre — `borpage` ne repart pas.
+			var _d = borPagesDispo();
+			if (_d.length !== _nAvant) _borPagesEcho(_d);
+		}
+		_vl2_reset();
+		_tensPrune();          // tuple-dev#68 : idem key()
+		_progRekeyDefer();     // idem key() : la progression suit la gamme (session 73), coalescé
+	}
+}
+
+// Les douze raccourcis de gamme (major(), dorian(), lydiandom()...) sont partis le
+// 2026-09-15 : aucun n etait dans LIST_DISPATCH, aucun dans le .amxd, aucun envoye par
+// l UI, aucun appele. La gamme se regle par scaleidx (patch) ou setscale (interne).
+
+// L'UI n'expose que -2..+2 (tuple_ui.html, renderOct) — on borne ici aussi : une octave
+// hors plage pousse tout l'accord hors 0..127, buildNotes renvoie un tableau vide et le
+// moteur se bloque (même chaîne que rootidx). Borner plutôt qu'ignorer : un clic molette
+// en butée doit rester en butée, pas être rejeté.
+var OCTAVE_MIN = -2, OCTAVE_MAX = 2;
+function octave(v) {
+	var i = parseInt(v);
+	if (isNaN(i)) { post("octave: valeur non numérique ignorée (" + v + ")\n"); return; }
+	if (i < OCTAVE_MIN) i = OCTAVE_MIN;
+	if (i > OCTAVE_MAX) i = OCTAVE_MAX;
+	_releaseHeld();
+	currentOctave = i;
+	_vl2_reset();        // le registre change : on repart à zéro (sinon la mémoire VL de
+	                     // l'ancienne octave biaise le 1er accord du nouveau registre)
+	pushConfigState();   // pas de rebuild grille : l'octave n'affecte pas les cellules
+}
+
+function voicing(v) {
+	// Message `voicing <nom>` : délégué à voicingkey, qui refuse un nom inconnu (il
+	// retomberait EN SILENCE sur classic dans _vl2_realize). Aucun émetteur vivant ne
+	// l'envoie (UI → voicingkey, patch → spacingidx) ; gardé comme entrée par nom.
+	voicingkey(String(v));
+}
+
+// =====================================================
+// VOICE SPACING — la palette de styles, et son paramètre Live.
+// =====================================================
+// Six styles depuis le 2026-09-14. L'ordre est celui de l'énumération du paramètre Live
+// "Voice Spacing" : un set ou une piste d'automation y stocke une POSITION, donc un style
+// neuf s'AJOUTE EN FIN, jamais ailleurs.
+//
+// ⚠️ Retiré le 2026-10-21 : le paramètre "Voicing" déprécié (29 entrées, une par style de
+// l'ancienne palette), la sentinelle « (from Voicing) » en tête de "Voice Spacing", la table
+// de report VOICING_MIGRATION et l'arbitre entre les deux paramètres. Ils n'existaient que
+// pour qu'un set d'avant la palette à six rouvre sur un style proche. Antoine a tranché que
+// la rétrocompatibilité du son n'est pas un objectif : un set d'avant cette date rouvre sur
+// `Closed`, et une automation de "Voice Spacing" écrite avant est décalée d'un cran (la
+// sentinelle occupait l'index 0).
+// `rootless` et `clear` ajoutés EN FIN le 2026-10-30 (tuple-dev#95, #98, lot 3 de #105) : aucun index
+// existant ne bouge, un set sauvegardé avant reste sur son style.
+var SPACING_NAMES = ["classic", "open", "drop2", "drop3", "piano", "root", "rootless", "clear"];
+
+// Reçoit un index int depuis le live.menu "Voice Spacing" : SPACING_NAMES[i].
+function spacingidx(v) {
+	var i = parseInt(v);
+	if (isNaN(i) || i < 0 || i >= SPACING_NAMES.length) { post("spacingidx: index hors enumeration (" + v + ")\n"); return; }
+	voicingkey(SPACING_NAMES[i]);
+}
+
+// Style du contrôle GLOBAL de voicing. Vaut un SPACING_NAME, et rien d'autre.
+// Deux effets, et deux seulement :
+//  1. la GRILLE joue ce style — il ne bouge pas d'un accord à l'autre pendant qu'on joue.
+//     design.md §2.2 promet « face performance intacte » ; un style qui change sous les
+//     doigts est l'inverse d'un instrument.
+//  2. il sème les cartes capturées (_progEntry), qui naissent donc sur un style concret.
+// Point d'entrée du picker (message `voicingkey` depuis jweb), de voicing() et du menu
+// "Voice Spacing".
+function voicingkey(k) {
+	var key = String(k === undefined || k === null ? "" : k);
+	if (!_isVoicingName(key)) {
+		post("voicingkey: cle inconnue '" + key + "'\n");   // refus BRUYANT : silencieux = indébogable dans Max
+		return;
+	}
+	_releaseHeld();      // relâche ce qui sonne
+	currentVoicing = key;
+	_vl2_reset();        // repart d'une mémoire de voice leading vide
+	pushConfigState();
+}
+
+
+function voiceleading(v) {
+	// Accepte "on"/"off" ET 1/0 (toggle jweb)
+	var s = String(v).toLowerCase();
+	_releaseHeld();   // libère toute note tenue → le toggle ne peut pas laisser de note coincée (no-op si rien ne sonne)
+	voiceLeadingEnabled = (s === "on" || s === "1" || s === "true");
+	_vl2_reset();
+	pushConfigState();   // pas de rebuild grille
+}
+
+
+// Reçoit "vlmode anchored" ou "vlmode flow" (v1 disait "relative" — mapping v1→v2 plus bas)
+function vlmode(m) {
+	_releaseHeld();   // idem : pas de note orpheline au changement de mode
+	vlMode = String(m);
+	_vl2_reset();
+	pushConfigState();   // pas de rebuild grille
+}
+
+// =====================================================
+// HELPERS
+// =====================================================
+
+function noteName(midi) {
+	return NOTE_NAMES[((midi % 12) + 12) % 12];
+}
+
+// =====================================================
+// VALIDATION D'INTERVALLES
+// =====================================================
+
+function getIntervals(d) {
+	var iv = {};
+	for (var step = 0; step <= 8; step++) {
+		var absIdx      = d + step;
+		var octShift    = Math.floor(absIdx / 7);
+		var noteInScale = absIdx % 7;
+		var semi        = scale[noteInScale] - scale[d % 7] + octShift * 12;
+		iv[step]        = ((semi % 12) + 12) % 12;
+	}
+	return iv;
+}
+
+function isValid(d, type, iv) {
+	iv = iv || getIntervals(d);
+	switch(type) {
+		case "triad":     return true;
+		case "sus2":      return iv[1] === 2  && iv[4] === 7;
+		case "sus4":      return iv[3] === 5  && iv[4] === 7;
+		case "seven":     return (iv[4] === 7 && (iv[6] === 10 || iv[6] === 11))   // maj7/min7/dom7
+		                      || (iv[4] === 6 && (iv[6] === 9  || iv[6] === 10))   // dim7/ø7
+		                      // quinte augmentée + 7e majeure : M7♯5 (2026-10-21). Sans elle, le III+
+		                      // des mineurs harmonique/mélodique et 21 gammes en tout perdaient leur
+		                      // rangée de 7e. PAS de 7♯5 (7e mineure) : mesuré sur les 30 gammes, aucun
+		                      // empilement de tierces ne la produit — il faudrait une gamme par tons.
+		                      // La tierce mineure + ♯5 reste au type dédié `m7s5`, inchangé.
+		                      || (iv[2] === 4 && iv[4] === 8 && iv[6] === 11);
+		case "maj7":      return iv[4] === 7  && iv[6] === 11;
+		case "dom7":      return iv[4] === 7  && iv[6] === 10;
+		case "min7":      return iv[2] === 3  && iv[4] === 7  && iv[6] === 10;
+		case "dim7":      return iv[2] === 3  && iv[4] === 6  && iv[6] === 9;
+		case "hdim7":     return iv[2] === 3  && iv[4] === 6  && iv[6] === 10;
+		case "nine":      return iv[4] === 7  && iv[6] === 10 && iv[8] === 2;
+		case "maj9":      return iv[4] === 7  && iv[6] === 11 && iv[8] === 2;
+		case "min9":      return iv[2] === 3  && iv[4] === 7  && iv[6] === 10 && iv[8] === 2;
+		case "add9":      return iv[4] === 7  && iv[8] === 2;
+		default: return false;
+	}
+}
+
+// =====================================================
+// GRILLE — SOURCE DE VÉRITÉ
+// Le moteur calcule la grille et la diffuse à l'UI / Push (outlet 7).
+// =====================================================
+
+// Types affichés dans la grille, ordre = priorité (courants d'abord, alterés/jazz après).
+// Tous les types valides au degré sont affichés — pas de cap.
+// Ordre = PRIORITÉ d'affichage. La fenêtre principale prend les MAX_GRID_ROWS premiers types valides
+// par colonne (le reste n'est pas affiché — la fenêtre EXT qui le recevait est retirée depuis le 2026-10-22). sixnine (6/9) placé juste
+// après six (plus courant que 7sus4/altérés → reste dans la principale quand une colonne déborde).
+var GRID_TYPES = ["triad","seven","nine","mmaj7","sus4","sus2","add9","six","sixnine","sevensus4","sevenflat9","sevensharp9","m7s5"];
+var MAX_GRID_ROWS = 8;   // fenêtre principale : 8 rangées max (jamais de débordement vertical)
+
+// Accords empruntés par mode (déplacés ici : source de vérité)
+var BORROWED_MAJOR = [
+	{ roman:"bIII", semis:3,  type:"maj",  suf:""     },
+	{ roman:"iv",   semis:5,  type:"min",  suf:"m"    },
+	{ roman:"bVI",  semis:8,  type:"maj",  suf:""     },
+	{ roman:"bVII", semis:10, type:"maj",  suf:""     },
+	{ roman:"V/V",  semis:2,  type:"dom7", suf:"7"    },
+	{ roman:"V/ii", semis:9,  type:"dom7", suf:"7"    },
+	{ roman:"V/vi", semis:4,  type:"dom7", suf:"7"    }
+];
+var BORROWED_MINOR = [
+	{ roman:"V",    semis:7,  type:"maj",  suf:""     },
+	{ roman:"vii°", semis:11, type:"dim7", suf:"dim7" },
+	{ roman:"IV",   semis:5,  type:"maj",  suf:""     },
+	{ roman:"bII",  semis:1,  type:"maj",  suf:""     },
+	{ roman:"V/V",  semis:2,  type:"dom7", suf:"7"    },
+	{ roman:"V/iv", semis:0,  type:"dom7", suf:"7"    },
+	{ roman:"V/VI", semis:3,  type:"dom7", suf:"7"    }
+];
+// Emprunts melodic minor : bVII7 (Lydian dominant) + bII (Napolitain). V7 et IV RETIRÉS (audit Loi 1 E :
+// ils sont DIATONIQUES au mélodique mineur → déjà offerts par la grille, pas des emprunts).
+var BORROWED_MELMINOR = [
+	{ roman:"bVII7", semis:10, type:"dom7", suf:"7"    },
+	{ roman:"bII",   semis:1,  type:"maj",  suf:""     }
+];
+var BORROWED_LYDIANDOM = [
+	{ roman:"iv",   semis:5,  type:"min",  suf:"m"    },
+	{ roman:"bII7", semis:1,  type:"dom7", suf:"7"    }
+];
+var BORROWED_DORIAN = [
+	{ roman:"V7",   semis:7,  type:"dom7", suf:"7"    },
+	{ roman:"bVI",  semis:8,  type:"maj",  suf:""     },
+	{ roman:"bII",  semis:1,  type:"maj",  suf:""     }
+];
+var BORROWED_PHRYGIAN = [
+	{ roman:"I",    semis:0,  type:"maj",  suf:""     },
+	{ roman:"V7",   semis:7,  type:"dom7", suf:"7"    },
+	{ roman:"IV",   semis:5,  type:"maj",  suf:""     }
+];
+var BORROWED_LYDIAN = [
+	{ roman:"IV",   semis:5,  type:"maj",  suf:""     },
+	{ roman:"bVII", semis:10, type:"maj",  suf:""     },
+	{ roman:"v",    semis:7,  type:"min",  suf:"m"    }
+];
+var BORROWED_MIXOLYDIAN = [
+	{ roman:"vii°7",semis:11, type:"dim7", suf:"dim7" }, // leading-tone dim7 borrowed from parallel major (not Mixolydian's own bVII)
+	{ roman:"bVI",  semis:8,  type:"maj",  suf:""     },
+	{ roman:"bIII", semis:3,  type:"maj",  suf:""     }
+];
+var BORROWED_HARMMINOR = [
+	{ roman:"IV",   semis:5,  type:"maj",  suf:""     },
+	{ roman:"bVII", semis:10, type:"maj",  suf:""     },
+	{ roman:"bII",  semis:1,  type:"maj",  suf:""     }
+];
+var BORROWED_LOCRIAN = [
+	{ roman:"I",    semis:0,  type:"maj",  suf:""     },
+	{ roman:"V7",   semis:7,  type:"dom7", suf:"7"    },
+	{ roman:"IV",   semis:5,  type:"maj",  suf:""     }
+];
+// ══ Cycleur de la colonne Borrowed (carte tuple-dev#23) ═══════════════════════════════════
+// Page 1 = la table de la gamme, INCHANGÉE dans toutes les gammes. Le cycleur est ADDITIF : rien ne
+// disparaît d'un set existant. Les pages 2 et 3 n'existent qu'en majeur et en mineur — aucune
+// source ne définit ces catégories dans un mode, et la seule qui aborde la question dit de ne pas
+// le faire (une dominante secondaire employée pour établir un centre modal ramène l'attention sur
+// la tonalité). Extrapoler serait une invention présentée comme de la théorie.
+//
+// ⚠️ Le `type` se résout dans COLOR_IV (5 entrées : min · dim7 · maj7 · dom7 · maj), PAS dans
+// GRID_TYPES, et `COLOR_IV[type] || COLOR_IV.maj` replie en SILENCE. `triad` y tomberait.
+// ⚠️ « Ext » est AJOUTÉ EN FIN (2026-10-21) : l'index est ce que stocke le paramètre Live
+// « Borrowed Page » d'un set sauvegardé. Ne jamais insérer au milieu.
+var BOR_PAGES = ["Borrowed", "Tritone", "Mediants", "Ext"];   // ⚠️ UN MOT chacun : mesuré au prototype,
+// « Chromatic mediants » passe sur deux lignes dans un en-tête de 38 px et casse l'alignement de
+// la rangée. Les sept en-têtes de degré tiennent en « chiffre + un mot ».
+var borPage = 0;
+
+// Subs tritoniques : les quatre COMMUNS (Berklee), tous dom7 — la quinte diminuée entre tierce et
+// septième EST le mécanisme, donc une triade majeure sur ♭2 n'en est pas un (c'est le napolitain).
+// ⚠️ DEPUIS LE 2026-10-21 CES DEUX TABLES NE SONT PLUS UNE PAGE. La page Tritone est dynamique
+// (`_triTable`, plus bas). Elles ne servent plus qu'à `_colorIsSub` : une carte capturée sur
+// l'ancienne page statique porte `dom7` à ces positions, et doit garder sa ♯11 sous EXT.
+var SUBS_MAJOR = [
+	{ roman:"subV7",    semis:1, type:"dom7", suf:"7" },
+	{ roman:"subV7/II", semis:3, type:"dom7", suf:"7" },
+	{ roman:"subV7/IV", semis:6, type:"dom7", suf:"7" },
+	{ roman:"subV7/V",  semis:8, type:"dom7", suf:"7" }
+];
+// ⚠️ En mineur, semis 3 est RETIRÉ : mesuré, `bIII7` est exactement `V/VI` de BORROWED_MINOR
+// (même semis, même type). Le servir ici donnerait le même accord sous deux noms dans la colonne.
+var SUBS_MINOR = [
+	{ roman:"subV7",    semis:1, type:"dom7", suf:"7" },
+	{ roman:"subV7/IV", semis:6, type:"dom7", suf:"7" },
+	{ roman:"subV7/V",  semis:8, type:"dom7", suf:"7" }
+];
+// Médiantes chromatiques : quatre triades de MÊME QUALITÉ que la triade de tonique, à un ton
+// commun. ⚠️ En majeur, ♭III (+3 maj) et ♭VI (+8 maj) sont DÉJÀ dans BORROWED_MAJOR à l'identique
+// — il n'en reste que deux. La page maigre est voulue ; la littérature dit elle-même que ♭VI est
+// aussi un emprunt au mineur parallèle.
+var MED_MAJOR = [
+	{ roman:"III", semis:4, type:"maj", suf:"", fam:"med" },
+	{ roman:"VI",  semis:9, type:"maj", suf:"", fam:"med" }
+];
+var MED_MINOR = [
+	{ roman:"iii",  semis:3, type:"min", suf:"m", fam:"med" },
+	{ roman:"#iii", semis:4, type:"min", suf:"m", fam:"med" },
+	{ roman:"vi",   semis:8, type:"min", suf:"m", fam:"med" },
+	{ roman:"#vi",  semis:9, type:"min", suf:"m", fam:"med" }
+];
+
+/** La table de la gamme courante, HORS cycleur. C'est la page 1, et la seule voie d'avant. */
+function borrowedTableDeGamme() {
+	if (scaleName === "major")      return BORROWED_MAJOR;
+	if (scaleName === "minor")      return BORROWED_MINOR;
+	if (scaleName === "melminor")   return BORROWED_MELMINOR;
+	if (scaleName === "lydiandom")  return BORROWED_LYDIANDOM;
+	if (scaleName === "dorian")     return BORROWED_DORIAN;
+	if (scaleName === "phrygian")   return BORROWED_PHRYGIAN;
+	if (scaleName === "lydian")     return BORROWED_LYDIAN;
+	if (scaleName === "mixolydian") return BORROWED_MIXOLYDIAN;
+	if (scaleName === "harmminor")  return BORROWED_HARMMINOR;
+	if (scaleName === "locrian")    return BORROWED_LOCRIAN;
+	if (scaleName === "pentamaj")   return BORROWED_MAJOR;   // même gamme parente à sept notes (tuple-dev#88)
+	if (scaleName === "pentamin")   return BORROWED_MINOR;
+	return _borCalcules();
+}
+// Emprunts CALCULÉS pour les gammes sans table écrite (les 18 modes ajoutés le 2026-10-21,
+// tuple-dev#88) : triades de la gamme PARALLÈLE — mineur naturel si la tonique a une tierce
+// majeure, majeur sinon —, majeures et mineures seulement (COLOR_IV replie en silence tout autre
+// type sur maj), moins celles déjà diatoniques, rangées par distance de Lerdahl à la tonique,
+// 4 au plus. `fdeg` = le degré de la parallèle dont l'emprunt tient la fonction (fam "calc").
+// Indépendant de la tonique (demi-tons relatifs) : mémorisé par gamme. Miroir : demo.html.
+var BOR_CALC_MAX = 4, _borCalcMemo = {};
+var _BOR_NUM = ["I","II","III","IV","V","VI","VII"];
+function _borCalcules() {
+	if (_borCalcMemo.hasOwnProperty(scaleName)) return _borCalcMemo[scaleName];
+	var q0 = chordQuality(0), mineur = (q0 === 1 || q0 === 2);
+	var P = mineur ? _LD_MAJ : [0,2,3,5,7,8,10], home = { t:0, minor:(q0 === 1) };
+	var ton = { r:0, q:["maj","min","dim","aug"][q0] }, cand = [], d, e;
+	for (d = 0; d < 7; d++) {
+		var r = P[d], th = (P[(d + 2) % 7] - r + 12) % 12, fi = (P[(d + 4) % 7] - r + 12) % 12;
+		var q = (th === 4 && fi === 7) ? "maj" : (th === 3 && fi === 7) ? "min" : null;
+		if (!q) continue;
+		var diat = false;
+		for (e = 0; e < 7; e++) if (_degValid(e) && scale[e] === r && chordQuality(e) === (q === "maj" ? 0 : 1)) diat = true;
+		if (diat) continue;
+		var acc = r - _LD_MAJ[d], num = _BOR_NUM[d];
+		cand.push({ roman:(acc < 0 ? "b" : acc > 0 ? "#" : "") + (q === "min" ? num.toLowerCase() : num),
+		            semis:r, type:q, suf:(q === "min" ? "m" : ""), fam:"calc", fdeg:d,
+		            _ld:_lerdahl(ton, { r:r, q:q }, home) });
+	}
+	cand.sort(function(a, b){ return (a._ld - b._ld) || (a.fdeg - b.fdeg); });
+	var out = [], i;
+	for (i = 0; i < cand.length && i < BOR_CALC_MAX; i++) { delete cand[i]._ld; out.push(cand[i]); }
+	_borCalcMemo[scaleName] = out;
+	return out;
+}
+function borPageTable(p) {
+	if (p === 0) return null;                              // page 1 : voie normale
+	if (p === 1) return _triTable();                       // dynamique, toutes gammes, jamais vide
+	if (p === 3) return _extTable();                       // dynamique, toutes gammes, jamais vide
+	var maj = (scaleName === "major"), min = (scaleName === "minor");
+	if (!maj && !min) return [];                           // Mediants hors majeur/mineur : page vide
+	return maj ? MED_MAJOR : MED_MINOR;
+}
+
+// ══ PAGES DYNAMIQUES de la colonne Borrowed (2026-10-21) ══════════════════════════════════
+// Deux pages ne sont plus des tables : elles SUIVENT LE JEU. Toutes deux rendent des entrées
+// de la même forme que les tables ({roman, semis, type, suf}) et passent par le même fil
+// (`gridbor`, `colorchord`, `previewcolor`, flatGrid kind "b") : l'UI, le Push, le clavier et
+// la capture les jouent sans savoir qu'elles bougent.
+//
+// FORMAT DE FIL d'une case Ext — un TYPE de couleur étendu, pas un message neuf. `colorchord
+// semis type` reste le seul message de jeu de la colonne ; le type se lit
+//     "x.t3.f7.s10.n2.e5"   = tierce 3, quinte 7, septième 10, 9 (2), 11 (5)
+// jetons : t tierce · u note sus (2 ou 5, accord sans tierce) · f quinte · s septième · a sixte
+// ajoutée · n 9e · e 11e · h 13e (intervalle à la fondamentale) ; `o` en dernier = quinte NOMMÉE mais omise du son (13 à sept classes pour
+// six voix : le device n'a que six [noteout]). Le type porte toutes ses notes : une carte
+// capturée se re-réalise, se re-nomme et se transpose sans relire la page, qui aura changé.
+// Pourquoi pas un message `extchord i` : il faudrait que la carte, le rekey, l'aperçu, le Push
+// et la démo connaissent tous la table vivante au moment où ils relisent — elle aura bougé.
+var _extDeg = -1;          // degré d'ancrage de la page Ext : dernier accord DIATONIQUE joué (-1 = tonique)
+var _triHist = [];         // historique propre de la page Tritone (forme de _sg_hist), tenu même SMART éteint
+var _triSrc = null;        // l'accord source du classement Tritone {fn, deg, semis, type} ; null = rien joué
+var _triVer = 0;           // incrémenté à chaque accord joué : clé du mémo de _triTable
+var _dynMemo = { ext: null, extK: "", tri: null, triK: "", bor: null, borK: "", grid: null };   // grid : validGridCells, une seule case (une seule fenêtre depuis le 2026-10-22)
+
+function _xParse(type) {
+	type = String(type);
+	if (type.charAt(0) !== "x" || type.charAt(1) !== ".") return null;
+	var parts = type.split("."), x = _xNew({}), i, k, v;
+	for (i = 1; i < parts.length; i++) {
+		if (parts[i] === "o") { x.o = true; continue; }
+		k = parts[i].charAt(0); v = parseInt(parts[i].substring(1));
+		if (!x.hasOwnProperty(k) || k === "o" || !(v >= 0 && v < 12)) return null;
+		x[k] = v;
+	}
+	return (x.t >= 0 || x.u >= 0) ? x : null;   // ni tierce ni sus : pas un type x
+}
+// Un type x complet (chaque jeton absent = -1). `u` (2026-10-21) = la note SUS (2 ou 5) d'un
+// accord sans tierce : 7sus4, 9sus4, 13sus4, 6sus2.
+function _xNew(o) {
+	var x = { t:-1, u:-1, f:-1, s:-1, a:-1, n:-1, e:-1, h:-1, o:false }, k;
+	for (k in o) if (o.hasOwnProperty(k)) x[k] = o[k];
+	return x;
+}
+var _X_KEYS = ["t", "u", "f", "s", "a", "n", "e", "h"];
+function _xType(x) {
+	var s = "x", k, i;
+	for (i = 0; i < _X_KEYS.length; i++) { k = _X_KEYS[i]; if (x[k] >= 0) s += "." + k + x[k]; }
+	return x.o ? s + ".o" : s;
+}
+// Intervalles + rôles d'un type x, dans l'ordre fondamentale → tensions. La quinte `o` est sautée.
+function _xRoles(x) {
+	var out = [{ iv:0, role:"root" }];
+	if (x.t >= 0) out.push({ iv:x.t, role:"third" });
+	if (x.u >= 0) out.push({ iv:x.u, role:"sus" });
+	if (x.f >= 0 && !x.o) out.push({ iv:x.f, role:"fifth" });
+	if (x.a >= 0) out.push({ iv:x.a, role:"sixth" });
+	if (x.s >= 0) out.push({ iv:x.s, role:"seventh" });
+	if (x.n >= 0) out.push({ iv:x.n, role:"ninth" });
+	if (x.e >= 0) out.push({ iv:x.e, role:"eleventh" });
+	if (x.h >= 0) out.push({ iv:x.h, role:"thirteenth" });
+	return out;
+}
+// Intervalles d'un type de couleur, x compris — SOURCE UNIQUE de colorchord et _vl2_buildColorSpec.
+// Un type inconnu replie toujours sur majeur (comportement d'avant), mais un type x ne s'y perd plus.
+function _colorIvs(type) {
+	var x = _xParse(type), out = [], r, i;
+	if (!x) return COLOR_IV[type] || COLOR_IV.maj;
+	r = _xRoles(x);
+	for (i = 0; i < r.length; i++) out.push(r[i].iv);
+	return out;
+}
+// Nom d'un type x — DANS LA CONVENTION DE `_tensName` (celle des cartes à tensions) pour toute
+// pile CONTIGUË (9 · 9+11 · 9+11+13, et 9+13 sur une tierce majeure ou un sus, où la 11 est
+// omise par usage) : le chiffre le plus haut remplace le 7 (Dm11, G13b9, FM13#11) et la garde
+// `device/tests/borpage-ext.test.mjs` le compare à `_tensName` sur les 30 gammes.
+// Ce que `_tensName` ne sait pas dire — une tension HORS de la pile — se nomme entre parenthèses
+// après le chiffre : Dm7(11), Dm7(13), Dm9(13). `_tensName` dirait « Dm13 » pour Dm7 + 13, et
+// Dm13 implique la 9 : la page sonnerait une note de moins que son nom.
+// Sans septième : add9 · add11 · add9(11) · 6 · 6/9 · 6(add11), préfixe « m » sur une tierce
+// mineure (madd9 existe déjà dans la grille : madd11, pas m(add11)). Sus : 7sus4 · 9sus4 · 13sus4 · 6sus2.
+function _xSuffix(x) {
+	var t = x.t, f = x.f, s = x.s, u = (x.u >= 0) ? x.u : -1, n = x.n, e = x.e, h = x.h, a = x.a;
+	var C = _TENS_COLOR, sus = (u === 2) ? "sus2" : "sus4";
+	if (s < 0) {
+		if (t < 0) return (a >= 0 ? "6" : "") + sus;
+		var m = (t === 3) ? "m" : "";
+		if (n < 0 && e < 0 && a < 0) {
+			if (t === 3 && f === 6) return "dim";
+			if (t === 4 && f === 8) return "aug";
+			return m;
+		}
+		if (a >= 0) return m + ((n === 2) ? "6/9" : "6") + ((e >= 0) ? "(add" + C[e] + ")" : "");
+		if (n >= 0 && e >= 0) return m + "add" + C[n] + "(" + C[e] + ")";
+		return m + "add" + C[(n >= 0) ? n : e];
+	}
+	var base = (t < 0) ? ((s === 11) ? "M7" : "7") + sus
+	         : (t === 3 && f === 7 && s === 11) ? "mMaj7" : (t === 4 && f === 8 && s === 11) ? "M7#5"
+	         : (f === 7 && s === 11) ? "M7" : (t === 3 && f === 7 && s === 10) ? "m7"
+	         : (f === 7 && s === 10) ? "7" : (t === 3 && f === 6 && s === 9) ? "dim7"
+	         : (t === 3 && f === 6 && s === 10) ? "ø7" : "";
+	// La pile : 9 d'abord ; 11 si 9 ; 13 si 11 — ou si 9 sur une tierce majeure / un sus.
+	var lv = 0;
+	if (n >= 0) { lv = 9; if (e >= 0) { lv = 11; if (h >= 0) lv = 13; } else if (h >= 0 && t !== 3) lv = 13; }
+	var top = (lv >= 13 && h === 9) ? 13 : (lv >= 11 && e === 5) ? 11 : (n === 2) ? 9 : 0;
+	var name = base;
+	if (base === "M7#5") { if (top) name = "M" + top + "#5"; }
+	else if (top) name = base.replace(/7(sus4|sus2|b9|#9)?$/, String(top) + "$1");
+	var hors = [], alt = [];
+	if (n >= 0 && n !== 2) alt.push(n);
+	if (e >= 0) { if (lv < 11 && e === 5) hors.push(11); else if (e !== 5) alt.push(e); }
+	if (h >= 0) { if (lv < 13 && h === 9) hors.push(13); else if (h !== 9) alt.push(h); }
+	var i, dom = (t === 4 && s === 10);
+	for (i = 0; i < hors.length; i++) name += "(" + hors[i] + ")";
+	for (i = 0; i < alt.length; i++) name += (dom || (alt[i] === 6 && t === 4)) ? C[alt[i]] : ("(" + C[alt[i]] + ")");
+	return name;
+}
+// Chiffrage d'une case de page dynamique SANS relire la page (elle a pu bouger, ou ne pas être
+// visible) : le type x dit son degré par sa fondamentale, le sub7 sa cible un demi-ton plus bas.
+function _dynRoman(semis, type) {
+	var d, want = -1;
+	if (_xParse(type)) want = semis;
+	else if (type === "sub7") want = (semis + 11) % 12;
+	if (want < 0) return "·";
+	for (d = 0; d < 7; d++) if (_degValid(d) && scale[d] === want) return (type === "sub7") ? ((d === 0) ? "subV7" : "subV7/" + _romanOf(d)) : _romanOf(d);
+	return (type === "sub7") ? "subV7" : "·";
+}
+function _romanOf(d) {
+	var R = ["I","II","III","IV","V","VI","VII"], b = R[d] || "·", q = chordQuality(d);
+	return (q === 1) ? b.toLowerCase() : (q === 2) ? b.toLowerCase() + "°" : (q === 3) ? b + "+" : b;
+}
+function _degValid(d) { var m = SCALE_VALID_DEGREES[scaleName]; return d >= 0 && d < 7 && (!m || !!m[d]); }
+
+// ── Page EXT — les extensions du dernier accord diatonique joué QUE LA GRILLE N'A PAS ──────
+// 2026-10-21, deuxième version. La première empilait 7 → 9 → 11 → 13, add9, 6/9 : en do majeur,
+// sur I, CM7 CM9 Cadd9 C6/9 étaient DÉJÀ dans la colonne du I — une seule case neuve sur cinq
+// (Antoine : « le but est de montrer les extensions qui NE SONT PAS dans la grille »).
+// Maintenant : un réservoir large de candidats, toutes leurs notes dans la gamme, puis on RETIRE
+// tout candidat dont l'ensemble de classes de hauteur (même fondamentale) est celui d'une case de
+// la colonne TELLE QU'AFFICHÉE — la grille normale, la seule depuis le 2026-10-22 (session 86 :
+// EXT ne touche plus la grille, il n'agit que sur la colonne Borrowed). Comparaison par ENSEMBLE,
+// pas par nom : C6/9 et Am7(11)/C ne se ressemblent pas sur le papier.
+// Familles (seulement quand la gamme donne les notes) :
+//   pile de septième — tout sous-ensemble de {9, 11, 13} sauf 11+13 sans 9 ; les tensions sont
+//     celles de la GAMME (♭9 · 9 · ♯9, 11 · ♯11, ♭13 · 13 : les altérées viennent donc seules sur
+//     les dominantes des mineurs, et la ♯11 sur le IV lydien), filtrées par `_tensAvoid` quand
+//     AVOID NOTES est allumé — la table d'EXT et des cartes ;
+//   sus — 7sus4, 9sus4, 13sus4, 6sus2 ;
+//   add — add9, add11, add9(11), 6, 6/9, 6(add11), sur une quinte juste.
+// Six voix au plus (six [noteout]) : au-delà, la quinte JUSTE part (`o`), sinon le candidat.
+// dim7 : seul (ses tensions dépendent de sa fonction, que le degré ne dit pas).
+// Ordre : le plus PROCHE de la grille d'abord (distance = différence symétrique au plus proche
+// voisin de la colonne : 1 = une tension posée sur une case), à distance égale la pile, puis sus,
+// puis add, puis les piles partielles ; huit cases au plus (la hauteur de la colonne).
+// PEUT ÊTRE VIDE : rien de neuf à ce degré → la colonne montre ses huit touches vides (le patron
+// des colonnes courtes de la façade V3), jamais une répétition. La page reste dans le cycle
+// (`borPagesDispo`) : vide ou pas, elle existe dans toutes les gammes.
+// EXT n'enrichit PAS cette page (un type x n'a pas d'entrée dans `_BOR_EXT_IV`), et depuis le
+// 2026-10-22 il ne change plus la grille qu'elle complète : son contenu ne dépend pas d'EXT.
+var EXT_MAX = 8;
+function _extTensOk(rootPc, ctx, iv) {
+	if (!avoidNotesOn) return true;
+	var pcs = [{ pc:rootPc, role:"root" }];
+	if (ctx.t >= 0) pcs.push({ pc:_vl2_m(rootPc + ctx.t), role:"third" });
+	if (ctx.f >= 0) pcs.push({ pc:_vl2_m(rootPc + ctx.f), role:"fifth" });
+	return !_tensAvoid({ pcs:pcs, rootPc:rootPc, isDominant:!!ctx.dom }, { iv:iv });
+}
+// L'ensemble SONNANT d'un type x (quinte `o` omise), en intervalles triés : « 0,3,7,10 ».
+function _xKey(x) {
+	var r = _xRoles(x), a = [], i;
+	for (i = 0; i < r.length; i++) if (a.indexOf(r[i].iv) < 0) a.push(r[i].iv);
+	a.sort(function(p, q){ return p - q; });
+	return a.join(",");
+}
+// Les ensembles de la colonne du degré D, tels qu'affichés ET joués. Une seule fenêtre depuis le
+// 2026-10-22 : la fenêtre EXT de la grille (CM13 seul sur le I de do) n'existe plus, donc plus de
+// seconde passe qui basculait `extendedOn`. Chaque case est comparée à ce qu'elle JOUE.
+function _extGridKeys(D) {
+	var out = [], i, j, sp, rel, a, cells = validGridCells();
+	for (i = 0; i < cells.length; i++) {
+		if (cells[i].d !== D) continue;
+		sp = _vl2_specFor(cells[i].fn, D);
+		if (!sp) continue;
+		a = [];
+		for (j = 0; j < sp.pcs.length; j++) { rel = _vl2_m(sp.pcs[j].pc - sp.rootPc); if (a.indexOf(rel) < 0) a.push(rel); }
+		a.sort(function(p, q){ return p - q; });
+		if (out.indexOf(a.join(",")) < 0) out.push(a.join(","));
+	}
+	return out;
+}
+// Le cœur, sans état : in = { iv (getIntervals), seven (validité grille), ok(ctx, iv),
+// inScale(ivs), grid: [clés], max } → [x], dans l'ordre. Miroir : site/vl2/borpages.js extCands.
+function _extCands(inp) {
+	var iv = inp.iv, T = iv[2], F = iv[4], cands = [], gen = 0;
+	function add(o, rank) { cands.push({ x:_xNew(o), rank:rank, g:gen++ }); }
+	function pick(v, oks) { return (oks.indexOf(v) >= 0) ? v : -1; }
+	var N = pick(iv[1], [1,2,3]), E = pick(iv[3], [5,6]), H = pick(iv[5], [8,9]), i, k;
+	if (inp.seven) {
+		var S = iv[6], ctx = { t:T, f:F, dom:(T === 4 && S === 10) };
+		if (T === 3 && F === 6 && S === 9) add({ t:T, f:F, s:S }, 0);
+		else {
+			var n = (N >= 0 && inp.ok(ctx, N)) ? N : -1, e = (E >= 0 && inp.ok(ctx, E)) ? E : -1, h = (H >= 0 && inp.ok(ctx, H)) ? H : -1;
+			// sous-ensembles, ordre de génération : nu, 9, 9+11, 9+11+13, 9+13, 11, 13
+			var SUB = [[0,0,0],[1,0,0],[1,1,0],[1,1,1],[1,0,1],[0,1,0],[0,0,1]];
+			for (i = 0; i < SUB.length; i++) {
+				k = SUB[i];
+				if ((k[0] && n < 0) || (k[1] && e < 0) || (k[2] && h < 0)) continue;
+				var chain = !k[1] && !k[2] ? true : (k[0] && (k[1] || T !== 3));   // pile contiguë
+				add({ t:T, f:F, s:S, n:k[0] ? n : -1, e:k[1] ? e : -1, h:k[2] ? h : -1 }, chain ? 0 : 3);
+			}
+		}
+	}
+	if (F === 7) {
+		var cs = { t:-1, f:7, dom:false };
+		if (iv[3] === 5 && iv[6] === 10) {
+			add({ u:5, f:7, s:10 }, 1);
+			var n9 = (iv[1] === 2 && inp.ok(cs, 2));
+			if (n9) add({ u:5, f:7, s:10, n:2 }, 1);
+			if (n9 && iv[5] === 9 && inp.ok(cs, 9)) add({ u:5, f:7, s:10, n:2, h:9 }, 1);
+		}
+		if (iv[1] === 2 && iv[5] === 9 && inp.ok(cs, 9)) add({ u:2, f:7, a:9 }, 1);
+		if (T >= 0) {
+			var ca = { t:T, f:7, dom:false };
+			var an = (N >= 0 && inp.ok(ca, N)) ? N : -1, ae = (E >= 0 && inp.ok(ca, E)) ? E : -1, a6 = (iv[5] === 9 && inp.ok(ca, 9)) ? 9 : -1;
+			if (an >= 0) add({ t:T, f:7, n:an }, 2);
+			if (ae >= 0) add({ t:T, f:7, e:ae }, 2);
+			if (an >= 0 && ae >= 0) add({ t:T, f:7, n:an, e:ae }, 2);
+			if (a6 >= 0) {
+				add({ t:T, f:7, a:9 }, 2);
+				if (an === 2) add({ t:T, f:7, a:9, n:2 }, 2);
+				if (ae >= 0) add({ t:T, f:7, a:9, e:ae }, 2);
+			}
+		}
+	}
+	var out = [], seen = {}, grid = {}, j;
+	for (i = 0; i < inp.grid.length; i++) grid[inp.grid[i]] = 1;
+	for (i = 0; i < cands.length; i++) {
+		var x = cands[i].x, r = _xRoles(x);
+		if (r.length > 6) { if (x.f === 7 && x.t >= 0) { x.o = true; r = _xRoles(x); } if (r.length > 6) continue; }
+		var ivs = []; for (j = 0; j < r.length; j++) ivs.push(r[j].iv);
+		if (!inp.inScale(ivs)) continue;
+		var key = _xKey(x);
+		if (grid[key] || seen[key]) continue;
+		seen[key] = 1;
+		var mine = key.split(","), dist = mine.length, gk, g2, c2, z;
+		for (j = 0; j < inp.grid.length; j++) {
+			g2 = inp.grid[j].split(","); c2 = 0;
+			for (z = 0; z < mine.length; z++) if (g2.indexOf(mine[z]) < 0) c2++;
+			for (z = 0; z < g2.length; z++) if (mine.indexOf(g2[z]) < 0) c2++;
+			if (c2 < dist) dist = c2;
+		}
+		out.push({ x:x, d:dist, rank:cands[i].rank, g:cands[i].g });
+	}
+	out.sort(function(p, q){ return (p.d - q.d) || (p.rank - q.rank) || (p.g - q.g); });
+	var res = [];
+	for (i = 0; i < out.length && i < inp.max; i++) res.push(out[i].x);
+	return res;
+}
+function _extTable() {
+	var D = _degValid(_extDeg) ? _extDeg : 0;
+	if (!_degValid(D)) { for (D = 0; D < 7 && !_degValid(D); D++) {} }
+	var k = [root, scaleName, D, avoidNotesOn ? 1 : 0].join("|");   // EXT hors clé : la page ne le lit plus (2026-10-22)
+	if (_dynMemo.ext && _dynMemo.extK === k) return _dynMemo.ext;
+	var iv = getIntervals(D), semis = scale[D], rom = _romanOf(D), rootPc = _vl2_m(root + semis), penta = !!SCALE_VALID_DEGREES[scaleName];
+	var inSet = scalePcSet();
+	var xs = _extCands({
+		iv:iv, seven:gridTypeValid(D, "seven", iv), max:EXT_MAX, grid:_extGridKeys(D),
+		ok:function(ctx, v){ return _extTensOk(rootPc, ctx, v); },
+		inScale:function(ivs){ if (!penta) return true; for (var q = 0; q < ivs.length; q++) if (!inSet[_vl2_m(rootPc + ivs[q])]) return false; return true; }
+	});
+	var out = [], i;
+	for (i = 0; i < xs.length; i++) out.push({ roman:rom, semis:semis, type:_xType(xs[i]), suf:_xSuffix(xs[i]), fam:"ext", fdeg:D });
+	_dynMemo.ext = out; _dynMemo.extK = k;
+	return out;
+}
+
+// ── Page TRITONE — subs vers les accords les plus probables ENSUITE ──────────────────────
+// Le classement est celui de la heat-map SMART : `_sg_rank` sur l'historique de jeu, en mode
+// diatonique seul (la page ne peut pas se classer elle-même : `_sg_rank` lit `borrowedFor()`).
+// Chaque cible retenue reçoit son sub tritonique — un dom7 un demi-ton AU-DESSUS de la cible
+// (= un triton au-dessus de sa dominante). Règles :
+//   • cibles = DEGRÉS distincts, jamais deux subs vers la même cible, ni vers l'accord qu'on joue ;
+//   • pas de cible diminuée ni augmentée : un sub remplace une dominante SECONDAIRE, et ces deux
+//     triades ne se tonicisent pas (même règle que V/x) — sauf s'il n'en reste pas assez autrement ;
+//   • TRI_N = 4 cibles : la hauteur de l'ancienne page Tritone en majeur (quatre subs communs),
+//     donc la colonne ne change pas de taille sous les doigts. Les cibles que la heat-map ne
+//     retient pas (palier 0) complètent dans l'ordre de `_sg_base`, puis des degrés — la page
+//     n'est JAMAIS vide (le cycleur la sauterait et ferait retomber le paramètre Live) ;
+//   • AVANT TOUT ACCORD (et après un changement de tonalité, qui vide l'historique) : le subV7
+//     vers I EN TÊTE — c'est la case que l'ancienne page statique ouvrait (C#7 → C en do), et la
+//     première version dynamique l'excluait en faisant comme si I venait d'être joué (mesuré :
+//     F#7 G#7 A#7 D#7, le sub principal absent). Puis le classement depuis la tonique ;
+//   • APRÈS UN SUB (type `sub7`, ou un dom7 de l'ancienne page statique) : le sub EST la dominante
+//     de sa cible. On classe comme si la CIBLE venait d'être jouée — elle devient la source,
+//     exclue. Mesuré avant : après C#7, `_sg_rank` le lisait comme un dom7 qui résout une quarte
+//     plus haut (G#7 → G en tête) et, la source étant une couleur, n'excluait rien — C#7 → C
+//     revenait en deuxième case ;
+//   • le sub qu'on vient de jouer n'est JAMAIS reproposé (`_triBan`), quel que soit le chemin.
+// Le type est `sub7` : EXT y pose la ♯11 (7#11), sur la page comme sur une carte capturée.
+// La case PORTE SA CIBLE (6e atome de `gridbor`) : l'UI l'affiche sous le nom (« → Dm »).
+var TRI_N = 4;
+var _triBan = -1;          // semis du sub qu'on vient de jouer (-1 = aucun) : jamais reproposé
+function _triTable() {
+	var k = [root, scaleName, extendedOn ? 1 : 0, _triVer].join("|");
+	if (_dynMemo.tri && _dynMemo.triK === k) return _dynMemo.tri;
+	var depart = !_triHist.length;                         // rien joué depuis la tonalité courante
+	var src = depart ? { fn:"triad", deg:0, semis:-1, type:"" } : (_triSrc || { fn:"triad", deg:0, semis:-1, type:"" });
+	var hist = _triHist.length ? _triHist : null;
+	if (!hist) { var sp0 = _vl2_specFor("triad", 0); hist = sp0 ? [{ kind:"d", degree:0, pcs:_sg_pcs(sp0) }] : []; }
+	var saved = _sg_hist, emit;
+	_sg_hist = hist;
+	try { emit = _sg_rank(src.fn, src.deg, src.semis, src.type, null, true); }
+	finally { _sg_hist = saved; }
+	var last = hist[hist.length - 1], lastDeg = (last && last.kind === "d" && _degValid(last.degree)) ? last.degree : -1;
+	var best = {}, d, j;
+	for (j = 0; j < emit.length; j++) if (emit[j].kind === "d" && (best[emit[j].d] === undefined || emit[j].s > best[emit[j].d])) best[emit[j].d] = emit[j].s;
+	var isMin = _sg_isMinor(), cand = [];
+	for (d = 0; d < 7; d++) {
+		if (!_degValid(d) || (src.fn !== "color" && d === src.deg)) continue;
+		cand.push({ d:d, s:(best[d] !== undefined) ? best[d] : -1, b:_sg_base(lastDeg, d, isMin), dim:(chordQuality(d) >= 2) });   // dim OU aug
+	}
+	var first = (depart && _degValid(0)) ? 0 : -1;
+	var pick = _triPick(cand, TRI_N, first, depart ? -1 : _triBan), out = [], i;
+	for (i = 0; i < pick.length; i++) {
+		d = pick[i];
+		out.push({ roman:(d === 0) ? "subV7" : "subV7/" + _romanOf(d), semis:(scale[d] + 1) % 12, type:"sub7", suf:"7",
+		           target:gridLabel(d, "triad"), targetDeg:d });
+	}
+	_dynMemo.tri = out; _dynMemo.triK = k;
+	return out;
+}
+// Le choix des cibles, sans état — miroir : site/vl2/borpages.js triPick.
+// cand = [{d, s (score SMART, -1 = non retenu), b (_sg_base), dim}] ; first = degré imposé en
+// tête (-1 = aucun) ; ban = semis d'un sub interdit (-1 = aucun).
+function _triPick(cand, n, first, ban) {
+	var c = [], i, pick = [];
+	for (i = 0; i < cand.length; i++) {
+		if (cand[i].d === first) continue;
+		if (ban >= 0 && (scale[cand[i].d] + 1) % 12 === ban) continue;
+		c.push(cand[i]);
+	}
+	c.sort(function(a, z){ return (z.s - a.s) || (z.b - a.b) || (a.d - z.d); });
+	if (first >= 0 && !(ban >= 0 && (scale[first] + 1) % 12 === ban)) pick.push(first);
+	for (i = 0; i < c.length && pick.length < n; i++) if (!c[i].dim) pick.push(c[i].d);
+	for (i = 0; i < c.length && pick.length < n; i++) if (c[i].dim) pick.push(c[i].d);
+	return pick;
+}
+// Un accord de couleur est-il un SUB tritonique, et vers quel degré ? -1 sinon. `sub7` partout ;
+// un dom7 seulement s'il est un sub de l'ancienne page statique (`_colorIsSub`, cartes d'avant).
+function _subTarget(semis, type) {
+	if (!(type === "sub7" || (type === "dom7" && _colorIsSub(semis, type)))) return -1;
+	var d, want = (semis + 11) % 12;
+	for (d = 0; d < 7; d++) if (_degValid(d) && scale[d] === want) return d;
+	return -1;
+}
+// Appelé par sendChord après chaque accord joué (grille, clavier, MIDI, Push). Rend true si la
+// page VISIBLE change — l'appelant rediffuse alors grille + heat-map ensemble (différé).
+// ⚠️ Une case Ext est une couleur (lastFn "color") : la jouer ne déplace PAS l'ancrage.
+function _borDynPlayed() {
+	var moved = false;
+	if (lastFn !== "color" && !_degValid(lastDegree)) return false;   // état incohérent (entrée hostile) : on n'apprend rien
+	if (lastFn !== "color" && lastDegree !== _extDeg) { _extDeg = lastDegree; moved = (borPage === 3); }
+	_triLearn(lastFn, lastDegree, lastColorSemis, lastColorType);
+	// Page Borrowed / Mediants en contexte (EXT) : la référence devient l'accord joué. On ne
+	// rediffuse que si la colonne VISIBLE change vraiment (même règle que les deux autres pages).
+	var ctxAvant = _borCtxOn() ? _borTypesKey() : null;
+	var nr = _borRefOf(lastFn, lastDegree, lastColorSemis, lastColorType, activeNotes);
+	if (nr) _borRef = nr;
+	_borHold = (lastFn === "color" && _xParse(lastColorType)) ? { semis:lastColorSemis, type:String(lastColorType) } : null;
+	if (ctxAvant !== null && _borTypesKey() !== ctxAvant) moved = true;
+	return moved || borPage === 1;
+}
+// La page Tritone apprend un accord joué : historique, source du classement, sub banni. Extrait
+// de _borDynPlayed pour que le mode Suite (_suiteOptions) rejoue la PROGRESSION au lieu du jeu en
+// direct (tuple-dev#93).
+function _triLearn(fn, deg, semis, type) {
+	var tg = (fn === "color") ? _subTarget(semis, type) : -1;
+	_triBan = (tg >= 0) ? semis : -1;
+	// Un sub joué compte, pour la page Tritone, comme sa CIBLE jouée (voir l'en-tête de _triTable).
+	var f = (tg >= 0) ? "triad" : fn, d = (tg >= 0) ? tg : deg;
+	var sp = (tg >= 0) ? _vl2_specFor("triad", tg) : _vl2_specFor(fn, deg, semis, type);
+	if (sp) {
+		var e = { kind:(f === "color") ? "b" : "d", degree:(f === "color") ? -1 : d, pcs:_sg_pcs(sp) };
+		var l = _triHist[_triHist.length - 1];
+		if (!(l && l.kind === e.kind && l.degree === e.degree && l.pcs.join(",") === e.pcs.join(","))) {
+			_triHist.push(e); if (_triHist.length > SG_HIST_MAX) _triHist.shift();
+		}
+	}
+	_triSrc = (tg >= 0) ? { fn:"triad", deg:tg, semis:-1, type:"" }
+	                    : { fn:fn, deg:(fn === "color") ? -1 : deg, semis:semis, type:type };
+	_triVer++;
+}
+function _borTypesKey() { var t = borrowedFor() || [], a = [], i; for (i = 0; i < t.length; i++) a.push(t[i].type); return a.join(" "); }
+// Changement de tonalité ou de gamme : l'historique de la page Tritone porte des classes de
+// hauteur de l'ANCIENNE gamme — on repart de l'état de départ (subV7 → I en tête).
+// ⚠️ Remet AUSSI l'ancrage de la page Ext (`_extDeg`) et la référence de la page Borrowed
+// enrichie (`_borRef`) : sans cela, après un changement de tonalité, Ext restait sur le degré
+// joué dans l'ancienne gamme et Borrowed enrichissait « après » un accord d'une autre gamme.
+function _borDynReset() { _triHist = []; _triSrc = null; _triBan = -1; _triVer++; _extDeg = -1; _borRef = null; _borHold = null; }
+
+// ══ PAGE BORROWED EN CONTEXTE sous EXT (2026-10-21, session 86 — Antoine) ══════════════════
+// EXT allumé, les pages Borrowed (0) et Mediants (2) gardent EXACTEMENT leurs accords (mêmes
+// fondamentales, qualités, chiffrages, ordre, nombre), mais chaque case prend l'extension qui
+// convient APRÈS L'ACCORD QU'ON VIENT DE JOUER. Exemples d'Antoine, en do majeur : après C,
+// Fm devient Fm6 ; après Dm7, Fm devient Fm9. Elle remplace, pour ces deux pages, la règle
+// statique par qualité (`_vl2_enrichColorSpec`). Tritone garde sa ♯11, Ext ne change pas.
+// EXT éteint : tables INCHANGÉES, octet pour octet (`borrowedFor` ne passe pas par ici).
+//
+// FIL : une case enrichie part en TYPE x (`x.t3.f7.a9` = Fm6), comme une case de la page Ext :
+// capture, carte, rekey, aperçu, Push et démo la jouent sans relire la page, qui aura bougé.
+// Même l'accord nu part en x (`x.t3.f7`) — un type nu serait ré-enrichi par la règle statique.
+//
+// SOURCE des tensions (hypothèses, écrites ici parce qu'aucune n'est imposée par la théorie) :
+//   • dom7 — sa RÉSOLUTION, une quarte au-dessus : cible mineure ou diminuée dans la gamme
+//     courante → gamme dominante du mineur (HM5 : ♭9 · ♭13) ; sinon mixolydien (9 · 13) ;
+//   • les autres — la gamme PARENTE la plus proche (même tonique) qui contient l'accord :
+//     parmi les sept modes, le mineur harmonique et le mineur mélodique, celle qui change le
+//     MOINS de notes à la gamme courante (à égalité, l'ordre de `_BOR_PARENTS`). En do majeur,
+//     Fm vient du mineur harmonique (deux notes changées) plutôt que de l'éolien (trois) ;
+//   • aucune ne le contient (médiantes chromatiques) → la qualité : majeur = ionien,
+//     mineur = dorien, dim7 = rien.
+// CANDIDATS : `_extCands` (le générateur de la page Ext) nourri de cette source, filtré pour
+// que la case garde sa QUALITÉ : même tierce, même quinte, pas de sus ; une septième n'est
+// ajoutée que si elle ne change pas la fonction — maj7 sur un majeur, ♭7 sur un mineur (un
+// majeur + ♭7 deviendrait une dominante). Six classes au plus, la quinte juste part d'abord.
+// L'avoid-table (`_tensAvoid`, AVOID NOTES) filtre comme sur la page Ext.
+// TENSIONS NATURELLES SEULEMENT hors dominante (2026-10-22, décidé pour Antoine) : sur une case
+// NON dominante (maj, min, maj7, médiantes…) les seules tensions offertes sont 9, 11 — ou ♯11
+// quand la source la donne (couleur lydienne) — et 13/6. ♭9, ♯9 et ♭13 en sont exclues, QUOI
+// QUE DISE AVOID NOTES (l'avoid-table ne sait que retirer, et éteinte elle laissait tout passer) :
+// la source les fournissait — G♯ du mineur harmonique, A♯m du phrygien — et la page affichait
+// G#add#9(#11), A#maddb9(11). C'est la doctrine d'EXT (`_vl2_enrichColorSpec`, et l'ancien
+// enrichissement de la grille retiré le 2026-10-22) : une tension altérée est une COULEUR, pas un enrichissement.
+// EXCEPTION : les septièmes DE DOMINANTE (dom7 — les V/x —, sub7) gardent les altérations que
+// leur source donne : A7♭9 après Dm7, E7♭13 après G7 sont idiomatiques. Garde :
+// `device/tests/borrowed-contexte.test.mjs`, 30 gammes × pages 0/2 × références × AVOID.
+//
+// CHOIX — la règle demandée (« le plus de notes communes avec l'accord joué ») a été MESURÉE
+// et donne l'inverse des deux exemples : après C, Fmadd9 (C et G communs) ; après Dm7, Fm6
+// (≈ Dø7, un seul demi-ton de Dm7). Ce qu'Antoine décrit est une COULEUR NEUVE. Clés, dans l'ordre :
+//   0. la case qu'on vient de jouer GARDE sa forme (`hold`) : on la tient, elle est en
+//      surbrillance — ce sont les AUTRES cases qui se recalculent ;
+//   1. jamais l'ensemble de l'accord joué (ni sa base, ni ce qui a sonné) ;
+//   2. tension FRAÎCHE : le moins de notes ajoutées que l'accord joué sonnait déjà (une
+//      tension tenue depuis l'accord d'avant n'apporte rien — et c'est elle qui fait de Fm6
+//      un quasi-Dm7) ;
+//   3. TEXTURE : septième si l'accord joué en avait une, sinon famille 6 / add ;
+//   4. TAILLE : une note de plus que l'accord joué (six au plus) — « un cran plus riche » ;
+//   5. le moins de notes HORS de la gamme courante (emprunter le moins possible) ;
+//   6. le plus de notes communes, puis le moins de mouvement (demi-tons au plus proche) ;
+//   7. l'ordre du générateur (l'accord nu d'abord).
+// RÉFÉRENCE : l'accord joué tel que sa case le NOMME (spec de base). Jusqu'au 2026-10-22 EXT
+// enrichissait aussi la grille (la case C sonnait C6/9) et la référence devait l'ignorer ; depuis,
+// une case diatonique sonne ce qu'elle nomme, EXT ou pas. Avant tout accord, et après un
+// changement de tonalité : la triade de tonique. Une case enrichie jouée devient elle-même la référence.
+var _borRef = null;        // { pcs:[classes absolues triées], sev:bool, son:"clé sonnante" } ; null = tonique
+var _borHold = null;       // { semis, type x } de la case de couleur qu'on vient de jouer (voir `hold`) ; null sinon
+var _BOR_PARENTS = ["major","dorian","phrygian","lydian","mixolydian","minor","locrian","harmminor","melminor"];
+var _BOR_BASE = { maj:{ t:4, f:7, s:-1 }, min:{ t:3, f:7, s:-1 }, dim7:{ t:3, f:6, s:9 }, dom7:{ t:4, f:7, s:10 }, maj7:{ t:4, f:7, s:11 }, sub7:{ t:4, f:7, s:10 } };
+// La source (intervalles à la fondamentale de l'accord, 0..11 triés) — sans état.
+// in = { semis, type, key: [intervalles de la gamme courante], targetMinor: bool (dom7 seulement) }
+function _borCtxSource(inp) {
+	var b = _BOR_BASE[inp.type] || _BOR_BASE.maj, i, j, p, P, ok, dist, best = null, bestD = 99, cur = {}, out = [];
+	if (b.s === 10 && b.t === 4) return inp.targetMinor ? [0,1,4,5,7,8,10] : [0,2,4,5,7,9,10];
+	for (i = 0; i < inp.key.length; i++) cur[_vl2_m(inp.key[i])] = 1;
+	var ch = [0, b.t, b.f]; if (b.s >= 0) ch.push(b.s);
+	for (p = 0; p < _BOR_PARENTS.length; p++) {
+		P = SCALES[_BOR_PARENTS[p]]; ok = true; dist = 0;
+		for (j = 0; j < ch.length && ok; j++) if (P.indexOf(_vl2_m(inp.semis + ch[j])) < 0) ok = false;
+		if (!ok) continue;
+		for (j = 0; j < P.length; j++) if (!cur[P[j]]) dist++;
+		if (dist < bestD) { bestD = dist; best = P; }
+	}
+	if (!best) return (b.s === 9) ? [0,3,6,9] : (b.t === 3) ? [0,2,3,5,7,9,10] : [0,2,4,5,7,9,11];
+	for (j = 0; j < best.length; j++) out.push(_vl2_m(best[j] - inp.semis));
+	out.sort(function(a, z){ return a - z; });
+	return out;
+}
+// Les candidats d'une case, sans état : l'accord nu d'abord, puis l'ordre du générateur.
+// in = { type, S (source), ok(ctx, iv) } → [x].
+function _borCtxCands(inp) {
+	var b = _BOR_BASE[inp.type] || _BOR_BASE.maj, S = inp.S, i;
+	function has(v) { return S.indexOf(v) >= 0; }
+	function first(l) { for (var q = 0; q < l.length; q++) if (has(l[q]) && l[q] !== b.t) return l[q]; return -1; }
+	// La septième permise : celle de la base, sinon celle qui garde la fonction (voir l'en-tête).
+	var sev = (b.s >= 0) ? b.s : (b.t === 4 && has(11)) ? 11 : (b.t === 3 && b.f === 7 && has(10)) ? 10 : -1;
+	// Hors dominante : 9 et 13 NATURELLES seulement (voir l'en-tête) — ♭9/♯9/♭13 jamais proposées.
+	var dom = (b.t === 4 && b.s === 10);
+	var iv = [0, first(dom ? [2,1,3] : [2]), b.t, first([5,6]), b.f, first(dom ? [9,8] : [9]), sev];
+	var gen = _extCands({ iv:iv, seven:(sev >= 0), max:99, grid:[], ok:inp.ok, inScale:function(){ return true; } });
+	var cands = [_xNew({ t:b.t, f:b.f, s:b.s })];
+	for (i = 0; i < gen.length; i++) {
+		var x = gen[i];
+		if (x.u >= 0 || x.t !== b.t || x.f !== b.f) continue;          // la qualité ne bouge pas
+		if (b.s >= 0 ? x.s !== b.s : (x.s >= 0 && x.s !== sev)) continue;
+		cands.push(x);
+	}
+	return cands;
+}
+// Le choix, sans état. in = { type, S, rootPc, ok, ref:{pcs, sev, son}, inKey: {pc:1} } → x.
+// ⚠️ Une case qui n'a QU'UNE forme (dim7 ; un majeur dont toutes les tensions sont évitées) la
+// garde même si elle vient d'être jouée : la règle 1 classe, elle ne vide pas la colonne.
+// ⚠️ `hold` (x ou null) = la case qu'on VIENT DE JOUER sur cette page : elle GARDE sa forme
+// (c'est elle qui sonne, sous le doigt et en surbrillance) — les AUTRES cases se recalculent.
+// Sans cela, la case tenue changeait de nom sous le doigt, et la règle 1 la chassait forcément.
+function _borCtxPick(inp) {
+	var b = _BOR_BASE[inp.type] || _BOR_BASE.maj, cands = _borCtxCands(inp), i, j;
+	if (inp.hold) { var hk = _xKey(inp.hold); for (i = 0; i < cands.length; i++) if (_xKey(cands[i]) === hk) return cands[i]; }
+	var baseIv = [0, b.t, b.f]; if (b.s >= 0) baseIv.push(b.s);
+	var R = inp.ref.pcs, inR = {}, target = Math.min(6, R.length + 1), scored = [], seen = {};
+	for (i = 0; i < R.length; i++) inR[R[i]] = 1;
+	for (i = 0; i < cands.length; i++) {
+		var k = _xKey(cands[i]); if (seen[k]) continue; seen[k] = 1;
+		var ivs = k.split(","), pcs = [], stale = 0, foreign = 0, common = 0, motion = 0, z, d, m;
+		for (j = 0; j < ivs.length; j++) {
+			var v = parseInt(ivs[j]), pc = _vl2_m(inp.rootPc + v);
+			pcs.push(pc);
+			if (inR[pc]) { common++; if (baseIv.indexOf(v) < 0) stale++; }
+			if (!inp.inKey[pc]) foreign++;
+			m = 12; for (z = 0; z < R.length; z++) { d = Math.abs(pc - R[z]); d = Math.min(d, 12 - d); if (d < m) m = d; }
+			motion += m;
+		}
+		pcs.sort(function(a, q){ return a - q; });
+		var pk = pcs.join(",");
+		scored.push({ x:cands[i], same:(pk === R.join(",") || pk === inp.ref.son) ? 1 : 0, stale:stale,
+		              tex:((cands[i].s >= 0) === !!inp.ref.sev) ? 0 : 1, size:Math.abs(ivs.length - target),
+		              foreign:foreign, common:common, motion:motion, g:i });
+	}
+	scored.sort(function(a, q){ return (a.same - q.same) || (a.stale - q.stale) || (a.tex - q.tex) || (a.size - q.size)
+		|| (a.foreign - q.foreign) || (q.common - a.common) || (a.motion - q.motion) || (a.g - q.g); });
+	return scored[0].x;
+}
+// La référence d'un accord : classes absolues de ce que sa case NOMME (spec de base, sans EXT),
+// septième ou non, et ce qui a SONNÉ (clé, pour la règle 1).
+function _borRefOf(fn, d, semis, type, sonne) {
+	var sp = (fn === "color") ? _vl2_buildColorSpec(semis, type) : _vl2_buildSpec(fn, d), a = [], i, pc;
+	if (!sp) return null;
+	for (i = 0; i < sp.pcs.length; i++) { pc = _vl2_m(sp.pcs[i].pc); if (a.indexOf(pc) < 0) a.push(pc); }
+	a.sort(function(p, q){ return p - q; });
+	var hs = false; for (i = 0; i < sp.pcs.length; i++) if (sp.pcs[i].role === "seventh") hs = true;
+	var s = [];
+	if (sonne) for (i = 0; i < sonne.length; i++) { pc = _vl2_m(sonne[i]); if (s.indexOf(pc) < 0) s.push(pc); }
+	s.sort(function(p, q){ return p - q; });
+	return { pcs:a, sev:hs, son:s.join(",") };
+}
+function _borCtxRef() { return _borRef || _borRefOf("triad", 0) || { pcs:[_vl2_m(root)], sev:false, son:"" }; }
+// La cible d'un dom7 (une quarte au-dessus) est-elle mineure/diminuée dans la gamme courante ?
+function _borTargetMinor(semis) {
+	var d, want = _vl2_m(semis + 5);
+	for (d = 0; d < 7; d++) if (_degValid(d) && scale[d] === want) { var q = chordQuality(d); return q === 1 || q === 2; }
+	return false;
+}
+// La table enrichie : mêmes entrées, type x et nom en contexte. Mémoïsée sur tout ce qu'elle lit.
+function _borCtxTable(t) {
+	if (!t || !t.length) return t;
+	var ref = _borCtxRef(), k = [root, scaleName, borPage, avoidNotesOn ? 1 : 0, ref.pcs.join(","), ref.sev ? 1 : 0, ref.son,
+		_borHold ? _borHold.semis + ":" + _borHold.type : ""].join("|");
+	if (_dynMemo.bor && _dynMemo.borK === k) return _dynMemo.bor;
+	var inKey = scalePcSet(), out = [], i;
+	for (i = 0; i < t.length; i++) {
+		var c = t[i], rootPc = _vl2_m(root + c.semis);
+		var S = _borCtxSource({ semis:c.semis, type:c.type, key:scale, targetMinor:_borTargetMinor(c.semis) });
+		var x = _borCtxPick({ type:c.type, S:S, rootPc:rootPc, ref:ref, inKey:inKey,
+			hold:(_borHold && _borHold.semis === c.semis) ? _xParse(_borHold.type) : null,
+			ok:function(ctx, v){ return _extTensOk(rootPc, ctx, v); } });
+		out.push({ roman:c.roman, semis:c.semis, type:_xType(x), suf:_xSuffix(x), base:c.type, fam:c.fam, fdeg:c.fdeg });
+	}
+	_dynMemo.bor = out; _dynMemo.borK = k;
+	return out;
+}
+function _borCtxOn() { return extendedOn && (borPage === 0 || borPage === 2); }
+/** Les pages NON VIDES pour la gamme courante. Une page vide est sautée, pas affichée.
+ *  Sauf Ext (3) : elle existe dans toutes les gammes, et son contenu peut être vide à un degré
+ *  (rien de neuf à proposer) — la sauter ferait disparaître la page sous les doigts. */
+function borPagesDispo() {
+	var out = [0], p, t;
+	for (p = 1; p < BOR_PAGES.length; p++) { if (p === 3) { out.push(p); continue; } t = borPageTable(p); if (t && t.length) out.push(p); }
+	return out;
+}
+// Reçu du paramètre Live "Borrowed Page" ET de l'UI. ⚠️ Le paramètre Live est la SOURCE DE VÉRITÉ :
+// il rejoue sa valeur au chargement du set, donc tout état que lui ne sait pas exprimer serait
+// écrasé en silence. C'est pourquoi la page est un paramètre et non une variable interne.
+// `borpages <libellé> <compte> <rang> <page…>` — UI seule. Les atomes 4+ (2026-10-22, AJOUTÉS EN
+// FIN) sont la LISTE des pages disponibles : l'UI la déduisait du compte (`_borDispo`), juste tant
+// que seule Mediants peut manquer. Le [route borpage] du patch ne matche pas `borpages`.
+function _borPagesEcho(d) {
+	outlet(7, ["borpages", BOR_PAGES[borPage], d.length, d.indexOf(borPage)].concat(d));
+}
+function borpage(v) {
+	var p = parseInt(v), d = borPagesDispo();
+	if (!(p >= 0) || d.indexOf(p) < 0) p = 0;              // page invalide pour cette gamme -> page 1
+	// Release SEULEMENT si la page change (la colonne bouge sous les doigts — même règle
+	// qu'extended()). Mais émettre TOUJOURS : le paramètre Live rejoue borpage au chargement
+	// du set, et une UI fraîche compte sur cet écho pour son en-tête.
+	if (p !== borPage) _releaseHeld();
+	borPage = p;
+	// ⚠️ DEUX messages, et ce n'est pas de la redondance. `borpage` porte UN SEUL entier parce
+	// qu'il alimente aussi le retour vers le paramètre Live, via un [sel 0 1 2 3] — exactement comme
+	// `cliptarget`, qui émet un symbole nu pour la même raison. Un `sel` ne matche pas une liste :
+	// y joindre le libellé et le compte casserait le retour en silence, et le paramètre relu au
+	// chargement du set écraserait alors le choix (le piège rencontré sur `Clip Target`).
+	outlet(7, "borpage", borPage);
+	// 3e atome (2026-10-21) : le RANG de la page parmi les pages dispo (hors majeur/mineur : 0, 1,
+	// 3 — Mediants sautée). Il servait aux points du cycleur ; le sélecteur à pastilles qui l'a
+	// remplacé ne lit que le COMPTE (2e atome) et en déduit les pages. Atome conservé : le fil ne bouge pas.
+	_borPagesEcho(d);   // UI seule
+	broadcastSurface();                                     // grille + heat-map : l'index de smartbor
+	                                                        // indexe la page VISIBLE (tuple-dev#26)
+}
+
+function borrowedFor() {
+	// borPage > 0 est toujours une page non vide : borpage() et setscale() la revalident.
+	var t = borPage > 0 ? borPageTable(borPage) : borrowedTableDeGamme();
+	return _borCtxOn() ? _borCtxTable(t) : t;   // EXT : Borrowed / Mediants en contexte (session 86)
+}
+
+// Les pitch classes REELLEMENT dans la gamme courante. Pour une pentatonique, seuls les degrés
+// du masque comptent — c'est la définition d'une gamme à cinq notes. Pour les autres, les sept.
+function scalePcSet() {
+	var mask = SCALE_VALID_DEGREES[scaleName], out = {}, d;
+	for (d = 0; d < 7; d++) if (!mask || mask[d]) out[((root + scale[d]) % 12 + 12) % 12] = 1;
+	return out;
+}
+
+// Toutes les notes de l'accord d'une case tiennent-elles dans la gamme ? Ne concerne QUE les
+// gammes à masque : ailleurs l'accord est diatonique par construction, et la question coûterait
+// un buildSpec par case pour toujours répondre oui. La colonne BORROWED n'y passe pas — un
+// emprunt est chromatique par définition, c'est son métier.
+function _scaleAllowsSpec(d, fn) {
+	if (!SCALE_VALID_DEGREES[scaleName]) return true;
+	var spec = _vl2_buildSpec(fn, d);
+	if (!spec) return true;
+	var ok = scalePcSet(), i;
+	for (i = 0; i < spec.pcs.length; i++) if (!ok[((spec.pcs[i].pc % 12) + 12) % 12]) return false;
+	return true;
+}
+
+// Validité d'une ligne de type à un degré (n'importe quelle qualité)
+function _gridTypeValidIntervals(d, fn, iv) {
+	iv = iv || getIntervals(d);
+	switch(fn) {
+		case "triad":       return true;
+		case "six":         return iv[4]===7 && iv[5]===9;                 // 6 / m6 (6e majeure)
+		case "sixnine":     return iv[4]===7 && iv[5]===9 && iv[8]===2;    // 6/9
+		case "seven":       return isValid(d,"seven",iv);
+		case "maj7":        return iv[4]===7 && iv[6]===11;                // maj7 (explicite)
+		case "mmaj7":       return iv[2]===3 && iv[4]===7 && iv[6]===11;   // mineur-majeur 7
+		case "sevensus4":   return iv[3]===5 && iv[4]===7 && iv[6]===10;  // 7sus4
+		case "nine":        return isValid(d,"maj9",iv) || isValid(d,"min9",iv) || isValid(d,"nine",iv);
+		case "sevenflat9":  return iv[2]!==3 && iv[4]===7 && iv[6]===10 && iv[8]===1;  // 7b9 (dominante)
+		case "sevensharp9": return iv[2]!==3 && iv[4]===7 && iv[6]===10 && iv[8]===3;  // 7#9 (dominante)
+		case "m7s5":        return iv[2]===3 && iv[4]===8 && iv[6]===10;   // m7#5 (alteré)
+		case "add9":        return isValid(d,"add9",iv);
+		case "sus2":        return isValid(d,"sus2",iv);
+		case "sus4":        return isValid(d,"sus4",iv);
+		default: return false;
+	}
+}
+
+// Une case est valide si son TYPE l'est au degré (intervalles) ET si son accord tient dans la
+// gamme. Les deux questions sont distinctes : la seconde ne mord que sur les pentatoniques.
+function gridTypeValid(d, fn, iv) {
+	return _gridTypeValidIntervals(d, fn, iv) && _scaleAllowsSpec(d, fn);
+}
+
+
+// Nom d'accord affiché pour une case (degré + type). Plus de nom ÉTENDU depuis le 2026-10-22
+// (session 86, Antoine) : EXT n'enrichit plus la grille, une case nomme toujours son accord de
+// base. Les extensions d'un degré sont offertes par la page Ext de la colonne Borrowed.
+function gridLabel(d, fn, iv) {
+	iv = iv || getIntervals(d);
+	var rn = NOTE_NAMES[(root + scale[d]) % 12];
+	if (fn === "triad") {
+		if (iv[2]===3 && iv[4]===6) return rn + "dim";
+		if (iv[2]===4 && iv[4]===8) return rn + "aug";
+		return rn + (iv[2]===3 ? "m" : "");
+	}
+	if (fn === "sus2") return rn + "sus2";
+	if (fn === "sus4") return rn + "sus4";
+	if (fn === "add9") return rn + (iv[2]===3 ? "madd9" : "add9");
+	if (fn === "six")         return rn + (iv[2]===3 ? "m6" : "6");
+	if (fn === "sixnine")     return rn + (iv[2]===3 ? "m6/9" : "6/9");
+	if (fn === "mmaj7")       return rn + "mMaj7";
+	if (fn === "sevensus4")   return rn + "7sus4";
+	if (fn === "sevenflat9")  return rn + "7b9";
+	if (fn === "sevensharp9") return rn + "7#9";
+	if (fn === "seven") {
+		// mineur-majeur AVANT maj7 : `isValid(d,"maj7")` ne regarde pas la tierce, et rendait
+		// « CM13 » pour un Cm(Maj7) en mineur harmonique.
+		if (iv[2]===3 && iv[4]===7 && iv[6]===11) return rn + "mMaj7";
+		// quinte augmentée AVANT les formes à quinte juste : isValid("maj7"/"dom7") la rejettent,
+		// mais le nom doit la dire.
+		if (iv[2]===4 && iv[4]===8 && iv[6]===11) return rn + "M7#5";
+		if (isValid(d,"maj7",iv))  return rn + "M7";
+		if (isValid(d,"min7",iv))  return rn + "m7";
+		if (isValid(d,"dom7",iv))  return rn + "7";
+		if (isValid(d,"dim7",iv))  return rn + "dim7";
+		if (isValid(d,"hdim7",iv)) return rn + "ø7";
+	}
+	if (fn === "nine") {
+		if (iv[2]===3 && iv[4]===7 && iv[6]===11) return rn + "mMaj9";   // mineur-majeur avant maj9 (meme piege)
+		if (isValid(d,"maj9",iv)) return rn + "M9";
+		if (isValid(d,"min9",iv)) return rn + "m9";
+		if (isValid(d,"nine",iv)) return rn + "9";
+	}
+	if (fn === "m7s5") return rn + "m7#5";   // m7♯5 (quinte augmentée)
+	return rn;
+}
+
+// Grille "à plat" (col-major) pour le mapping MIDI clavier
+var flatGrid = [];
+// Grille 2D : gCols[colonne] = [ {fn} ... ] ; gBor = [ {semis,type} ... ]
+// Pour jouer une case par (colonne, rangée) — utilisé par le Push.
+var gCols = [[],[],[],[],[],[],[]];
+var gBor  = [];
+
+// Qualité du triade diatonique par degré : 0=majeur 1=mineur 2=diminué 3=augmenté.
+function chordQuality(d) {
+	function semi(step) { return scale[step % 7] + 12 * Math.floor(step / 7); }
+	var rt = semi(d), third = semi(d + 2) - rt, fifth = semi(d + 4) - rt;
+	if (third === 3 && fifth === 6) return 2;
+	if (third === 4 && fifth === 8) return 3;
+	if (third === 3) return 1;
+	return 0;
+}
+
+// =====================================================================
+// SMART CHORDS — scoring (miroir ES5 de site/vl2/suggest.js) + état.
+// Indépendant du voicing/VL : ne lit que degré + type + pitch classes.
+// Réutilise _vl2_buildSpec / _vl2_buildColorSpec (hoisted, définis plus bas).
+// =====================================================================
+var smartOn = false;
+var smartMode = "function";   // "function" = meilleur score harmonique ; "voiceleading" = plus fluide (voicing). Reçu de l'UI.
+var SG_PER_FN = 2;            // par FONCTION de transition (les 5) : nb MAX de DEGRÉS allumés, une qualité chacun (tuple-dev#101 : 3 cases → 2 degrés)
+var _sg_hist = [];            // mémoire live : [{kind, degree, pcs}], récents en fin
+var SG_HIST_MAX = 8;
+
+// Tables de transition (ligne = degré joué, colonne = degré suivant). Écrites à la main, puis
+// corrigées par corpus le 2026-10-28 (tuple-dev#97, variante A) : seules les cases que RS 200 +
+// Billboard signalaient ont ÉCHANGÉ leurs valeurs dans leur ligne — chaque ligne garde le même
+// ensemble de valeurs, donc la densité de la heat-map ne bouge pas. Amendement : bIII → i échange
+// avec bIII → iv. Rappel mineur 40-50 → 63-65 % ; validé à l'oreille (tuple-dev#99).
+// Ordre de ces valeurs : RS 200 (CC BY 4.0) et McGill Billboard (CC0) — crédités au manuel et au README.
+var SG_MAJOR = [
+	[0.2,0.6,0.4,0.7,0.7,0.6,0.3],[0.6,0.0,0.3,0.4,0.9,0.3,0.3],
+	[0.3,0.4,0.0,0.6,0.3,0.8,0.2],[0.9,0.5,0.5,0.0,0.6,0.4,0.3],
+	[0.95,0.2,0.3,0.6,0.0,0.3,0.2],[0.7,0.4,0.3,0.7,0.6,0.0,0.2],
+	[0.9,0.2,0.5,0.2,0.3,0.4,0.0]
+];
+var SG_MINOR = [
+	[0.2,0.4,0.5,0.7,0.4,0.6,0.7],[0.3,0.0,0.3,0.4,0.9,0.3,0.5],
+	[0.5,0.4,0.0,0.3,0.4,0.7,0.5],[0.9,0.3,0.6,0.0,0.4,0.4,0.4],
+	[0.95,0.2,0.3,0.3,0.0,0.6,0.2],[0.6,0.3,0.5,0.4,0.5,0.0,0.6],
+	[0.8,0.2,0.4,0.3,0.3,0.4,0.0]
+];
+function _sg_clamp(v){ return v < 0 ? 0 : (v > 1 ? 1 : v); }
+function _sg_level(s){ if (s >= 0.75) return 3; if (s >= 0.55) return 2; if (s >= 0.40) return 1; return 0; }
+// Rang de fluidité -> palier de luminosité (3 = plus fluide, 1 = moins). Miroir : site/vl2/fluidity.js levelByRank.
+function _sg_fluidLevel(rankIndex, total){
+	if (total <= 1) return 3;
+	var frac = rankIndex / (total - 1);
+	return frac < 0.34 ? 3 : frac < 0.67 ? 2 : 1;
+}
+function _sg_isMinor(){ return chordQuality(0) === 1; }
+
+// SUBSTITUTS (mode Push « Substituts ») — accords pouvant REMPLACER une étape, même emplacement
+// harmonique : frères de FONCTION (I↔iii↔vi, ii↔IV, V↔vii°) + variantes de QUALITÉ (même degré,
+// autre type). Port ES5 de site/vl2/substitutes.js (testé). Les relatifs maj/min viennent gratis (vi/iii).
+var _FUNC_MAJOR = [0,1,0,1,2,0,2], _FUNC_MINOR = [0,1,0,1,2,1,1];   // 0=Tonique 1=Sous-dom 2=Dom — mineur : ♭VI=S (pas T du majeur), ♭VII=S (PAS dominante : sous-tonique sans sensible). T={i,♭III} S={ii°,iv,♭VI,♭VII} D={V}
+function gridTypesFor(d) {
+	var iv = getIntervals(d), out = [], t;
+	for (t = 0; t < GRID_TYPES.length; t++) if (gridTypeValid(d, GRID_TYPES[t], iv)) out.push(GRID_TYPES[t]);
+	return out;
+}
+// `step` = la carte ({deg, fn, colorSemis, colorType}), `next` = la carte SUIVANTE ou null
+// (tuple-dev#87, lot 4 de #105). Chaque option porte un `rang` : les GROUPES sortent dans l'ordre de
+// #87, et la distance de Lerdahl à la carte range chaque groupe (la plus proche d'abord = en bas,
+// près des cartes). Une option empruntée est {deg:-1, fn:"color", colorSemis, colorType} — le Push
+// la peint comme un emprunt, `selopt` la joue par le chemin du clic (_cellFor).
+//   • carte diatonique : frères de fonction (rang 0), autres qualités du degré (1), puis ses
+//     substituts EMPRUNTÉS (2) — sub tritonique pour une dominante, parallèle pour un accord
+//     majeur ou mineur (G7 → D♭7, IV → iv) ;
+//   • sub tritonique (sub7) : la dominante d'origine (0) ; avec une carte suivante, les autres
+//     dominantes vers la même cible, vii°7 et V7♭5 (1), et la sub mineure si la suivante est
+//     mineure (2). Sans carte suivante : la dominante d'origine seule ;
+//   • dominante secondaire empruntée (dom7) : sa sub tritonique (0) ;
+//   • emprunt modal : le diatonique de même degré (0), ses voisins P/L/R (1), les autres emprunts
+//     de même fonction de la page Borrowed (2).
+// m7 et 7♭5 passent par le format x (COLOR_IV ne les connaît pas et replierait sur maj).
+var _SUB_M7 = "x.t3.f7.s10", _SUB_7B5 = "x.t4.f6.s10";
+function _subBor(semis, type, rang){ return { kind:"bor", deg:-1, fn:"color", colorSemis:((semis % 12) + 12) % 12, colorType:type, rang:rang }; }
+// Triade d'une carte ou d'une option, relative à la tonique : {r, q}. Lue sur son spec.
+function _subTriade(o){
+	var sp = _vl2_specFor(o.fn, o.deg, o.colorSemis, o.colorType);
+	if (!sp) return null;
+	var r = sp.rootPc, th = _vl2_rolePc(sp.pcs, "third"), fi = _vl2_rolePc(sp.pcs, "fifth");
+	var t = th ? _vl2_m(th.pc - r) : 4, f = fi ? _vl2_m(fi.pc - r) : 7;
+	return { r:_vl2_m(r - root), q:(t === 3) ? (f === 6 ? "dim" : "min") : (f === 8 ? "aug" : "maj") };
+}
+function _subLerdahl(card, o){
+	var a = _subTriade(card), b = _subTriade(o);
+	return (a && b) ? _lerdahl(a, b, { t:0, minor:_sg_isMinor() }) : Infinity;
+}
+function substitutesFor(step, next) {
+	var out = [], F = _sg_isMinor() ? _FUNC_MINOR : _FUNC_MAJOR, d, i;
+	if (step.fn !== "color") {
+		if (step.deg == null || step.deg < 0) return out;
+		var myFunc = F[step.deg];
+		for (d = 0; d < 7; d++) if (d !== step.deg && F[d] === myFunc) out.push({ kind:"func", deg:d, fn:step.fn, rang:0 });
+		var types = gridTypesFor(step.deg);
+		for (i = 0; i < types.length; i++) if (types[i] !== step.fn) out.push({ kind:"qual", deg:step.deg, fn:types[i], rang:1 });
+		var sp = _vl2_specFor(step.fn, step.deg), tr = _subTriade(step);
+		if (sp && sp.isDominant) out.push(_subBor(scale[step.deg] + 6, "sub7", 2));
+		else if (tr && (tr.q === "maj" || tr.q === "min")) out.push(_subBor(tr.r, tr.q === "maj" ? "min" : "maj", 2));
+	} else {
+		var s = ((step.colorSemis % 12) + 12) % 12, ty = String(step.colorType);
+		if (ty === "sub7") {
+			var cible = s - 1;
+			out.push(_subBor(cible + 7, "dom7", 0));
+			if (next) {
+				out.push(_subBor(cible - 1, "dim7", 1));
+				out.push(_subBor(cible + 7, _SUB_7B5, 1));
+				var tn = _subTriade(next);
+				if (tn && tn.q === "min") out.push(_subBor(s, _SUB_M7, 2));
+			}
+		} else if (ty === "dom7") {
+			out.push(_subBor(s + 6, "sub7", 0));
+		} else {
+			var me = _subTriade(step);
+			if (!me) return out;
+			var P = _sg_isMinor() ? _LD_MAJ : [0,2,3,5,7,8,10], dp = P.indexOf(s), vus = {};
+			vus[me.r + me.q] = 1;
+			if (dp >= 0 && _degValid(dp)) out.push({ kind:"func", deg:dp, fn:"triad", rang:0 });
+			for (d = 0; d < 7; d++) if (_degValid(d)) vus[scale[d] + ["maj","min","dim","aug"][chordQuality(d)]] = 1;   // déjà diatonique : pas de doublon coloré
+			var plr = (me.q === "maj") ? [[me.r, "min"], [me.r + 9, "min"], [me.r + 4, "min"]]
+			        : (me.q === "min") ? [[me.r, "maj"], [me.r + 3, "maj"], [me.r + 8, "maj"]] : [];
+			for (i = 0; i < plr.length; i++) { var k = _vl2_m(plr[i][0]) + plr[i][1]; if (vus[k]) continue; vus[k] = 1; out.push(_subBor(plr[i][0], plr[i][1], 1)); }
+			var degByRoot = {};
+			for (d = 0; d < 7; d++) if (_degValid(d)) { var rp = _vl2_m(root + scale[d]); if (degByRoot[rp] == null) degByRoot[rp] = d; }
+			var fonc = function(x){ var c = _sg_borrowedCell(0, x.semis, x.type, x), t = _sg_borrowedResolveDeg(c.pcs, _vl2_m(root), _sg_isMinor(), degByRoot, x); return t >= 0 ? F[t] : -1; };
+			var tab = borrowedTableDeGamme(), mine = -1;
+			for (i = 0; i < tab.length; i++) if (tab[i].semis === s && tab[i].type === ty) mine = fonc(tab[i]);
+			if (mine < 0) mine = fonc({ semis:s, type:ty });
+			for (i = 0; i < tab.length; i++) {
+				if (tab[i].semis === s && tab[i].type === ty) continue;
+				if (fonc(tab[i]) === mine) out.push(_subBor(tab[i].semis, tab[i].type, 2));
+			}
+		}
+	}
+	// Tri stable : rang, puis Lerdahl à la carte.
+	for (i = 0; i < out.length; i++) { out[i]._i = i; out[i]._ld = _subLerdahl(step, out[i]); }
+	out.sort(function(a, b){ return (a.rang - b.rang) || (a._ld - b._ld) || (a._i - b._i); });
+	for (i = 0; i < out.length; i++) { delete out[i]._i; delete out[i]._ld; }
+	return out;
+}
+function _sg_base(lastDeg, tgt, isMin){
+	if (lastDeg == null || lastDeg < 0 || tgt < 0) return 0;
+	return (isMin ? SG_MINOR : SG_MAJOR)[lastDeg][tgt];
+}
+function _sg_quality(cell){
+	if (cell.kind !== "d") return 0;
+	var deg = cell.degree, dlt = 0;
+	var isDom = (deg === 4 || deg === 6), isTon = (deg === 0), isPre = (deg === 1 || deg === 3);
+	if (isDom){ if (cell.isDominant) dlt += 0.12; else if (cell.hasSeventh) dlt += 0.05; }
+	else if (isTon){ if (cell.isDominant) dlt -= 0.10; else if (cell.fn === "triad" || cell.fn === "mmaj7" || cell.fn === "six") dlt += 0.08; }
+	else if (isPre){ if (cell.hasSeventh) dlt += 0.06; }
+	if (cell.fn === "sevenflat9" || cell.fn === "sevensharp9" || cell.fn === "m7s5"
+		|| cell.fn === "sus2" || cell.fn === "sus4" || cell.fn === "sevensus4") dlt -= 0.05;
+	return dlt;
+}
+function _sg_context(cell, isMin){
+	if (cell.kind !== "d") return 0;
+	var tgt = cell.degree, dlt = 0, n = _sg_hist.length;
+	var last = n >= 1 ? _sg_hist[n-1] : null, prev = n >= 2 ? _sg_hist[n-2] : null;
+	var lastDeg = (last && last.kind === "d") ? last.degree : -1;
+	var prevDeg = (prev && prev.kind === "d") ? prev.degree : -1;
+	if (prevDeg >= 0) dlt += 0.3 * (isMin ? SG_MINOR : SG_MAJOR)[prevDeg][tgt];
+	if (lastDeg === 4 && (prevDeg === 1 || prevDeg === 3) && tgt === 0) dlt += 0.2;
+	if (tgt === 0 && n >= 4){
+		var hit = false, i;
+		for (i = n-4; i < n; i++) if (_sg_hist[i] && _sg_hist[i].kind === "d" && _sg_hist[i].degree === 0) hit = true;
+		if (!hit) dlt += 0.1;
+	}
+	return dlt;
+}
+function _sg_common(lastPcs, cellPcs){
+	if (!lastPcs || !cellPcs || !lastPcs.length || !cellPcs.length) return 0;
+	var shared = 0, i, j;
+	for (i = 0; i < cellPcs.length; i++) for (j = 0; j < lastPcs.length; j++) if (cellPcs[i] === lastPcs[j]) { shared++; break; }
+	var b = 0.05 * shared; return b > 0.12 ? 0.12 : b;
+}
+var _SG_MODAL_MAJ = {5:0,10:0,8:4,3:3}, _SG_MODAL_MIN = {1:4,7:0,11:0,5:0};
+// Distance d'accords de Lerdahl (Tonal Pitch Space, ch. 2) : δ(x → y) = i + j + k, sur des
+// TRIADES {r: classe de hauteurs, q: "maj"|"min"|"dim"} (tuple-dev#86, #105). Une région est une
+// collection diatonique, désignée par la tonique de sa lecture majeure (t).
+//   i : pas sur le cercle des quintes entre les régions de x et de y ;
+//   j : pas entre les fondamentales sur le cercle des quintes DIATONIQUE de la région de y
+//       (chromatique si la fondamentale de x n'y est pas) ;
+//   k : classes nouvelles de y par rapport à x, sommées sur l'espace de base (fondamentale,
+//       quinte, triade, collection).
+// Lecture d'un accord : la région d'accueil s'il y est diatonique, sinon la parallèle (iv et ♭VI
+// se lisent en do mineur), sinon la région qui le contient la plus proche de l'accueil (♭II :
+// la♭ majeur). `home` = {t: tonique, minor: bool}, do majeur par défaut. Une triade augmentée
+// n'appartient à aucune collection : Infinity. Oracle : lerdahl.test.mjs. Miroir : suggest.js lerdahl.
+var _LD_MAJ = [0,2,4,5,7,9,11];
+function _ld_coll(t){ var o = [], i; for (i = 0; i < 7; i++) o.push((t + _LD_MAJ[i]) % 12); return o; }
+function _ld_pcs(x){ var th = (x.q === "maj") ? 4 : 3, fi = (x.q === "dim") ? 6 : 7;
+	return (x.q === "aug") ? null : [x.r % 12, (x.r + th) % 12, (x.r + fi) % 12]; }
+function _ld_fifths(a, b){ var d = (((b - a) * 7) % 12 + 12) % 12; return d < 12 - d ? d : 12 - d; }
+function _ld_contient(t, pcs){ var c = _ld_coll(t), i; for (i = 0; i < pcs.length; i++) if (c.indexOf(pcs[i]) < 0) return false; return true; }
+function _ld_region(x, home){
+	var pcs = _ld_pcs(x); if (!pcs) return -1;
+	var h = home.minor ? (home.t + 3) % 12 : home.t, par = home.minor ? home.t : (home.t + 3) % 12, best = -1, t;
+	if (_ld_contient(h, pcs)) return h;
+	if (_ld_contient(par, pcs)) return par;
+	for (t = 0; t < 12; t++) if (_ld_contient(t, pcs) && (best < 0 || _ld_fifths(h, t) < _ld_fifths(h, best))) best = t;
+	return best;
+}
+function _lerdahl(x, y, home){
+	home = home || { t:0, minor:false };
+	var X = _ld_region(x, home), Y = _ld_region(y, home);
+	if (X < 0 || Y < 0) return Infinity;
+	var i = _ld_fifths(X, Y);
+	var ordre = [], d, j, k = 0, l, m;
+	for (d = 0; d < 7; d++) ordre.push((Y + 5 + 7 * d) % 12);   // IV, I, V, ii, vi, iii, vii de la région de y
+	var px = ordre.indexOf(x.r % 12), py = ordre.indexOf(y.r % 12);
+	if (px >= 0 && py >= 0){ j = Math.abs(px - py); if (7 - j < j) j = 7 - j; } else j = _ld_fifths(x.r, y.r);
+	var px3 = _ld_pcs(x), py3 = _ld_pcs(y);
+	var nx = [[px3[0]], [px3[0], px3[2]], px3, _ld_coll(X)], ny = [[py3[0]], [py3[0], py3[2]], py3, _ld_coll(Y)];
+	for (l = 0; l < 4; l++) for (m = 0; m < ny[l].length; m++) if (nx[l].indexOf(ny[l][m]) < 0) k++;
+	return i + j + k;
+}
+
+// Vers quel degré une case empruntée RÉSOUT — une règle par famille (tuple-dev#89, précisée sur
+// #105). `info` = l'entrée de table de la case ({type, fam, fdeg}) ; {type} seul hors table.
+//   • sub tritonique (type sub7) : un DEMI-TON SOUS sa fondamentale (C#7 → C), comme la dominante
+//     qu'elle remplace. Lue en dom7 ordinaire, elle visait C#7 → F#, hors gamme : la page Tritone
+//     ne s'allumait presque jamais (défaut n° 4 de tuple-dev#93) ;
+//   • Ext et emprunt calculé (fam ext / calc) : leur degré (fdeg) ;
+//   • dominante secondaire (forme dom7) : une quinte plus bas ;
+//   • médiante (fam med) : majeure → une quarte au-dessus si ce degré est diatonique, sinon la
+//     tonique ; mineure → la tonique ;
+//   • emprunt des tables écrites : les quatre règles modales fixes ; sinon le degré de même
+//     fondamentale dans la gamme parallèle ; sinon le degré diatonique le plus proche (Lerdahl).
+// Miroir : suggest.js borrowedResolveDeg.
+function _sg_borrowedResolveDeg(pcs, tonicPc, isMin, degByRoot, info){
+	if (!pcs || !pcs.length) return -1;
+	var R = pcs[0], type = info && info.type, fam = info && info.fam;
+	if (type === "sub7"){ var ds=degByRoot[(R+11)%12]; return (ds!=null)?ds:-1; }
+	if ((fam === "ext" || fam === "calc") && info.fdeg >= 0) return info.fdeg;
+	if (pcs.indexOf((R+4)%12) >= 0 && pcs.indexOf((R+10)%12) >= 0){ var d=degByRoot[(R+5)%12]; return (d!=null)?d:-1; }
+	if (tonicPc < 0) return -1;
+	if (fam === "med"){
+		if (pcs.indexOf((R+4)%12) < 0) return 0;
+		var dq=degByRoot[(R+5)%12]; return (dq!=null)?dq:0;
+	}
+	var semis=(R-tonicPc+12)%12, tgt=(isMin?_SG_MODAL_MIN:_SG_MODAL_MAJ)[semis];
+	if (tgt!=null) return tgt;
+	var Pl = isMin ? _LD_MAJ : [0,2,3,5,7,8,10], dp = Pl.indexOf(semis);
+	if (dp >= 0) return dp;
+	return _sg_lerdahlCible(semis, pcs, isMin);
+}
+// Dernier recours : le degré diatonique le plus proche de la triade de la case (Lerdahl).
+function _sg_lerdahlCible(semis, pcs, isMin){
+	var R = pcs[0], ha = function(i){ return pcs.indexOf((R+i)%12) >= 0; };
+	var q = ha(4) ? ((ha(8) && !ha(7)) ? "aug" : "maj") : (ha(6) && !ha(7)) ? "dim" : "min";   // aug : Infinity chez _lerdahl, aucune cible
+	var x = { r:semis, q:q }, home = { t:0, minor:isMin }, best = -1, bd = Infinity, e, dl;
+	for (e = 0; e < 7; e++) {
+		if (!_degValid(e)) continue;
+		dl = _lerdahl(x, { r:scale[e], q:["maj","min","dim","aug"][chordQuality(e)] }, home);
+		if (dl < bd) { bd = dl; best = e; }
+	}
+	return best;
+}
+function _sg_borrowedScore(cell, lastDeg, isMin, degByRoot, tonicPc, info){
+	var tgtDeg = _sg_borrowedResolveDeg(cell.pcs, tonicPc, isMin, degByRoot, info || cell.info);
+	if (tgtDeg >= 0) return 0.30 + 0.55 * _sg_base(lastDeg, tgtDeg, isMin);
+	return 0.30;
+}
+// Catégorie de transition (miroir de transitionType) — couleur côté UI device.
+function _sg_transType(lastDeg, targetDeg, isBor){
+	if (isBor) return "color";
+	if (lastDeg === 4 && targetDeg === 5) return "deceptive";
+	if (targetDeg === 4 || targetDeg === 6) return "dominant";
+	if (targetDeg === 1 || targetDeg === 3) return "predominant";
+	return "resolution";
+}
+function _sg_pcs(spec){ var a = [], i; for (i = 0; i < spec.pcs.length; i++) a.push(spec.pcs[i].pc); return a; }
+function _sg_diatonicCell(d, fn){
+	var sp = _vl2_specFor(fn, d); if (!sp) return null;   // même pipeline que play → smart ne peut plus diverger (EXT inclus)
+	return { kind:"d", degree:d, fn:fn, pcs:_sg_pcs(sp), isDominant:sp.isDominant, hasSeventh:sp.hasSeventh, sp:sp };
+}
+function _sg_borrowedCell(index, semis, type, info){
+	var sp = _vl2_specFor('color', 0, semis, type);   // même pipeline (EXT : _vl2_enrichColorSpec, tensions de la qualité)
+	return { kind:"b", index:index, info:(info || { type:type }), pcs:_sg_pcs(sp), sp:sp };   // emprunts : isDominant/hasSeventh/isSecDom non lus ; `info` = entrée de table (famille, degré)
+}
+// Registre + centre de sélection — SOURCE UNIQUE (utilisés par _vl2_play ET _sg_fluid) :
+// regBase = plancher d'octave (multiple de 12) ; center = tonique pour classic, C-ancré sinon.
+// Borne asymétrique VOULUE (tuple-dev#34 finding 2, tranché « documenter » 2026-08-24) :
+//   • haut à +24 (regBase 72 = C5) : c'est ce +24 qui poussait les shapes ABSOLUTE hors fenêtre —
+//     traité par _vl2_fitWindow (finding 1), PAS en rabotant la borne (ça retirerait un octave qui joue).
+// ⚠️ LA BORNE BASSE A ÉTÉ `-12` JUSQU'AU 2026-09-16 (tuple-dev#39, sorti de #34), et elle
+// rendait la position OCT −2 SANS EFFET — mais seulement pour les styles qui passent par ici.
+// `_vl2_center` envoie `classic`, `root` et `piano` sur `regBase` ; les trois autres prennent
+// `60 + currentOctave * 12`, jamais borné. Mesuré style par style sur 2658 cellules :
+//   classic / root / piano  — −2 identique à −1      open / drop2 / drop3  — −2 vivant
+// Et `classic` est le style par DÉFAUT, donc pour l'utilisateur ordinaire −2 ne faisait rien.
+// Coup de la descente à −24, mesuré AVANT de la poser : **zéro** cellule muette gagnée (0 → 0).
+// Le garde-boue que #34 redoutait (`_vl2_LOW_LIMITS`, « mange-t-il tout sous C2 ? ») ne mord
+// pas. Le grave passe de 34 à 24 en `classic`, de 36 à 24 en `root`.
+// L'asymétrie −12/+24 n'était documentée nulle part ; elle est maintenant symétrique.
+function _vl2_regBase(){ return 48 + Math.max(-24, Math.min(24, currentOctave * 12)); }
+function _vl2_center(vc){ var rb = _vl2_regBase(); return (vc === "classic" || vc === "clear" || vc === "root") ? (rb + root) : (vc === "piano") ? (rb + 6) : (60 + currentOctave * 12); }   // piano : centre plus bas (basse grave) -> pas de dérive FLOW vers le haut ; root : ancré sur la tonique comme classic (heat-map _sg_fluid alignée sur ce qui joue)
+// SOURCE UNIQUE du centre de sélection — utilisée par _vl2_play ET _sg_fluid (sinon la heat-map VL
+// et le playback divergent → sauts d'octave). cands = sortie de _vl2_realize ; cands[0] = forme canonique.
+// Centre = _vl2_center (classic/piano/C4). (Le cas registre absolu est parti avec les 24 styles retirés.)
+// FIX SAUT FALLBACK : quand un voicing retombe sur classic (trap sur triade…), centrer au registre MAISON
+// du voicing (pas la tonique) → la triade fallback se pose au même étage que ses grips de 7e. Miroir engine.js.
+// (N.B. classic refuse de voicer trop grave via la règle low-interval → marche pour les planchers ~48, partiel pour trap.)
+var _vl2_FB_HOME = { drop2:54, drop3:54 };
+function _vl2_selCtr(cands){
+	var realized = cands[0].voicing, fb = cands[0].fallback;
+	if (fb && _vl2_FB_HOME[fb] != null) return _vl2_FB_HOME[fb] + (_vl2_regBase() - 48);
+	// Two Hands, triades et 7e (4 notes au plus) : une octave plus haut, au registre où tombent
+	// déjà les 9e — basse en octave 2, main droite C3-C4 (variante C, tuple-dev#100). Sous ce
+	// centre, la basse en octave 1 rendait les septièmes pâteuses. Miroir site/vl2/engine.js (jeu) et
+	// site/vl2/fluidity.js (heat-map).
+	if (realized === 'piano' && cands[0].notes.length <= 4) return _vl2_center(realized) + 12;
+	return _vl2_center(realized);
+}
+// Référence de mouvement du voice-leading : le dernier accord JOUÉ (survit au note-off),
+// sinon les notes tenues. Source UNIQUE — _sg_fluid la reçoit, _sg_rank gate dessus ;
+// les deux ne peuvent plus diverger en silence. Miroir : la démo la dérive une fois
+// et la passe à fluidity(spec, refNotes, …) — même forme.
+function _sg_ref(){ return lastChordNotes.length ? lastChordNotes : activeNotes; }
+// Fluidité de voice-leading : coût de mouvement vers le candidat dont la moyenne est la plus
+// proche du centre de registre, avec le voicing + l'octave courants. C'est une APPROXIMATION
+// du jeu, pas son égal : à froid, _vl2_select verrouille la forme CANONIQUE (-1000), qui peut
+// différer du candidat le plus centré (mesuré sur drop2 à l'audit du 2026-08-20 — moyenne
+// jouée 50,5 pour un centre à 60). Assumé : la heat-map classe des cases entre elles, le rang
+// relatif reste pertinent. Plus bas = plus fluide. Pur (ne mute pas _vl2_st). Sensible au
+// voicing (≠ ancien minimum sur ±2 octaves, qui rendait tous les voicings identiques).
+// Miroir : site/vl2/fluidity.js (même critère, même écart assumé).
+function _sg_fluid(sp, ref){
+	if (!sp || !ref || !ref.length) return 0;
+	var regBase = _vl2_regBase();
+	var cands = _vl2_realize(sp, currentVoicing, { regBase:regBase, rootPos:!voiceLeadingEnabled });
+	if (!cands || !cands.length) return 9999;
+	var center = _vl2_selCtr(cands);   // SOURCE UNIQUE — même centre que _vl2_play (poche pour les ABSOLUTE)
+	var w = _vl2_pickW(currentVoicing), i, j, sum, m, dev, pick = null, bestDev = 1e9;
+	for (i = 0; i < cands.length; i++){
+		var ns = cands[i].notes; sum = 0; for (j = 0; j < ns.length; j++) sum += ns[j]; m = sum / ns.length;
+		dev = Math.abs(m - center);
+		if (dev < bestDev){ bestDev = dev; pick = ns; }
+	}
+	return _vl2_movCost(ref, pick, w);
+}
+function _sg_remember(){
+	var sp = _vl2_specFor(lastFn, lastDegree, lastColorSemis, lastColorType);   // même pipeline que play
+	if (!sp) return;
+	var entry = { kind:(lastFn === "color") ? "b" : "d", degree:(lastFn === "color") ? -1 : lastDegree, pcs:_sg_pcs(sp), info:null };
+	if (lastFn === "color"){
+		// L'entrée de la page affichée (famille, degré) ; à défaut, le seul type — une sub tritonique
+		// jouée résout un demi-ton dessous. Ext et emprunt calculé comptent comme leur DEGRÉ : SMART
+		// enchaîne comme après lui (tuple-dev#105).
+		// Page affichée d'abord, puis les autres : un accord rejoué depuis une carte ou le Push
+		// garde sa famille même quand sa page n'est plus à l'écran.
+		var pages = [borrowedFor(), borrowedTableDeGamme(), borPageTable(2), borPageTable(3)], pi, bl, bi, inf = null;
+		for (pi = 0; pi < pages.length && !inf; pi++) { bl = pages[pi] || [];
+			for (bi = 0; bi < bl.length; bi++) if (bl[bi].semis === lastColorSemis && bl[bi].type === lastColorType) { inf = bl[bi]; break; } }
+		entry.info = inf || { type:lastColorType };
+		if (inf && (inf.fam === "ext" || inf.fam === "calc")) { entry.kind = "d"; entry.degree = inf.fdeg; }
+	}
+	// Pas de doublon CONSÉCUTIF : rejouer le même accord ne doit pas polluer le contexte (l'avant-dernier).
+	var lastE = _sg_hist[_sg_hist.length-1];
+	if (lastE && lastE.kind === entry.kind && lastE.degree === entry.degree && lastE.pcs.join(",") === entry.pcs.join(",")) return;
+	_sg_hist.push(entry);
+	if (_sg_hist.length > SG_HIST_MAX) _sg_hist.shift();
+}
+function _sg_reset(){ _sg_hist = []; }
+
+// ── Tirage AVANT (tranche B) ────────────────────────────────────────────────
+// Quand on insère ENTRE deux accords, le candidat a deux voisins. Le tirage arrière existe depuis
+// toujours ; celui-ci est son miroir, le candidat devenant la SOURCE et `nextRef` la cible.
+//
+// Seul `_sg_base` s'inverse réellement : `_sg_common` compte des hauteurs partagées, donc il est
+// symétrique, et `_sg_quality`/`_sg_context` sont des propriétés du candidat ou de l'historique de
+// JEU — les compter deux fois pondérerait la qualité du candidat au lieu de la direction.
+// Arbitré `tuple-dev#29`.
+function _sg_fwdDiat(cell, nextRef, isMin){
+	return _sg_clamp(_sg_base(cell.degree, nextRef.deg, isMin) + _sg_common(cell.pcs, nextRef.pcs));
+}
+// Miroir de `_sg_borrowedScore` : un emprunt candidat tire vers l'avant à proportion de la distance
+// entre ce vers quoi il RÉSOUT et la cible. Le cas « il résout exactement dessus » reprend le 0.92
+// que `_sg_rank` emploie déjà quand la source est un emprunt — pas de constante inventée.
+function _sg_fwdBor(bc, nextRef, isMin, degByRoot, tonicPc){
+	var res = _sg_borrowedResolveDeg(bc.pcs, tonicPc, isMin, degByRoot, bc.info);
+	var base = (res >= 0 && res === nextRef.deg) ? 0.92 : (0.30 + 0.55 * _sg_base(res, nextRef.deg, isMin));
+	return _sg_clamp(base + _sg_common(bc.pcs, nextRef.pcs));
+}
+// Combinaison des deux tirages. 70/30 mesuré, pas choisi : cinq combinaisons sur sept remontent la
+// bonne réponse au rang 1 (le classement sature), et c'est la SURVIE des cases qui départage —
+// `_sg_level` n'émet rien sous 0.40. 70/30 est la seule qui corrige le classement sans déplacer la
+// densité de la heat-map (81 %/94 % contre 78 %/92 % aujourd'hui). Bench :
+// `device/tests/mesure-scoring-bidirectionnel.mjs`, arbitré `tuple-dev#30`.
+// L'asymétrie a sa raison : l'accord d'où l'on VIENT a été entendu, celui où l'on VA ne l'est pas.
+function _sg_combine(sBack, sFwd){ return 0.7 * sBack + 0.3 * sFwd; }
+
+// Sélection, TOUJOURS par score harmonique (les deux modes) : dans chaque fonction de transition,
+// les SG_PER_FN meilleurs DEGRÉS (un emprunt compte pour un degré), chacun avec sa meilleure
+// qualité seulement. Les autres qualités restent jouables, elles ne sont plus suggérées. Avant
+// le 2026-10-30 : les 3 meilleures CASES, souvent trois qualités du même degré (Am, Am7, Am9) —
+// ~11 cases par geste pour 6 cibles distinctes ; ~7 depuis, pour autant de cibles (tuple-dev#101).
+// byFn[cat] = [{kind:"d", d} | {kind:"b", index}, s…] ; trie chaque liste en place.
+// Miroir : site/vl2/suggest.js selectByFn (garde : smart-selection-parite).
+function _sg_select(byFn, fnOrder){
+	var fi, fa, j, n, vus, k, emit = [];
+	for (fi = 0; fi < fnOrder.length; fi++){
+		fa = byFn[fnOrder[fi]];
+		fa.sort(function(a,b){ return b.s - a.s; });
+		vus = {}; n = 0;
+		for (j = 0; j < fa.length && n < SG_PER_FN; j++){
+			k = (fa[j].kind === "d") ? "d" + fa[j].d : "b" + fa[j].index;
+			if (vus[k]) continue;
+			vus[k] = 1; n++;
+			emit.push(fa[j]);
+		}
+	}
+	return emit;
+}
+
+// Coeur de suggestion : classe + ordonne les cases candidates APRÈS la source (= queue de _sg_hist).
+// Extrait de _sg_broadcast pour être réutilisé par _suiteOptions (mode Suite du Push). skip* = l'accord
+// à NE PAS re-suggérer (la source elle-même). Retourne le tableau `emit` (cases retenues, triées +
+// nivelées) SANS rien émettre — ne lit que _sg_hist + l'état de gamme, jamais l'accord live.
+//
+// `nextRef` (optionnel, `{deg, fn, pcs}`) = l'accord SUIVANT quand on insère au milieu. Absent, la
+// fonction se comporte EXACTEMENT comme avant — un côté manquant est absent, pas neutre : un « 0 »
+// neutre passé à `_sg_combine` diviserait tous les scores et déplacerait chaque palier de
+// `_sg_level`. L'argument est en FIN de liste : les deux appelants historiques restent inchangés.
+// `diatOnly` (2026-10-21, page Tritone) : ne classe que la grille diatonique, sans la colonne
+// Borrowed ni le tri de fluidité. La page Tritone se construit DEPUIS ce classement : lire
+// `borrowedFor()` ici la ferait se classer elle-même (récursion). Absent : inchangé.
+function _sg_rank(skipFn, skipDeg, skipSemis, skipType, nextRef, diatOnly){
+	var isMin = _sg_isMinor();
+	var last = _sg_hist[_sg_hist.length-1], lastPcs = (last && last.pcs) ? last.pcs : [];
+	var lastDeg = (last && last.kind === "d") ? last.degree : -1;
+	var d, t, fn, s, lvl;
+	var degMask = SCALE_VALID_DEGREES[scaleName];
+	var degByRoot = {};
+	for (d = 0; d < 7; d++){ if (degMask && !degMask[d]) continue; var rp=(root+scale[d]+1200)%12; if (degByRoot[rp]==null) degByRoot[rp]=d; }
+	// emprunt comme source : dernier accord = emprunt → suggère fortement sa résolution (dom7 OU modal)
+	var tonicPc = ((root % 12) + 12) % 12;
+	var lastResolveDeg = (last && last.kind === "b") ? _sg_borrowedResolveDeg(last.pcs, tonicPc, isMin, degByRoot, last.info) : -1;
+	var vl = (smartMode === "voiceleading");
+	var byFn = {}, fnOrder = [];   // par FONCTION de transition (cat) : liste des cases compatibles (sélection harmonique)
+	var cells = validGridCells(), ci;   // MÊME forme de grille que broadcastGrid (source unique)
+	for (ci = 0; ci < cells.length; ci++){
+		d = cells[ci].d; fn = cells[ci].fn;
+		if (skipFn !== "color" && d === skipDeg && fn === skipFn) continue;   // ne pas re-suggérer la source
+		var cell = _sg_diatonicCell(d, fn); if (!cell) continue;
+		var dcat;
+		if (lastResolveDeg >= 0){
+			s = (d === lastResolveDeg ? 0.92 : 0.12) + _sg_quality(cell);
+			dcat = (d === lastResolveDeg) ? "resolution" : _sg_transType(lastResolveDeg, d, false);
+		} else {
+			s = _sg_base(lastDeg, d, isMin) + _sg_quality(cell) + _sg_context(cell, isMin);
+			dcat = _sg_transType(lastDeg, d, false);
+		}
+		s = _sg_clamp(s + _sg_common(lastPcs, cell.pcs));
+		if (nextRef) s = _sg_combine(s, _sg_fwdDiat(cell, nextRef, isMin));
+		lvl = _sg_level(s);
+		if (lvl <= 0) continue;
+		if (!byFn[dcat]) { byFn[dcat] = []; fnOrder.push(dcat); }
+		byFn[dcat].push({ kind:"d", d:d, fn:fn, lvl:lvl, cat:dcat, s:s, sp:cell.sp });
+	}
+	var bl = diatOnly ? [] : borrowedFor();
+	for (t = 0; t < bl.length; t++){
+		if (skipFn === "color" && bl[t].semis === skipSemis && bl[t].type === skipType) continue;   // ne pas re-suggérer l'emprunt source
+		var bc = _sg_borrowedCell(t, bl[t].semis, bl[t].type, bl[t]);
+		if (bl[t].fam === "ext" && bl[t].fdeg >= 0){   // Ext = l'accord de son degré : le score d'une case de la grille
+			var D = bl[t].fdeg;
+			s = (lastResolveDeg >= 0) ? (D === lastResolveDeg ? 0.92 : 0.12) : (_sg_base(lastDeg, D, isMin) + _sg_context({ kind:"d", degree:D }, isMin));
+			s = _sg_clamp(s + _sg_common(lastPcs, bc.pcs));
+		} else s = _sg_clamp(_sg_borrowedScore(bc, lastDeg, isMin, degByRoot, tonicPc) + _sg_common(lastPcs, bc.pcs));
+		if (nextRef) s = _sg_combine(s, _sg_fwdBor(bc, nextRef, isMin, degByRoot, tonicPc));
+		lvl = _sg_level(s);
+		if (lvl <= 0) continue;
+		if (!byFn["color"]) { byFn["color"] = []; fnOrder.push("color"); }
+		byFn["color"].push({ kind:"b", index:t, semis:bl[t].semis, type:bl[t].type, lvl:lvl, cat:"color", s:s, sp:bc.sp });   // semis/type : réalisation de l'option (Push)
+	}
+	var emit = _sg_select(byFn, fnOrder);
+	// Voice-leading : la LUMINOSITÉ (lvl) = rang de fluidité parmi les cases retenues. Fluidité calculée
+	// SEULEMENT ici (sur les cases émises → peu d'appels). Function : lvl reste le palier harmonique.
+	if (vl && !diatOnly){
+		// SEULEMENT avec une référence jouée : sans elle _sg_fluid rend 0 partout, et trier
+		// des coûts tous nuls écrase le palier harmonique par le RANG D'ÉMISSION — un
+		// artefact (8 cellules changeaient de luminosité au chargement, audit 2026-08-20).
+		// Même garde que la démo. La référence vient de _sg_ref, PARTAGÉE avec _sg_fluid (à
+		// qui on la passe) : lastChordNotes, qui survit au note-off — après un release, le
+		// rang reste donc calculé.
+		var refVL = _sg_ref();
+		if (refVL && refVL.length){
+			var k, by = emit.slice();
+			for (k = 0; k < by.length; k++) by[k]._f = _sg_fluid(by[k].sp, refVL);
+			by.sort(function(a,b){ return a._f - b._f; });
+			for (k = 0; k < by.length; k++) by[k].lvl = _sg_fluidLevel(k, by.length);
+		}
+	}
+	return emit;
+}
+
+// Une carte de progression, sous la forme que lit le scorer. `null` si l'étape n'existe pas ou
+// n'est pas réalisable — le tirage avant est alors ABSENT, et le scoring redevient celui d'avant.
+function _sg_progRef(i){
+	if (i < 0 || i >= progression.length) return null;
+	var p = progression[i], sp = _vl2_specFor(p.fn, p.deg, p.colorSemis, p.colorType);
+	if (!sp) return null;
+	return { deg: (p.fn === "color") ? -1 : p.deg, fn: p.fn, pcs: _sg_pcs(sp) };
+}
+
+// Recalcule + diffuse la heat-map (outlet 7). Émis seulement si SMART on ; sinon neutralise.
+function _sg_broadcast(){
+	outlet(7, "smartclear");
+	if (!smartOn) { outlet(7, "smartdone"); return; }
+	// L'ancrage sur le curseur d'insertion (tuple-dev#29) est parti avec le curseur (tuple-dev#122) :
+	// sur une bande sans trou il n'y a plus de mesure vide où le poser. Le scoring bidirectionnel
+	// reste servi au mode Suite du Push (_suiteOptions).
+	if (!_sg_hist.length) { outlet(7, "smartdone"); return; }
+	var emit = _sg_rank(lastFn, lastDegree, lastColorSemis, lastColorType), j, x;   // skip = l'accord qu'on vient de jouer
+	for (j = 0; j < emit.length; j++){
+		x = emit[j];
+		if (x.kind === "d") outlet(7, "smartcell", x.d, x.fn, x.lvl, x.cat, x.s, 0);
+		else outlet(7, "smartbor", x.index, x.lvl, x.cat, x.s, 0);
+	}
+	outlet(7, "smartdone");
+}
+
+// Mode SUITE (Push) : meilleurs accords À JOUER APRÈS l'étape `idx` de la progression. Réutilise le
+// scorer smart (_sg_rank) en remplaçant TEMPORAIREMENT l'historique par progression[0..idx] (puis le
+// restaure) — l'état live (_sg_hist / lastFn…) n'est pas touché. Retourne [{deg,fn,kind:"suite",…}].
+function _suiteOptions(idx){
+	if (idx < 0 || idx >= progression.length) return [];
+	var saved = _sg_hist, built = [], i, p, sp;
+	// La page Tritone (borrowedFor → _triTable) lit son PROPRE historique : on le remplace aussi par
+	// la progression, sinon les subs proposées visent le jeu en direct (tuple-dev#93).
+	var triSaved = [_triHist, _triSrc, _triBan];
+	_triHist = []; _triSrc = null; _triBan = -1;
+	// Même chose pour la page Ext (_extDeg) et la page Borrowed en contexte (_borRef, _borHold) :
+	// rejouées comme _borDynPlayed sur la progression, puis restaurées (tuple-dev#93).
+	var dynSaved = [_extDeg, _borRef, _borHold];
+	_extDeg = -1; _borRef = null; _borHold = null;
+	for (i = 0; i <= idx; i++){
+		p = progression[i];
+		if (p.fn === "color" || _degValid(p.deg)) {
+			_triLearn(p.fn, p.deg, p.colorSemis, p.colorType);
+			if (p.fn !== "color") _extDeg = p.deg;
+			var nr = _borRefOf(p.fn, p.deg, p.colorSemis, p.colorType, p.notes);
+			if (nr) _borRef = nr;
+			_borHold = (p.fn === "color" && _xParse(p.colorType)) ? { semis:p.colorSemis, type:String(p.colorType) } : null;
+		}
+		sp = _vl2_specFor(p.fn, p.deg, p.colorSemis, p.colorType);   // même pipeline que _sg_remember
+		if (!sp) continue;
+		built.push({ kind:(p.fn === "color") ? "b" : "d", degree:(p.fn === "color") ? -1 : p.deg, pcs:_sg_pcs(sp) });
+	}
+	_sg_hist = built;
+	var src = progression[idx];
+	// Le mode Suite score « ce qu'on joue APRÈS l'étape idx ». Quand idx+1 existe, il y a donc un
+	// accord suivant — et il était ignoré. Un seul chemin de scoring (`tuple-dev#29`) : l'écran et
+	// le Push répondent la même chose au même geste. Sur la dernière étape, `_sg_progRef` rend
+	// `null` et le comportement d'avant est conservé au bit près.
+	var emit = _sg_rank(src.fn, src.deg, src.colorSemis, src.colorType, _sg_progRef(idx+1));   // skip = l'étape elle-même
+	_sg_hist = saved;
+	_triHist = triSaved[0]; _triSrc = triSaved[1]; _triBan = triSaved[2]; _triVer++;   // le mémo de _triTable redevient celui du jeu
+	_extDeg = dynSaved[0]; _borRef = dynSaved[1]; _borHold = dynSaved[2];              // mémos Ext / Borrowed : clés sur cet état
+	var out = [], j, x;
+	for (j = 0; j < emit.length; j++){
+		x = emit[j];
+		if (x.kind === "d") out.push({ deg:x.d, fn:x.fn, kind:"suite", lvl:x.lvl });
+		else out.push({ deg:-1, fn:"color", kind:"suite", lvl:x.lvl, colorSemis:x.semis, colorType:x.type });
+	}
+	return out;
+}
+
+// Toggle UI : "smart 1/0".
+function smart(v){
+	smartOn = (parseInt(v) === 1);
+	// L'historique n'est PAS vidé à l'extinction : il est tenu SMART éteint, comme _triHist
+	// (tuple-dev#93). Ardoise vierge seulement si rien n'a été joué depuis la tonalité courante.
+	outlet(7, "smart", smartOn ? 1 : 0);
+	_sg_broadcast();
+}
+// Mode de sélection des suggestions (reçu de l'UI) : "function" (meilleur score) ou "voiceleading" (plus fluide).
+function smartmode(v){
+	smartMode = (String(v) === "voiceleading") ? "voiceleading" : "function";
+	outlet(7, "smartmode", smartMode);   // écho aux DEUX fenêtres, comme `smart` (session 85) — sinon l'autre garde l'ancien mode
+	if (smartOn) _sg_broadcast();
+}
+
+// Énumère les cellules diatoniques VALIDES (degré × type), dans l'ordre d'affichage. SOURCE UNIQUE
+// de la « forme » de la grille — consommée par broadcastGrid ET _sg_broadcast (fini la double boucle).
+// MÉMOÏSÉE (session 86) : 60-75 % du coût différé d'un accord joué passait ici (gridLabel →
+// _extRoles → buildSpec + enrichSpec, par case, avant le 2026-10-22), recalculé deux fois par diffusion
+// (broadcastGrid + _sg_rank) pour un résultat qui ne dépend que de la tonalité. La clé porte
+// TOUT ce que la fonction et ses appelés lisent d'état mutable :
+//   root         — gridLabel (nom), buildSpec (classes), scalePcSet ;
+//   scaleName    — SCALE_VALID_DEGREES (masque pentatonique), lu ici, dans _scaleAllowsSpec et
+//                  dans gridTypeValid ;
+//   scale        — par son CONTENU, pas son nom : getIntervals, buildSpec, gridLabel. Les deux
+//                  bougent ensemble dans setscale(), mais le contenu ne coûte rien et ne suppose rien ;
+// Hors clé, et pourquoi : GRID_TYPES, MAX_GRID_ROWS, NOTE_NAMES, SCALES, SCALE_VALID_DEGREES sont
+// des constantes jamais réassignées ; l'octave, le voicing, le voice leading, la page Borrowed,
+// SMART, EXT et AVOID NOTES ne sont lus par aucun appelé. EXT et AVOID NOTES étaient dans la clé
+// jusqu'au 2026-10-22 : ils choisissaient la fenêtre EXT et ses noms enrichis, retirés ce jour-là
+// (EXT n'agit plus que sur la colonne Borrowed) — d'où aussi une seule case mémoire, plus deux.
+// ⚠️ Le tableau rendu et ses objets { d, fn, iv } sont PARTAGÉS entre appels : aucun appelant ne
+// doit les muter (broadcastGrid, _sg_rank et _extGridKeys ne font que lire). Épinglé par
+// device/tests/grille-memo.test.mjs.
+function validGridCells() {
+	var mk = [root, scaleName, scale.join(",")].join("|"), mem = _dynMemo.grid;
+	if (mem && mem.k === mk) return mem.cells;
+	var out = [], degMask = SCALE_VALID_DEGREES[scaleName], d, t, fn, iv;
+	for (d = 0; d < 7; d++) {
+		if (degMask && !degMask[d]) continue;
+		iv = getIntervals(d);   // calculé UNE fois par degré (partagé par gridTypeValid + gridLabel)
+		// Types valides de la colonne, dans l'ordre de PRIORITÉ (GRID_TYPES).
+		var valid = [];
+		// Dédoublonnage par NOM (2026-10-21) : deux types peuvent réaliser le même accord — `seven`
+		// et `mmaj7` rendent tous deux XmMaj7 sur toute gamme à 7e mineure-majeure. Mesuré : une
+		// case en double dans harmminor, melminor et lydiandom depuis toujours, et dans les 18 modes
+		// ajoutés le même jour. Le premier type dans l'ordre de priorité garde la case.
+		var vus = {}, lb0;
+		for (t = 0; t < GRID_TYPES.length; t++) {
+			fn = GRID_TYPES[t];
+			if (!gridTypeValid(d, fn, iv)) continue;
+			lb0 = gridLabel(d, fn, iv);
+			if (vus[lb0]) continue;
+			vus[lb0] = 1;
+			valid.push(fn);
+		}
+		// Le max d'accords sans dépasser MAX_GRID_ROWS. Une seule fenêtre depuis le 2026-10-22 :
+		// la fenêtre EXT (les seules formes enrichies absentes d'ici, M13/m11/13) a été retirée
+		// avec l'enrichissement de la grille.
+		for (t = 0; t < valid.length && t < MAX_GRID_ROWS; t++) out.push({ d:d, fn:valid[t], iv:iv });
+	}
+	_dynMemo.grid = { k:mk, cells:out };   // publié APRÈS la construction : une levée ne mémoïse rien
+	return out;
+}
+
+// Diffuse toute la grille à l'UI ET au Push (outlet 7) + reconstruit flatGrid/gCols/gBor
+// ⚠️ ORDRE OBLIGATOIRE : construire dans des LOCALES, émettre, publier l'index en DERNIER.
+// `flatGrid = []` en tête laissait l'index amputé dès qu'une étape levait, et `flatGrid`
+// est ce qui traduit une touche en case pour les TROIS surfaces de jeu (clavier matériel,
+// pads Push 2, clavier ordinateur de l'UI) — toutes par `midinote`, qui calcule
+// `_idx(pitch - MIDI_BASE, flatGrid.length)` et ne joue plus rien à zéro case.
+// Mesuré avant correction : `gridLabel` ou `validGridCells` qui lève → 51 cases à 0,
+// clavier MUET à vie ; `borrowedFor` qui lève → 44 sur 51, emprunts injouables. Sans
+// erreur visible ni trace, et rien ne déclenche de re-diffusion.
+// Un index PÉRIMÉ se rejoue ; un index VIDE ne se récupère pas.
+// Épinglé par device/tests/grille-index-robustesse.test.mjs.
+function broadcastGrid() {
+	var nFlat = [], nCols = [[],[],[],[],[],[],[]], nBor = [];
+	outlet(7, "gridclear");
+	var cells = validGridCells(), ci, c2;
+	for (ci = 0; ci < cells.length; ci++) {
+		c2 = cells[ci];
+		outlet(7, "gridcell", c2.d, c2.fn, gridLabel(c2.d, c2.fn, c2.iv));
+		nFlat.push({ kind:"d", fn:c2.fn, degree:c2.d });
+		nCols[c2.d].push({ fn:c2.fn });
+	}
+	var bl = borrowedFor();
+	for (var i = 0; i < bl.length; i++) {
+		var c = bl[i];
+		var lbl = NOTE_NAMES[(root + c.semis) % 12] + (extendedOn ? _borSuffix(c.semis, c.type, true) : c.suf);
+		// 6e atome, page Tritone seulement : l'accord VERS LEQUEL le sub mène (« → Dm » dans la
+		// case). Absent ailleurs — le Push compte les `gridbor`, il ne lit pas leurs atomes.
+		if (c.target) outlet(7, "gridbor", i, lbl, c.semis, c.type, c.roman, c.target);
+		else outlet(7, "gridbor", i, lbl, c.semis, c.type, c.roman);
+		nFlat.push({ kind:"b", semis:c.semis, type:c.type });
+		nBor.push({ semis:c.semis, type:c.type });
+	}
+	var quals = [];
+	for (var qd = 0; qd < 7; qd++) quals.push(chordQuality(qd));
+	outlet(7, "qualities", quals[0], quals[1], quals[2], quals[3], quals[4], quals[5], quals[6]);
+	flatGrid = nFlat;                      // publication : rien au-dessus ne doit plus lever
+	gCols    = nCols;
+	gBor     = nBor;
+	outlet(7, "griddone");
+}
+
+// La « surface » cohérente : grille + heat-map smart, diffusées ENSEMBLE. broadcastGrid reconstruit
+// colFns/colLen côté Push → les anciennes suggestions (smartPads) deviennent périmées ; en mode SMART
+// (spotlight Push) un accord valide NON suggéré est peint en BLANC → si on rediffuse la grille sans
+// rejouer le smart, tous les pads passent en blanc (bug du grab Push). Regrouper les deux ici garantit
+// qu'AUCUN site ne peut oublier la moitié smart. NE PAS y mettre _sg_reset : effacer la mémoire smart
+// (uniquement sur changement key/scale) reste explicite chez l'appelant (pushUIState).
+function broadcastSurface() {
+	broadcastGrid();
+	if (smartOn) _sg_broadcast();
+}
+
+// L'UI demande la grille (au chargement)
+function requestgrid() {
+	broadcastSurface();   // grille + heat-map (cf. broadcastSurface : sinon les pads non suggérés passent en blanc au grab)
+}
+
+// Synchronise l'état (key, scale) vers l'UI au reload
+function requeststate() {
+	// SMART n'est republié qu'ici, pas dans pushUIState : celle-ci repart à chaque changement de
+	// tonalité, où l'état SMART ne bouge pas. Une fenêtre (re)ouverte, elle, doit l'apprendre (session 85).
+	outlet(7, "smart", smartOn ? 1 : 0);
+	outlet(7, "smartmode", smartMode);
+	outlet(7, "pushled", pushModeOn);
+	pushUIState();
+	broadcastProg();   // repeuple la liste de progression après un reload du jweb
+}
+
+
+// ⚠️ Les quatre réglages d'expression marquent le clip à réécrire depuis le 2026-08-18 : ils
+// entrent DANS le clip, donc les changer sans réécrire les rendrait sans effet visible jusqu'à la
+// prochaine édition d'accord. C'est la panne la plus trompeuse qui soit — rien n'échoue, le
+// réglage a juste l'air mort. `_clipSyncDirty` ne fait rien sans lien actif : coût nul sinon.
+// Les CC d'expression (2026-09-11, Antoine : « émets du CC à chaque changement ») : chaque réglage de la plaque
+// EXPRESSION sort aussi en contrôleur MIDI, sur `ctlout` via `[route cc] → [unpack i i]` dans le patch. Message
+// `cc <valeur> <numéro>` — la VALEUR d'abord : `unpack` pose le numéro (sortie droite, froide) avant la valeur
+// (sortie gauche, chaude). Numéros 20 à 23, « general purpose » libres dans la norme MIDI ; bipolaire → zéro à 64.
+// Émis au CHANGEMENT seulement, jamais par `pushUIState` (un rechargement ne doit pas bouger l'instrument).
+var CC_STRUM = 20, CC_STRUM_RAMP = 21, CC_STRUM_CURVE = 22, CC_HUMANIZE = 23;
+// Le filtre de vélocité (#38) prend les deux suivants. `amxd_contract.mjs` vérifie qu'ils
+// restent dans la plage « general purpose » 20..31 et qu'aucun numéro n'est partagé.
+var CC_VEL_MIN = 24, CC_VEL_MAX = 25;
+// ⚠️ AU CHANGEMENT SEULEMENT — et ça ne l'était pas. Mesuré dans Live le 2026-09-15, deux pistes
+// jetables et le device neutralisé : un clip enregistré sur la sortie de Tuple porte des
+// enveloppes ALORS QUE PERSONNE N'A TOUCHÉ À L'EXPRESSION — et n'en porte aucune device éteint.
+// Cause : chaque setter appelait `_cc` sans comparer, et Live REPOUSSE les valeurs de paramètres
+// (démarrage du transport, réactivation du device, chargement d'un set). Tuple arrosait donc le
+// fil de CC 20..23 à chaque fois, au milieu de l'enregistrement de l'utilisateur.
+// La mémoire est amorcée juste après les setters : le premier push de Live, qui vaut la valeur
+// de départ, n'émet rien. Un set qui restaure une AUTRE valeur, lui, est un vrai changement.
+function _ccQuant(val) { return Math.max(0, Math.min(127, Math.round(val))); }
+var _ccLast = {};
+function _cc(num, val) {
+	var q = _ccQuant(val);
+	if (_ccLast[num] === q) return;
+	_ccLast[num] = q;
+	outlet(7, "cc", q, num);
+}
+function strumms(v) {
+	_strumMs = Math.max(-250, Math.min(250, parseInt(v) || 0));  // signé : <0 descendant, >0 montant. >~60ms = arpège
+	outlet(7, "strumms", _strumMs);
+	_cc(CC_STRUM, (_strumMs + 250) / 500 * 127);
+	_clipSyncDirty();
+}
+function strumramp(v) {
+	strumRamp = Math.max(-100, Math.min(100, parseInt(v) || 0));
+	outlet(7, "strumramp", strumRamp);
+	_cc(CC_STRUM_RAMP, (strumRamp + 100) / 200 * 127);
+	_clipSyncDirty();
+}
+function strumcurve(v) {
+	var i = parseInt(v);
+	if (i >= 0 && i < STRUM_CURVE_P.length) strumCurve = i;
+	outlet(7, "strumcurve", strumCurve);
+	_cc(CC_STRUM_CURVE, strumCurve / (STRUM_CURVE_P.length - 1) * 127);
+	_clipSyncDirty();
+}
+function humanizeamt(v) {
+	humanizeAmt = Math.max(0, Math.min(100, parseInt(v)));
+	outlet(7, "humanize", humanizeAmt);
+	_cc(CC_HUMANIZE, humanizeAmt / 100 * 127);
+	_clipSyncDirty();
+}
+
+// Amorçage de la mémoire des CC : les valeurs de DÉPART sont déjà « connues », donc le premier
+// push de Live n'émet rien. Les formules sont celles des quatre setters ci-dessus — les changer
+// ici sans les changer là-haut ferait ré-émettre au chargement, silencieusement.
+_ccLast[CC_STRUM]       = _ccQuant((_strumMs + 250) / 500 * 127);
+_ccLast[CC_STRUM_RAMP]  = _ccQuant((strumRamp + 100) / 200 * 127);
+_ccLast[CC_STRUM_CURVE] = _ccQuant(strumCurve / (STRUM_CURVE_P.length - 1) * 127);
+_ccLast[CC_HUMANIZE]    = _ccQuant(humanizeAmt / 100 * 127);
+// ⚠️ CC_VEL_MIN / CC_VEL_MAX ne s'amorcent PAS ici : `velMin`/`velMax` sont déclarés bien plus
+// bas, donc encore `undefined` à cette ligne (hoisting) — la mémoire valait NaN et le premier
+// rejeu des défauts par Live émettait `cc 1 24` / `cc 127 25`. Amorcés juste après leur `var`.
+
+// Relais du toggle Push mode (UI jweb → module Push, via la sortie 7 déjà câblée).
+// Push Mode arrive du champ PUSH ou du paramètre Live. `pushmode` part au Push et remet le paramètre à
+// jour, `pushled` à l'UI seule : une fenêtre qui s'ouvre avant que le set ait rejoué son paramètre ne
+// doit pas pouvoir l'écraser (requeststate).
+var pushModeOn = 0;
+function pushmode(v) {
+	pushModeOn = parseInt(v) ? 1 : 0;
+	outlet(7, "pushmode", pushModeOn);
+	outlet(7, "pushled", pushModeOn);
+}
+
+// Relais du schéma de couleur (cycler UI → module Push).
+function colorscheme(v) { outlet(7, "colorscheme", parseInt(v)); }
+
+// =====================================================
+// ENTRÉE CLAVIER MIDI → case de la grille (Phase 2)
+// Reçoit "midinote <pitch> <vel>" depuis midi_map (relais).
+// Mappe la note sur la grille du moteur → cohérent avec l'UI.
+// =====================================================
+var MIDI_BASE      = 48;   // Do2 = première case
+var activeMidiNote = -1;
+
+// Index validé, ou -1. À utiliser PARTOUT où on indexe un tableau avec une valeur reçue de
+// l'extérieur (jweb, Push, LiveAPI).
+//
+// PIÈGE : `parseInt` rend NaN sur une entrée non numérique, et NaN met en ÉCHEC toute
+// comparaison — `NaN < 0` et `NaN >= len` sont FAUX tous les deux. Le garde-fou classique
+// `if (i < 0 || i >= len) return;` laisse donc passer NaN, puis `tab[NaN]` vaut `undefined`
+// et la lecture du champ suivant lève. L'exception remonte et AVORTE l'appel en cours, en
+// général au milieu d'une mutation d'état. Ce trou était ouvert dans 6 points d'entrée
+// (midinote, playprog, previewprog, selprog, moveprog, progmode) — trouvé au fuzz du
+// 2026-08-05, cf. device/tests/entrypoint-fuzz.test.mjs.
+function _idx(v, len) {
+	var i = parseInt(v);
+	return (isNaN(i) || i < 0 || i >= len) ? -1 : i;
+}
+
+function playFlatCell(cell) {
+	if (cell.kind === "b") { colorchord(cell.semis, cell.type); return; }
+	switch(cell.fn) {
+		case "triad":       triad(cell.degree); break;
+		case "six":         six(cell.degree); break;
+		case "sixnine":     sixnine(cell.degree); break;
+		case "seven":       seven(cell.degree); break;
+		case "mmaj7":       mmaj7(cell.degree); break;
+		case "sevensus4":   sevensus4(cell.degree); break;
+		case "nine":        nine(cell.degree);  break;
+		case "sevenflat9":  sevenflat9(cell.degree); break;
+		case "sevensharp9": sevensharp9(cell.degree); break;
+		case "add9":        add9(cell.degree);  break;
+		case "sus2":        sus2(cell.degree);  break;
+		case "sus4":        sus4(cell.degree);  break;
+		case "m7s5":        m7s5(cell.degree);  break;
+		default:
+			// Un type absent d'ici alors qu'il est valide dans GRID_TYPES/gridTypeValid rend la case
+			// cliquable dans la grille/Push/MIDI mais SILENCIEUSE (zéro son, zéro diagnostic) — c'est
+			// exactement la classe du bug A7sus4/quartal du 2026-07-15. Échouer bruyamment ici.
+			post("playFlatCell: type de cellule inconnu '" + cell.fn + "'\n");
+			break;
+	}
+}
+
+// ── Passthrough de lecture (tuple-dev#77, 2026-09-18) ────────────────────────
+// Pendant que le clip LIÉ joue, ce qui entre par midinote EST le clip — les accords finaux
+// que Tuple a lui-même écrits. Les remapper re-déclenchait un accord de grille PAR NOTE
+// (mesuré dans Live avant ce code : un ré seul ressortait en accords de cinq sons,
+// enregistrés en aval). Ils passent donc INTACTS, par la porte de vélocité (_emitVel).
+// `_passActive` garantit le note-off si la lecture s'arrête entre un on et son off ;
+// un note-off inconnu passe quand même — on n'avale JAMAIS un note-off.
+var _passActive = {};
+function _passNote(pitch, vel) {
+	if (vel > 0) _passActive[pitch] = true;
+	else delete _passActive[pitch];
+	_emitVel(vel);
+	outlet(1, pitch);
+}
+function _passRelease() {
+	var p;
+	for (p in _passActive) { _emitVel(0); outlet(1, parseInt(p)); }
+	_passActive = {};
+}
+
+function midinote(pitch, vel) {
+	pitch = parseInt(pitch);
+	vel   = parseInt(vel);
+
+	// Lecture du clip lié : passthrough intégral, note-offs compris (bloc ci-dessus).
+	// Conséquence assumée : clavier MIDI et pads Push passent aussi en direct tant que
+	// la lecture court — la lecture appartient à Live (CONTEXT.md), Tuple s'efface.
+	if (_linkPlaying) { _passNote(pitch, vel); return; }
+
+	if (vel === 0) {                       // note-off
+		if (pitch === activeMidiNote) { activeMidiNote = -1; sendNoteOff(); }
+		return;
+	}
+
+	// Dédoublonnage SYMÉTRIQUE : la même touche peut arriver par DEUX chemins
+	// (notein du Computer MIDI Keyboard d'Ableton + l'objet [key] du patch). Si cette
+	// note sonne déjà, on ignore le 2e déclenchement — sinon double-attaque et l'état
+	// de voice leading avance 2× → accords suivants erratiques. (keynote() dédoublonnait
+	// déjà dans un seul sens ; ici c'est complet.)
+	if (pitch === activeMidiNote) return;
+
+	var idx = _idx(pitch - MIDI_BASE, flatGrid.length);
+	if (idx < 0) return;
+
+	currentVelocity = vel;
+	activeMidiNote  = pitch;
+	playFlatCell(flatGrid[idx]);
+}
+
+// =====================================================
+// CONSTRUCTION DES NOTES
+// =====================================================
+
+function buildNotes(d, sidx) {
+	var notes = [];
+	for (var i = 0; i < sidx.length; i++) {
+		var step        = sidx[i];
+		var absIdx      = d + step;
+		var octShift    = Math.floor(absIdx / 7);
+		var noteInScale = absIdx % 7;
+		var midi        = root + scale[noteInScale] + (4 + currentOctave + octShift) * 12;
+		if (midi >= 0 && midi <= 127) notes.push(midi);
+	}
+	return notes;
+}
+
+// =====================================================
+// VOICINGS
+// =====================================================
+
+function vsort(a) { return a.slice().sort(function(x,y){ return x-y; }); }
+
+// PIANO : main gauche = fondamentale grave, main droite = reste de
+// l'accord groupé au-dessus (avec un écart). Son pianistique classique.
+function pianoVoicing(notes) {
+	if (notes.length < 3) return notes;
+	var s = vsort(notes);
+	var bass = s[0] - 12;            // fondamentale une octave plus bas
+	return [bass].concat(s.slice(1));
+}
+
+// OPEN : position ouverte — on monte la 2e voix d'une octave.
+// Écartement modéré, plus aéré que le close.
+function openVoicing(notes) {
+	if (notes.length < 2) return notes;
+	var s = vsort(notes);
+	s[1] += 12;
+	return vsort(s);
+}
+
+
+
+
+
+
+// Drop 2 : depuis une position serrée, on descend la 2e voix
+// depuis le haut d'une octave. Son ouvert et riche (jazz/nappes).
+function drop2Voicing(notes) {
+	if (notes.length < 3) return notes;
+	var r = notes.slice().sort(function(a,b){ return a-b; });
+	r[r.length - 2] -= 12;                       // 2e voix depuis le haut
+	r.sort(function(a,b){ return a-b; });
+	return r;
+}
+
+// Drop 3 : on descend la 3e voix depuis le haut d'une octave.
+// Plus espacé encore. Nécessite au moins 4 notes.
+function drop3Voicing(notes) {
+	if (notes.length < 4) return notes;
+	var r = notes.slice().sort(function(a,b){ return a-b; });
+	r[r.length - 3] -= 12;                       // 3e voix depuis le haut
+	r.sort(function(a,b){ return a-b; });
+	return r;
+}
+
+// FILET DE SECOURS uniquement (appelé par sendChord SEULEMENT si _vl2_play ne sort aucun candidat).
+// ⚠️ Ces voicings v1 DIVERGENT de _vl2_T (algos différents) et ne couvrent que 4 des 6 (classic/
+// root → close position par défaut). Secours rare, PAS le chemin réel : la
+// vérité du voicing est _vl2_T / _vl2_play. Ne pas y ajouter de logique de jeu.
+function applyVoicing(notes) {
+	switch(currentVoicing) {
+		case "piano":     return pianoVoicing(notes);
+		case "open":      return openVoicing(notes);
+		case "drop2":     return drop2Voicing(notes);
+		case "drop3":     return drop3Voicing(notes);
+		default:          return notes;
+	}
+}
+
+// =====================================================
+// OUTPUT — 6 outlets directs, chacun envoie [pitch, velocity]
+// Le patch câble chaque outlet → unpack i i → noteout
+// =====================================================
+// VL2 ENGINE — inliné depuis device/vl2/src/ (import/export retirés)
+// Actif automatiquement quand voiceLeadingEnabled.
+// Mapping modes v1→v2 : "anchored"→"anchor" · "relative"/"piano"→"flow"
+// =====================================================
+
+// --- rules ---
+var _vl2_LOW_LIMITS = [{iv:2,min:50},{iv:4,min:48},{iv:6,min:41}];
+function _vl2_lowIntervalViolations(notes, shift) {
+	var sh = shift || 0;
+	var r = notes.slice().sort(function(a,b){return a-b;}), v = [];
+	for (var i = 0; i < r.length-1; i++) {
+		var iv = r[i+1]-r[i];
+		for (var j = 0; j < _vl2_LOW_LIMITS.length; j++) {
+			var L = _vl2_LOW_LIMITS[j];
+			if (iv <= L.iv && r[i] < L.min + sh) { v.push(iv+'st@'+r[i]); break; }
+		}
+	}
+	return v;
+}
+// Cale un accord à candidat unique (ABSOLUTE, ou root/classic VL-off) sous le plafond 108 en
+// descendant par octave — sans lui, à oct+2 (regBase 72) les shapes à registre haut débordent,
+// _vl2_realize renvoie [] et sendChord retombe SILENCIEUSEMENT sur applyVoicing serré (perte du
+// style, des tensions EXT). tuple-dev#34 finding 1, tranché « caler dans la fenêtre » 2026-08-24.
+// N'agit qu'au registre extrême : aux octaves normales max≤108 déjà, la boucle ne tourne pas.
+// Rend false si infittable (le grave passerait sous 24). Mute `notes` en place. Miroir : realizer.js.
+function _vl2_fitWindow(notes){
+	var mx=Math.max.apply(null,notes);
+	while(mx>108){
+		if(Math.min.apply(null,notes)-12<24)return false;
+		for(var i=0;i<notes.length;i++)notes[i]-=12;
+		mx-=12;
+	}
+	return Math.min.apply(null,notes)>=24;
+}
+
+// --- identity ---
+function _vl2_checkIdentity(voicing, notes, spec) {
+	var v = [];
+	var ns = notes.slice().sort(function(a,b){return a-b;});
+	// ⚠️ Le Set des classes de hauteur ne sert QU'À la branche `hasSeventh`, et cette
+	// fonction tourne surtout sur des TRIADES : mesuré, 15 appels par note en classic et 27
+	// en piano, dont 100 % sans septième. Le construire en tête revenait à allouer un Set
+	// polyfillé, un tableau et deux fermetures par appel, pour ne jamais les lire. Il se
+	// construit donc là où il est lu. (`m` local a disparu : `_vl2_m` est global et hoisté.)
+	if (spec.hasSeventh) {   // guide tones sur les 7e : 7e ET 3ce présentes.
+		var pcs = new Set(ns.map(_vl2_m));
+		var has = function(role){ var e=_vl2_rolePc(spec.pcs,role); return e&&pcs.has(e.pc); };
+		if (!has('seventh')) v.push('guide:7e absente');
+		var hasThird = !!_vl2_rolePc(spec.pcs, 'third');
+		if (hasThird && !has('third')) v.push('guide:3ce absente');
+	}
+	// Les six styles vivants n'ont pas de verrou rootless / sus / power : ces branches
+	// appartenaient aux 24 styles retires (2026-09-14).
+	if (voicing==='drop2'||voicing==='drop3') {
+		// drop2 accepte TROIS voix : la triade ouverte (« open triad » / « drop 2 triad ») est une
+		// forme nommée, sans doublure, avec ses trois renversements catalogués — tuple-dev#20,
+		// décision 5. drop3 reste à quatre : les sources ne définissent pas de « triade drop 3 »,
+		// et le drop 3 littéral à trois voix rend `Two Hands` à l'identique 20/21.
+		// ⚠️ Ce verrou ne sait que REJETER. C'est _vl2_realize qui PRODUIT la triade ouverte (il
+		// cesse de rediriger drop2 vers classic) ; sans ça, ouvrir la borne ici ne ferait rien.
+		var dropMinV = (voicing==='drop2') ? 3 : 4;
+		if (ns.length < dropMinV) { v.push('dropN:<' + dropMinV + ' voix'); }
+		else {
+			var lifted = [ns[0]+12].concat(ns.slice(1)).sort(function(a,b){return a-b;});
+			var maxGap=0; for(var i=0;i<lifted.length-1;i++) maxGap=Math.max(maxGap,lifted[i+1]-lifted[i]);
+			if (maxGap>12) { v.push('dropN:base non-close'); }
+			else {
+				var fromTop=lifted.length-1-lifted.indexOf(ns[0]+12);
+				if (voicing==='drop2'&&fromTop!==1) v.push('drop2:voix abaissée ≠ 2e du haut');
+				if (voicing==='drop3'&&fromTop!==2) v.push('drop3:voix abaissée ≠ 3e du haut');
+			}
+		}
+	}
+	else if (voicing==='piano') {
+		if (_vl2_m(ns[0])!==spec.rootPc) v.push('piano:basse ≠ fondamentale');
+		var rh=ns.slice(1);
+		if (rh.length && Math.max.apply(null,rh)-Math.min.apply(null,rh) > 12 + Math.max(0,rh.length-3)*3) v.push('piano:MD trop large');   // marge pour les accords étendus -> pas de saut d'octave EXT/normal
+	}
+	return v;
+}
+
+// --- chordspec builder (depuis l'état courant root/scale du moteur) ---
+var _vl2_STEPS = {
+	triad:[0,2,4], seven:[0,2,4,6], nine:[0,2,4,6,8], add9:[0,2,4,8],
+	sus2:[0,1,4], sus4:[0,3,4], six:[0,2,4,5], sixnine:[0,2,4,5,8],
+	sevensus4:[0,3,4,6], mmaj7:[0,2,4,6], sevenflat9:[0,2,4,6,8],
+	sevensharp9:[0,2,4,6,8], m7s5:[0,2,4,6]
+};
+var _vl2_STEP_ROLE = {0:'root',1:'sus',2:'third',3:'sus',4:'fifth',5:'sixth',6:'seventh',8:'ninth'};
+
+function _vl2_buildSpec(fn, d) {
+	var steps=_vl2_STEPS[fn]; if(!steps) return null;
+	var rootPc=_vl2_m(root+scale[d%7]), pcs=[];
+	for (var i=0;i<steps.length;i++) { var s=steps[i]; pcs.push({pc:_vl2_m(root+scale[(d+s)%7]),role:_vl2_STEP_ROLE[s]}); }
+	if (fn==='m7s5'&&pcs.length>2) pcs[2].pc=_vl2_m(pcs[2].pc+1); // quinte augmentée
+	var iv=function(p){return _vl2_m(p.pc-rootPc);};
+	var hasSev=false,isThird4=false,isSev10=false;
+	for(var i=0;i<pcs.length;i++){
+		if(pcs[i].role==='seventh') hasSev=true;
+		if(pcs[i].role==='third'&&iv(pcs[i])===4) isThird4=true;
+		if(pcs[i].role==='seventh'&&iv(pcs[i])===10) isSev10=true;
+	}
+	var scalePcs=[]; for(var j=0;j<scale.length;j++) scalePcs.push(_vl2_m(root+scale[j]));   // gamme (lue par les tensions des cartes, _tensCandidate)
+	return {pcs:pcs, rootPc:rootPc, fn:fn, degree:d, scalePcs:scalePcs, hasSeventh:hasSev, isDominant:isThird4&&isSev10};
+}
+
+function _vl2_buildColorSpec(semis, type) {
+	var ROLES=['root','third','fifth','seventh'];
+	var rootPc=_vl2_m(root+semis), pcs=[], x=_xParse(type), i;
+	if (x) {   // page Ext : les rôles sont dans le type (tensions comprises) — EXT ne les retouche pas
+		var r=_xRoles(x);
+		for(i=0;i<r.length;i++) pcs.push({pc:_vl2_m(rootPc+r[i].iv),role:r[i].role});
+		return {pcs:pcs, rootPc:rootPc, fn:'color', degree:semis, hasSeventh:x.s>=0, isDominant:x.t===4&&x.s===10};
+	}
+	var ivs=COLOR_IV[type]||COLOR_IV.maj;
+	for(i=0;i<ivs.length;i++) pcs.push({pc:_vl2_m(rootPc+ivs[i]),role:ROLES[i]});
+	return {pcs:pcs, rootPc:rootPc, fn:'color', degree:semis, hasSeventh:ivs.length>3, isDominant:type==='dom7'||type==='sub7'};
+}
+
+// Toggle EXT. Depuis le 2026-10-22 (session 86, Antoine) il n'agit QUE sur la colonne Borrowed :
+// enrichissement des emprunts par leur qualité (`_vl2_enrichColorSpec`), pages Borrowed / Mediants
+// en contexte (`_borCtxOn`), 7#11 du sub tritonique. La grille diatonique ne le lit plus : ni
+// fenêtre EXT, ni nom étendu, ni accord enrichi. `_vl2_enrichSpec` et `_vl2_extTensionPc` (la
+// couche B diatonique) ont été retirés ce jour-là ; les extensions d'un degré sont la page Ext.
+// Le nom et le fil (`extended 0/1`) ne changent pas : sets sauvegardés et UI les portent.
+var extendedOn = false;
+// ══ EXTENDED sur la colonne BORROWED (2026-10-21) ═══════════════════════════════════════
+// Un emprunt n'a pas de degré dans la gamme courante — c'est sa définition — donc pas de
+// `scalePcs` à lire, et l’ancien enrichissement diatonique le laissait inchangé : EXT ne faisait rien dans
+// la colonne. Ses tensions viennent de la QUALITÉ de l'accord (pratique accord-gamme), pas
+// de la tonalité. Intervalles à la fondamentale, toujours JUSTES (même doctrine que la
+// grille : une tension altérée est une couleur, pas un enrichissement) :
+//   maj  → add9            min  → add9 (madd9)
+//   maj7 → 9 · 13          dom7 → 9 · 13 ; sub tritonique → ♯11 seule (7#11, quinte gardée)
+//   dim7 → rien : ses tensions disponibles (9, 11, ♭13, maj7 — un ton au-dessus de chaque
+//          note) dépendent de la fonction (vii°7 ou dim de passage), que la table ne dit
+//          pas, et l'accord à quatre notes symétriques sonne déjà complet. Même règle que
+//          dim/aug dans la grille : accord de couleur, jamais enrichi.
+// ⚠️ Aucune entrée `min7` : COLOR_IV n'en a pas, et `COLOR_IV[t] || COLOR_IV.maj` replierait
+// en SILENCE sur un majeur. Le jour où il y en a un : `min7:[2,5]` (9 · 11), ici ET dans COLOR_IV.
+// L'avoid-table n'est pas consultée : aucune de ces tensions n'y est refusée sur sa qualité
+// (`_tensAvoid` rend "" pour 9/13/♯11 sur une 3ce majeure, pour 9 sur une mineure).
+var _BOR_EXT_IV = { maj:[2], min:[2], maj7:[2,9], dom7:[2,9], dim7:[], sub7:[2,9] };   // sub7 (et dom7 sub) : remplacé par ♯11 seule plus bas
+var _BOR_EXT_ROLE = { 2:'ninth', 6:'eleventh', 9:'thirteenth' };
+// Sub tritonique = entrée de SUBS_MAJOR / SUBS_MINOR de la gamme courante. Lu sur la TABLE,
+// pas sur la page visible : une carte capturée sur la page Tritone reste un sub quand la page
+// change. (Les tables n'ont aucun (semis, type) en commun avec BORROWED_MAJOR/MINOR — mineur :
+// semis 3 retiré des subs précisément parce qu'il EST V/VI.)
+// ⚠️ 2026-10-21 : la page Tritone est DYNAMIQUE et sert le type `sub7` — c'est lui qui dit
+// « sub » désormais, où que l'accord soit rejoué (carte capturée, rekey, autre page visible).
+// La lecture des tables reste pour les cartes capturées AVANT, qui portent `dom7`.
+function _colorIsSub(semis, type) {
+	if (type === "sub7") return true;
+	var t = (scaleName === "major") ? SUBS_MAJOR : (scaleName === "minor") ? SUBS_MINOR : [], i;
+	for (i = 0; i < t.length; i++) if (t[i].semis === semis && t[i].type === type) return true;
+	return false;
+}
+function _vl2_enrichColorSpec(spec, type, semis) {
+	if (!spec || spec.fn !== 'color') return spec;
+	var ivs = _BOR_EXT_IV[type], add = [], i;
+	if (!ivs || !ivs.length) return spec;
+	var pcs = spec.pcs.slice();
+	if ((type === 'dom7' || type === 'sub7') && _colorIsSub(semis, type)) {
+		// Sub tritonique : 7♯11 SEUL (2026-10-21, Antoine) — 1 3 5 ♭7 ♯11, cinq classes, la quinte
+		// reste (six voix suffisent). Avant : 9 · ♯11 · 13, sept classes, quinte omise (« 13#11 ») :
+		// la couleur lydien-dominant du sub tient dans sa ♯11, la 9 et la 13 l'épaississaient.
+		ivs = [6];
+	}
+	for (i = 0; i < ivs.length; i++) add.push({ pc:_vl2_m(spec.rootPc + ivs[i]), role:_BOR_EXT_ROLE[ivs[i]] });
+	return { pcs:pcs.concat(add), rootPc:spec.rootPc, fn:spec.fn, degree:spec.degree, hasSeventh:spec.hasSeventh, isDominant:spec.isDominant };
+}
+// Suffixe affiché d'un emprunt. Hors EXT : la recette de toujours (celle de colorchord, égale
+// au `suf` de chaque table). En EXT : lu sur le spec RÉELLEMENT enrichi, comme le faisait jadis
+// la grille — le nom ne revendique que ce que l'accord portera. ♯11 nu sur une dominante,
+// convention de `_tensName` (G13#11).
+function _borSuffix(semis, type, ext) {
+	var xp = _xParse(type);
+	if (xp) return _xSuffix(xp);   // page Ext : le nom est dans le type, EXT n'y touche pas
+	var base = (type === "min") ? "m" : (type === "dim7") ? "dim7"
+	         : (type === "maj7") ? "maj7" : (type === "dom7" || type === "sub7") ? "7" : "";
+	var x = (ext === undefined || ext === null) ? extendedOn : ext;
+	if (!x) return base;
+	var sp = _vl2_enrichColorSpec(_vl2_buildColorSpec(semis, type), type, semis);
+	var r = { ninth:false, eleventh:false, thirteenth:false }, i;
+	for (i = 0; i < sp.pcs.length; i++) if (r.hasOwnProperty(sp.pcs[i].role)) r[sp.pcs[i].role] = true;
+	if (r.eleventh && !r.ninth) return "7#11";   // sub tritonique (convention `_tensName` : ♯11 nue sur une dominante)
+	if (!r.ninth) return base;
+	if (type === "dom7" || type === "sub7") return r.thirteenth ? (r.eleventh ? "13#11" : "13") : "9";
+	if (type === "maj7") return r.thirteenth ? "maj13" : "maj9";
+	if (type === "min")  return "madd9";
+	if (type === "maj")  return "add9";
+	return base;
+}
+// PIPELINE DE SPEC UNIQUE — construit le spec d'une case (diatonique OU emprunt) et applique les transforms
+// de niveau spec (EXT enrich aujourd'hui ; futurs : polychord…). Utilisé par play, preview ET smart → ils
+// ne peuvent plus diverger (la classe de bug « le smart n'a pas eu l'EXT » disparaît à la racine).
+// ⚠️ PLUS DE PARAMÈTRE `tensions`, et ce n'est pas un oubli. Il a existé pour tuple-dev#68 :
+// les tensions d'une carte entraient dans le spec, qui repassait par `_vl2_realize`. Le
+// 2026-09-11 Antoine a signalé que « l'écriture des tensions semble changer la structure de
+// l'accord » — C + 9 sortait renversé, G + 13 mettait la 13 à la basse, Dm + 11 faisait un
+// cluster. Le chemin a été remplacé par `_tensStack`, qui EMPILE au-dessus du sommet sans
+// toucher à la base. Le paramètre est resté câblé à `null` par son unique appelant, et
+// `_tensApply` avec lui : onze lignes qu'aucune exécution n'atteignait depuis.
+function _vl2_specFor(fn,d,colorSemis,colorType){
+	var spec=(fn==='color')?_vl2_buildColorSpec(colorSemis,colorType):_vl2_buildSpec(fn,d);
+	if(!spec)return null;
+	if(extendedOn&&fn==='color')spec=_vl2_enrichColorSpec(spec,colorType,colorSemis);   // EXT : colonne Borrowed SEULE (2026-10-22) — la grille diatonique n'est jamais enrichie
+	return spec;
+}
+// tuple-dev#73 : l'identité d'une tension est son INTERVALLE à la fondamentale (sa couleur) ; la famille
+// (9 / 11 / 13) ne sert qu'au rôle dans le voicing et au nom.
+var _TENS_NAMES = ["b9", "9", "#9", "11", "#11", "b13", "13"];              // ordre du fil ; une carte porte ces NOMS
+var _TENS_FAM  = { 1:9, 2:9, 3:9, 5:11, 6:11, 8:13, 9:13 };
+var _TENS_BY_NAME = { "b9":1, "9":2, "#9":3, "11":5, "#11":6, "b13":8, "13":9 };
+// ══ TENSIONS DIATONIQUES des cartes de progression (tuple-dev#68) ═══════════════════════
+// Trois candidates par carte, jamais plus : la 9, la 11 et la 13 DE LA GAMME. Leur couleur
+// (b9 / 9 / #9, 11 / #11, b13 / 13) se lit par l'intervalle à la fondamentale — la ♯11
+// n'existe que là où la gamme la donne (IV en majeur), la ♭9 aussi (V en mineur harmonique).
+// AVOID NOTES (global, débrayable) refuse ensuite ce que la théorie tonale évite ; éteint,
+// les trois diatoniques sont offertes telles quelles. Le moteur DÉCIDE, l'UI affiche.
+var avoidNotesOn = true;
+var _TENS_COLOR = { 1:"b9", 2:"9", 3:"#9", 5:"11", 6:"#11", 8:"b13", 9:"13" };
+// Spec de BASE d'une carte (sans enrichissement EXTENDED) : c'est sur lui qu'on lit la qualité.
+function _tensBaseSpec(p) {
+	return (p.fn === "color") ? _vl2_buildColorSpec(p.colorSemis, p.colorType) : _vl2_buildSpec(p.fn, p.deg);
+}
+// Les notes de la gamme courante (classes de hauteur), pour les cartes empruntées dont le
+// spec n'a pas de degré : « rester dans la gamme » = la tonalité de KEY · SCALE.
+function _tensScalePcs() {
+	var out = [], i; for (i = 0; i < scale.length; i++) out.push(((root + scale[i]) % 12 + 12) % 12); return out;
+}
+// Candidate d'une tension (9, 11 ou 13) : { pc, iv, color } ou null si la gamme ne la donne pas.
+function _tensCandidate(spec, t) {
+	var pcs = spec.scalePcs || _tensScalePcs(), j, iv = _tensIv(spec, t);
+	if (iv < 0) return null;
+	var pc = _vl2_m(spec.rootPc + iv), diat = false;
+	for (j = 0; j < pcs.length; j++) if (_vl2_m(pcs[j]) === pc) diat = true;
+	return { pc: pc, iv: iv, color: _TENS_COLOR[iv], diat: diat };
+}
+// L'intervalle d'une tension telle qu'on la reçoit : une couleur (1 2 3 5 6 8 9, ou son nom « b9 » … « 13 »), ou
+// une FAMILLE (9 / 11 / 13 — sets sauvés avant #73, Push, ancienne UI) qui désigne la couleur DE LA GAMME de
+// cette famille, à défaut la naturelle. -1 si rien.
+function _tensIv(spec, t) {
+	var pcs = spec.scalePcs || _tensScalePcs(), i, j;
+	if (_TENS_BY_NAME.hasOwnProperty(String(t)) && !(t === 9 || t === 11 || t === 13)) return _TENS_BY_NAME[String(t)];
+	t = parseInt(t);
+	if (t === 9 || t === 11 || t === 13) {
+		var want = (t === 9) ? [2, 1, 3] : (t === 11) ? [5, 6] : [9, 8];
+		for (i = 0; i < want.length; i++) for (j = 0; j < pcs.length; j++) if (_vl2_m(pcs[j] - spec.rootPc) === want[i]) return want[i];
+		return want[0];
+	}
+	return -1;
+}
+// Raison de refus (AVOID NOTES) ou "" — lue sur la qualité du spec : tierce, quinte, septième.
+function _tensAvoid(spec, cand) {
+	var third = _vl2_rolePc(spec.pcs, "third"), fifth = _vl2_rolePc(spec.pcs, "fifth");
+	var t3 = third ? _vl2_m(third.pc - spec.rootPc) : -1, t5 = fifth ? _vl2_m(fifth.pc - spec.rootPc) : -1, iv = cand.iv;
+	if (t3 < 0) return (iv === 1) ? "4th" : "";                                  // sus : la ♭9 frotte la quarte
+	if (t3 === 4) {                                                              // majeur ou dominante
+		if (iv === 5) return spec.isDominant ? "sus" : "3rd";                    // 11 : sur une dominante → 7sus4
+		if (!spec.isDominant && (iv === 1 || iv === 3 || iv === 8)) return "major";   // ♭9 ♯9 ♭13 ne sont pas des couleurs majeures
+		return "";
+	}
+	if (t3 === 3) {                                                              // mineur, demi-diminué, diminué
+		// ø : la 13 n'est pas sa couleur, la ♭13 si. La 9 — naturelle OU bémol — est celle que la
+		// GAMME donne : en majeur le VII est locrien (♭9 diatonique), en mineur mélodique le VI est
+		// locrien ♮2 (9 naturelle). Les sources se contredisent sur ce point (TJPS donne ♭9
+		// disponible et 9 à éviter, jazzguitar.be et Jens Larsen l'inverse) ; arbitrage du
+		// 2026-09-14 : la gamme sélectionnée tranche, le moteur ne préjuge pas. La ligne refusait
+		// `iv === 1` d'office.
+		if (t5 === 6) return (iv === 9) ? "hdim" : "";
+		if (iv === 6) return "5th";                                              // ♯11 contre la quinte juste
+		return (iv === 1 || iv === 8) ? "minor" : "";
+	}
+	return "";
+}
+// L'offre d'une carte : [{ t:9, color:"9", state:"off"|"on"|"built"|"avoid:<raison>" }, ×3].
+function _tensOffer(p) {
+	var spec = _tensBaseSpec(p), out = [], i;
+	if (spec) _tensNormalize(p, spec);
+	for (i = 0; i < _TENS_NAMES.length; i++) {
+		var nm = _TENS_NAMES[i], iv = _TENS_BY_NAME[nm], c = spec ? _tensCandidate(spec, nm) : null;
+		if (!c) { out.push({ t: nm, iv: iv, color: nm, state: "none", diat: false }); continue; }
+		var state, has = p.tensions && p.tensions.indexOf(nm) >= 0, j, built = false;
+		for (j = 0; j < spec.pcs.length; j++) if (spec.pcs[j].pc === c.pc) built = true;
+		if (built) state = "built";
+		else if (has) state = (p.tensMuted && p.tensMuted.indexOf(nm) >= 0) ? "muted" : "on";   // posée : reste posée même si le filtre la refuserait ; muted = posée, non rendue
+		else { var why = avoidNotesOn ? _tensAvoid(spec, c) : ""; state = why ? ("avoid:" + why) : "off"; }
+		out.push({ t: nm, iv: iv, color: nm, state: state, pc: c.pc, diat: c.diat });
+	}
+	return out;
+}
+// Les tensions d'une carte sont des INTERVALLES. Une carte d'avant #73 porte des familles (9 / 11 / 13) : au
+// premier passage chacune devient la couleur diatonique de sa famille — ce que #68 offrait.
+function _tensNormalize(p, spec) {
+	if (!p.tensions || !p.tensions.length) return;
+	var out = [], i, iv, nm;
+	for (i = 0; i < p.tensions.length; i++) { iv = _tensIv(spec, p.tensions[i]); nm = _TENS_COLOR[iv]; if (iv > 0 && out.indexOf(nm) < 0) out.push(nm); }
+	out.sort(function(a, b){ return _TENS_BY_NAME[a] - _TENS_BY_NAME[b]; });
+	p.tensions = out;
+}
+// Nom d'une carte avec ses tensions, dans la convention de la grille (M7, m7, ø7, 7sus4, #, b).
+// La chaîne naturelle (9 → 11 → 13) remplace le chiffre 7 : G7 + 13 → G13, FM7 + 9 → FM9,
+// Bø7 + 11 → Bø11, G7sus4 + 9 → G9sus4. Les altérations (b9, #9, #11, b13) suivent en clair sur
+// une dominante (E7b9, G13#11) et pour la #11 d'un majeur (FM7#11) ; entre parenthèses sinon
+// (Bø7(b13)). Sans septième : add9 / add11 / add13. Sans tension : le nom d'origine, tel quel.
+function _tensName(p) {
+	var base = p.baseName || p.name, o = _tensOffer(p), spec = _tensBaseSpec(p), i;
+	var nat = [], alt = [];
+	for (i = 0; i < o.length; i++) {
+		if (o[i].state !== "on" && o[i].state !== "muted") continue;
+		var iv = o[i].iv;
+		if (iv === 2 || iv === 5 || iv === 9) nat.push(_TENS_FAM[iv]); else alt.push({ iv: iv, color: o[i].color });
+	}
+	if (!nat.length && !alt.length) return base;
+	var name = base, top = nat.length ? nat[nat.length - 1] : 0;
+	if (/7(sus4|b9|#9)?$/.test(base)) { if (top) name = base.replace(/7(sus4|b9|#9)?$/, String(top) + "$1"); }
+	else if (top) { name = base + "add" + top; }
+	var thirdMaj = (function(){ var t = _vl2_rolePc(spec.pcs, "third"); return t && (((t.pc - spec.rootPc) % 12 + 12) % 12) === 4; })();
+	for (i = 0; i < alt.length; i++) {
+		var bare = spec.isDominant || (alt[i].iv === 6 && thirdMaj);
+		name += bare ? alt[i].color : ("(" + alt[i].color + ")");
+	}
+	return name;
+}
+// Toggle UI : "avoidnotes 1/0" — global, comme "extended". Ne touche aucune carte : seule l'offre change.
+function avoidnotes(v) {
+	avoidNotesOn = (parseInt(v) === 1);
+	outlet(7, "avoidnotes", avoidNotesOn ? 1 : 0);
+	broadcastProgTens();
+	// La page Ext filtre ses tensions par la même table ; sous EXT, la page Borrowed / Mediants en
+	// contexte aussi. La grille diatonique, elle, ne dépend plus du filtre (2026-10-22 : plus de
+	// fenêtre EXT) — rediffuser seulement quand la colonne VISIBLE le lit.
+	if (borPage === 3 || _borCtxOn()) { _releaseHeld(); broadcastSurface(); }
+}
+// Au changement de KEY ou SCALE : chaque carte recalcule son offre, une tension posée qui
+// n'est plus offerte (candidate disparue, devenue partie du type, ou refusée par le filtre)
+// est retirée et le nom remis. Les NOTES ne sont pas re-réalisées ici — aucun changement de
+// tonalité ne re-réalise la progression aujourd'hui (elles suivent à la prochaine édition) ;
+// ce mécanisme ne change pas ce contrat, il n'élague que les tensions.
+function _tensPrune() {
+	var i, j, changed = false;
+	for (i = 0; i < progression.length; i++) {
+		var p = progression[i]; if (!p.tensions || !p.tensions.length) continue;
+		var spec = _tensBaseSpec(p), keep = [], avant = p.tensions.join(".");
+		if (spec) _tensNormalize(p, spec);
+		// Session 73 (Antoine : « le but c'est d'ajouter des tensions qui restent dans la
+		// couleur diatonique ») : au changement de gamme une tension SUIT SA FAMILLE — la
+		// couleur re-dérive vers la diatonique de la famille (13 → ♭13 en mineur) AVANT le
+		// filtre. La règle #73 « posée hors gamme reste, en creux » ne vaut plus qu'à la
+		// POSE (une couleur off~ posée exprès) — plus à travers un changement de tonalité.
+		if (spec) {
+			var red = [], seen = {};
+			for (j = 0; j < p.tensions.length; j++) {
+				var iv0 = _TENS_BY_NAME[p.tensions[j]];
+				var iv1 = _tensIv(spec, _TENS_FAM[iv0]);
+				var nm = _TENS_COLOR[(iv1 > 0) ? iv1 : iv0];
+				if (!seen[nm]) { seen[nm] = 1; red.push(nm); }
+			}
+			red.sort(function(a, b){ return _TENS_BY_NAME[a] - _TENS_BY_NAME[b]; });
+			p.tensions = red;
+		}
+		for (j = 0; j < p.tensions.length; j++) {
+			var c = spec ? _tensCandidate(spec, p.tensions[j]) : null; if (!c) continue;
+			var built = false, k; for (k = 0; k < spec.pcs.length; k++) if (spec.pcs[k].pc === c.pc) built = true;
+			if (built) continue;
+			if (avoidNotesOn && _tensAvoid(spec, c)) continue;
+			keep.push(p.tensions[j]);
+		}
+		if (keep.join(".") !== avant) { p.tensions = keep; p.name = _tensName(p); changed = true; }
+		else p.tensions = keep;
+	}
+	if (changed) broadcastProg(); else broadcastProgTens();   // la gamme a changé : les marques aussi, même si rien ne bouge (tuple-dev#73)
+}
+// Sur une carte, EXTENDED ne complète les rôles vides qu'avec les tensions OFFERTES : ce que le
+// filtre AVOID NOTES refuse (la ♭9 diatonique d'un mineur, la 11 d'un majeur) n'est pas ajouté par
+// l'enrichissement. Une tension POSÉE par l'utilisateur reste, même refusée depuis. La grille jouée
+// en direct ne passe pas ici. Depuis le 2026-10-22 seule une carte EMPRUNTÉE y passe : EXT n'enrichit plus le diatonique.
+function _tensStripAvoided(spec, entry) {
+	var base = _tensBaseSpec(entry); if (!base) return spec;
+	_tensNormalize(entry, base);
+	var posed = entry.tensions || [], pcs = [], i, j, dropped = false;
+	for (i = 0; i < spec.pcs.length; i++) {
+		var e = spec.pcs[i], keep = true;
+		if (e.role === "ninth" || e.role === "eleventh" || e.role === "thirteenth") {
+			var posee = false;
+			for (j = 0; j < posed.length; j++) { var pc = _tensCandidate(base, posed[j]); if (pc && pc.pc === e.pc) posee = true; }
+			if (!posee) {                                          // ajoutée par l'enrichissement, pas par l'utilisateur
+				var fam = (e.role === "ninth") ? 9 : (e.role === "eleventh") ? 11 : 13;
+				var c = _tensCandidate(base, fam);                  // la diatonique de la famille
+				if (!c || c.pc !== e.pc || _tensAvoid(base, c)) keep = false;
+			}
+		}
+		if (keep) pcs.push(e); else dropped = true;
+	}
+	if (!dropped) return spec;
+	return { pcs: pcs, rootPc: spec.rootPc, fn: spec.fn, degree: spec.degree, scalePcs: spec.scalePcs, hasSeventh: spec.hasSeventh, isDominant: spec.isDominant };
+}
+// Les couleurs posées d'une carte, en noms séparés d'un point (« b9.#9.13 ») — le 8e atome de `prog`.
+function _tensNames(p) {
+	var spec = _tensBaseSpec(p), out = [], i;
+	if (spec) _tensNormalize(p, spec);
+	for (i = 0; i < p.tensions.length; i++) out.push(String(p.tensions[i]));
+	return out.join(".");
+}
+// ⚠️ Les largeurs des trois trames positionnelles sont un CONTRAT avec l'UI, qui lit
+// `flat[i * largeur + k]`. Celle de "prog" était nommée et gardée ; les deux autres étaient
+// implicites — `o.length` d'un côté, un `2` et un `7` littéraux de l'autre. Une largeur qui
+// change décale alors toutes les cartes sauf la première, en silence, et c'est exactement
+// le mode de panne que le commentaire de `broadcastProg` décrit déjà pour "progvoic".
+// Les trois sont épinglées par device/tests/prog-wire-contract.test.mjs.
+var PROGVOIC_STRIDE = 2;   // clé de voicing, libellé affiché
+var PROGTENS_STRIDE = 7;   // ♭9 · 9 · ♯9 · 11 · ♯11 · ♭13 · 13, ordre fixe (tuple-dev#73)
+
+function broadcastProgTens() {
+	var flat = [], i, j;
+	for (i = 0; i < progression.length; i++) {
+		var o = _tensOffer(progression[i]);
+		// Refuser de diffuser une trame qui ne respecte pas sa largeur : l'UI n'a aucun
+		// moyen de s'en apercevoir, elle indexe.
+		if (o.length !== PROGTENS_STRIDE) { post("progtens: " + o.length + " tensions pour " + PROGTENS_STRIDE + " attendues\n"); return; }
+		for (j = 0; j < o.length; j++) flat.push(o[j].state + (o[j].diat ? "" : "~"));   // tuple-dev#73 : ordre fixe ♭9 9 ♯9 11 ♯11 ♭13 13
+	}
+	outlet(7, ["progtens"].concat(flat));
+}
+// Toggle UI : "extended 1/0". Orthogonal au voicing. Colonne Borrowed SEULE depuis le 2026-10-22.
+function extended(v){
+	_releaseHeld();    // libère toute note tenue (comme voiceleading/vlmode) → le toggle ne laisse pas de note coincée
+	extendedOn=(parseInt(v)===1);
+	_vl2_reset();                          // changer de mode = nouvelle réalisation
+	outlet(7,'extended',extendedOn?1:0);   // reflète l'état au bouton EXT
+	broadcastSurface();                    // re-diffuse la surface : la colonne Borrowed change (noms enrichis, pages en contexte), la grille diatonique non
+}
+
+function _vl2_specKey(s) {
+	var r=s.fn+':'+s.degree+':'; for(var i=0;i<s.pcs.length;i++) r+=(i?'.':'')+s.pcs[i].pc; return r;
+}
+
+// --- realizer ---
+var _vl2_ROLE_ORDER=['root','sus','third','fifth','sixth','seventh','ninth','eleventh','thirteenth'];
+function _vl2_vs(a){return a.slice().sort(function(x,y){return x-y;});}
+function _vl2_m(n){return((n%12)+12)%12;}
+// "Trouver le pc-entry d'un rôle donné" était réimplémenté ~15x en boucle inline (closures roleP/role/has,
+// boucles nues) à travers checkIdentity et les transforms de voicing — dédup pure, sortie identique
+// (audit 2026-07-15). Retourne l'entry {pc,role} entière (pas juste .pc) : la plupart des sites l'utilisent
+// telle quelle ou lisent .pc dessus, quelques-uns ont juste besoin d'un test d'existence (!!résultat).
+function _vl2_rolePc(pcs,role){for(var i=0;i<pcs.length;i++)if(pcs[i].role===role)return pcs[i];return null;}
+function _vl2_rotOf(arr){
+	var out=[],r=_vl2_vs(arr);
+	for(var i=0;i<arr.length;i++){out.push(r.slice());r=_vl2_vs(r.slice(1).concat([r[0]+12]));}
+	return out;
+}
+// La BASE SERREE de toute realisation : `classic` la joue telle quelle, `drop2` / `drop3` en
+// descendent une voix, et _vl2_checkIdentity exige d'eux qu'elle le soit (`dropN:base non-close`).
+//
+// ⚠️ Elle empilait les roles dans l'ordre _vl2_ROLE_ORDER — root, 3ce, 5te, 7e, 9e… — c'est-a-dire
+// PAR TIERCES. C'est la position fondamentale, pas la position serree : des la 9e, la tension se
+// pose une octave trop haut et sa propre octave basse tient dans le trou. Mesure du 2026-09-14 :
+// CM9 rendait C2 E2 G2 B2 D3, et re2 s'insere entre do2 et mi2 — position serree sur 62 % des
+// cases en normal, 29 % en EXTENDED. L'ordre correct est celui des HAUTEURS depuis la basse, pas
+// celui des roles : CM9 devient C2 D2 E2 G2 B2. Verifie par device/tests/mesure-close-position.mjs.
+// MODE NEUTRE (`root`) — les notes de l'accord à leur position PAR DÉFAUT, dans l'ordre :
+// fondamentale, 3ce, 5te, 7e, 9e, 11e, 13e (l'ordre de _vl2_ROLE_ORDER), chacune posée au plus
+// bas au-dessus de la précédente. C'est la position fondamentale empilée par tierces, sans aucun
+// stylage — ce que `_vl2_closeFrom` faisait pour TOUT LE MONDE jusqu'au 2026-09-14, à tort pour
+// `classic` (qui doit serrer) et à raison pour ce mode-ci, qui existe pour ne rien faire.
+// Le chemin `vc==='root'` ne produit qu'UN candidat : le sélecteur n'a rien à choisir, donc ni
+// Anchor ni Follow ne peuvent le renverser. Mesuré : avec classic, Anchor déplaçait 88/91 accords
+// hors position fondamentale, Follow 72/91 ; Root, 0/91.
+function _vl2_stackFrom(spec,rootMidi){
+	var ord=spec.pcs.slice().sort(function(a,b){return _vl2_ROLE_ORDER.indexOf(a.role)-_vl2_ROLE_ORDER.indexOf(b.role);});
+	var out=[rootMidi],last=rootMidi;
+	for(var i=1;i<ord.length;i++){var n=last+1;n+=_vl2_m(ord[i].pc-_vl2_m(n));out.push(n);last=n;}
+	return out;
+}
+function _vl2_closeFrom(spec,rootMidi){
+	var bassPc=_vl2_m(rootMidi),seen={},pcs=[],i,pc,n;
+	seen[bassPc]=1;
+	for(i=0;i<spec.pcs.length;i++){pc=_vl2_m(spec.pcs[i].pc);if(seen[pc])continue;seen[pc]=1;pcs.push(pc);}
+	pcs.sort(function(a,b){return _vl2_m(a-bassPc)-_vl2_m(b-bassPc);});
+	var out=[rootMidi],last=rootMidi;
+	for(i=0;i<pcs.length;i++){n=last+1;n+=_vl2_m(pcs[i]-_vl2_m(n));out.push(n);last=n;}
+	return out;
+}
+// QUELLE BASE CHAQUE STYLE HABILLE. Par defaut la position serree de `_vl2_closeFrom` : c'est ce
+// que `Closed` joue tel quel, et ce dont `Section` / `Chord Melody` descendent une voix — leur
+// definition meme. `Two Hands` n'en est pas : il jette la fondamentale, prend le reste comme main
+// droite, et pose la basse une octave sous la note la plus grave de cette main.
+//
+// ⚠️ Il a herite du resserrement du 2026-09-14 par effet de bord, et ca lui coutait une OCTAVE.
+// Mesure du 2026-09-15 (device/tests/mesure-migration-palette.mjs, puis neutralisation de
+// `_vl2_closeFrom` seul) : 35 cellules sur 91 — les cinq familles portant une 9e — translatees
+// rigidement de -12. Basse moyenne F3 -> F2, sommet moyen D5 -> D4, CM9 passant de C3 D4 E4 G4 B4
+// a C2 D3 E3 G3 B3. Cause : le resserrement fait descendre la 9e du sommet de l'accord a juste
+// au-dessus de la fondamentale, donc la main droite commence sur elle, une octave plus bas, et la
+// basse suit. Le plancher C2 etait respecte des deux cotes : rien ne le signalait.
+// `_vl2_stackFrom` est mot pour mot l'ancien `_vl2_closeFrom` — empiler par tierces rend donc a
+// `Two Hands` exactement son registre d'avant, 0 cellule changee sur 91.
+var _vl2_STACK_BASE=new Set(['piano']);
+// Replie une extension qui flotte tout en haut (EXT : la 13e empilée une octave au-dessus → span 2 octaves,
+// injouable d'une main). Voir realizer.js compactFloatingTop. FOLD = voicings SERRÉS uniquement (les
+// open/spread/funk/prog/trance/nuhouse/drop/piano/upper gardent leur déplacement d'octave voulu).
+var _vl2_FLOAT_GAP=5;
+// Le repli CRÉE-t-il une seconde ? On ne regarde que l'intervalle entre la note repliée et
+// celles qui restent : les secondes DÉJÀ présentes dans l'accord (sus2, sus4, six, sixnine,
+// sevensus4 — où la seconde EST le style) ne sont pas concernées et ne sont pas touchées.
+// On ne refuse le repli que s'il colle à la BASSE. Mesuré le 2026-08-12 : une seconde créée
+// contre la note la plus grave est de la boue (add9 -> C-D-E-G, la 9e collée à la fondamentale),
+// alors qu'une seconde créée au MILIEU est une couleur (CM13 EXT -> G-A-B, repli légitime que le
+// mode EXT existe pour rendre jouable d'une main). Refuser les deux ramenait CM13 à 32 demi-tons.
+// Cohérent avec le basso separato : pas de seconde dans la basse, plus haut c'est de la couleur.
+function _vl2_foldMakesSecond(rest,folded){
+	return rest.length ? Math.abs(rest[0]-folded)<=2 : false;
+}
+function _vl2_compactFloatingTop(notes){
+	var r=_vl2_vs(notes),g;
+	for(g=0;g<8&&r.length>=2;g++){
+		var n=r.length;
+		if(r[n-1]-r[n-2]<=_vl2_FLOAT_GAP)break;
+		var folded=r[n-1]-12;
+		if(folded<=r[0]||r.indexOf(folded)!==-1)break;
+		// ⚠️ GARDE-FOU MUSICAL (2026-08-12). Le repli existe pour la jouabilité à une main ;
+		// il ne doit jamais créer un cluster. Sur add9 il n'y a pas de 7e pour combler l'écart :
+		// la 9e flotte à 7 demi-tons au-dessus de la quinte (> FLOAT_GAP), était repliée, et
+		// atterrissait collée à la fondamentale — C-D-E-G, seconde dans le GRAVE. Mesuré sur les
+		// 4 styles de _vl2_FOLD ; open et piano avaient le même défaut vers le haut.
+		// nine n'a jamais été touché parce que sa 7e comble l'écart (3 demi-tons < FLOAT_GAP).
+		if(_vl2_foldMakesSecond(r.slice(0,n-1),folded))break;
+		r=_vl2_vs(r.slice(0,n-1).concat([folded]));
+	}
+	return r;
+}
+var _vl2_FOLD=new Set(['classic','clear']);   // clear = Closed + filtre (tuple-dev#98) : il en hérite tout   // `root` EXCLU : le mode neutre ne replie rien, c'est sa definition (sans voicing)
+var _vl2_T={
+	// Closed = POSITION SERREE, pas l'empilement par tierces. Mesure du 2026-09-14 : l'identite
+	// (`return[c]`) rendait une position serree sur 62 % des cases en normal et 29 % en EXTENDED —
+	// des la 9e, l'empilement laisse un trou (CM9 jouait C2 E2 G2 B2 D3, et re2 s'insere entre
+	// do2 et mi2). Definition appliquee ici : depuis la basse, chaque note de l'accord est posee
+	// AU PLUS BAS au-dessus de la precedente, donc aucune note de l'accord ne peut s'inserer
+	// entre deux voix voisines. Verifie par device/tests/mesure-close-position.mjs.
+	// La basse est conservee telle quelle : c'est elle qui porte le renversement, et _vl2_realize
+	// fait tourner `c` pour les produire.
+	classic:function(c){return[c];},   // la base vient de _vl2_closeFrom, deja en position serree
+	open:function(c){return c.length<2?[c]:[_vl2_vs(c.map(function(n,i){return i===1?n+12:n;}))];},
+	piano:function(c){
+		if(c.length<3)return[c];
+		var rootPc=_vl2_m(c[0]);
+		// Triade : la main droite joue la triade COMPLÈTE, fondamentale doublée (variante C,
+		// tuple-dev#100) ; à deux notes elle sonnait creuse au-dessus de la basse. 7e et 9e
+		// gardent une main droite sans fondamentale.
+		return _vl2_rotOf(c.length===3?c.slice():c.slice(1)).map(function(rh){
+			var lo=Math.min.apply(null,rh),d=_vl2_m(rootPc-_vl2_m(lo-12));if(d>6)d-=12;
+			return[lo-12+d].concat(rh);  // basse ~1 octave sous la MD
+		});
+	},
+	// Clear = Closed + filtre des secondes graves, posé dans la SÉLECTION (_vl2_select) : même
+	// réalisation, mêmes candidats (tuple-dev#98).
+	clear:function(c){return[c];},
+	// Rootless (tuple-dev#95) : l'accord SANS fondamentale — la basse la joue. Formes A (3-5-7-9)
+	// et B (7-9-3-5) candidates d'une même entrée, l'alternance sort du coût de mouvement ;
+	// triade (et accord sans 7e ni 6te) en 3-5-9. 9e absente : la seconde majeure si elle est dans
+	// la gamme de l'accord (spec.scalePcs ; un emprunt n'en a pas : majeure), sinon mineure.
+	// La forme B ne descend pas sous D3 (50 + décalage d'octave). Miroir : realizer.js T.rootless.
+	// Exception nommée à « la tonique reste dans le registre » (CLAUDE.md, Basso separato).
+	rootless:function(c,octShift,spec){
+		var r=function(role){var e=_vl2_rolePc(spec.pcs,role);return e?e.pc:-1;};
+		var t=r('third');if(t<0)t=r('sus');
+		var f=r('fifth'),s=r('seventh');if(s<0)s=r('sixth');
+		var n=r('ninth');if(n<0){var sp=spec.scalePcs,n2=_vl2_m(spec.rootPc+2);n=(!sp||sp.indexOf(n2)>=0)?n2:_vl2_m(spec.rootPc+1);}
+		if(t<0||f<0)return[c];
+		var formes=(s<0)?[[t,f,n]]:[[t,f,s,n],[s,n,t,f]],out=[],i,j;
+		for(i=0;i<formes.length;i++){
+			var fo=formes[i],b=c[0];while(_vl2_m(b)!==fo[0])b++;
+			if(s>=0&&i===1&&b<50+(octShift||0))continue;
+			var o=[b];for(j=1;j<fo.length;j++){var x=o[j-1]+1;while(_vl2_m(x)!==fo[j])x++;o.push(x);}
+			out.push(o);
+		}
+		return out.length?out:[c];
+	},
+	drop2:function(c){var r=_vl2_vs(c);r[r.length-2]-=12;return[_vl2_vs(r)];},
+	drop3:function(c){var r=_vl2_vs(c);r[r.length-3]-=12;return[_vl2_vs(r)];}
+};
+// regBase : plancher de l'octave, TOUJOURS multiple de 12 (48=C3 à oct0, 36=C2 à oct-1…).
+// Conséquence : m(regBase)=0, donc tonicPos = regBase + root (addition directe, pas de modulo).
+// octShift = regBase - 48 (décalage pour le filtre basse et les shape functions).
+function _vl2_realize(spec,voicing,opts){
+	var regBase=(opts&&opts.regBase!=null)?opts.regBase:48;
+	var octShift=regBase-48;
+	var vc=voicing,fallback=null;
+	// Repli DOCUMENTÉ de `Chord Melody` sur une triade : pas de « triade drop 3 » dans les sources,
+	// et le drop 3 littéral à trois voix rend `Two Hands` à l'identique 20/21 — on échangerait un
+	// doublon contre un autre. Il emprunte donc la triade ouverte de `Section` : le contrôle reste
+	// audible (l'accord s'ouvre), ce que le repli sur classic ne faisait pas. tuple-dev#20.
+	if(vc==='drop3'&&spec.pcs.length<4){fallback=vc;vc='drop2';}
+	// drop2 descend à TROIS voix depuis le 2026-08-16 : c'est la triade ouverte. Le seuil était <4,
+	// et il rendait `Section` inerte sur 21 cellules en normal / 14 en EXTENDED (identiques à
+	// `Closed`, mesuré). En dessous de 3 il n'y a plus de « 2e voix depuis le haut » à descendre.
+	if(vc==='drop2'&&spec.pcs.length<3){fallback=fallback||vc;vc='classic';}
+	// classic VL off : position fondamentale (root en basse, empilé au-dessus). VL ON : la boucle générale
+	// génère les renversements et le VL invertit pour lisser — MAIS à froid (1er accord / hover) le sélecteur
+	// VERROUILLE la canonique (= position fondamentale, cf. cold-lock classic dans _vl2_select). Défaut = root, VL peut inverser.
+	// 'root' (chantier 1) emprunte EXACTEMENT ce chemin, mais SANS condition sur opts.rootPos :
+	// c'est ce qui le rend indépendant du voice leading. Un seul candidat -> le sélecteur n'a
+	// rien à choisir, donc ni Anchor ni Follow ne peuvent le renverser. Mesuré : avec classic,
+	// Anchor déplaçait 88/91 accords hors position fondamentale, Follow 72/91 ; Root, 0/91.
+	// C'est la différence entre « un état neutre qu'il faut composer » et « une position nommée ».
+	if(vc==='root'||((vc==='classic'||vc==='clear')&&opts&&opts.rootPos)){
+		var tonicPos=regBase+root;
+		var cr=tonicPos+_vl2_m(spec.rootPc-root);
+		var cn=_vl2_vs((vc==='root'?_vl2_stackFrom:_vl2_closeFrom)(spec,cr)).slice(0,6);
+		if(_vl2_FOLD.has(vc))cn=_vl2_compactFloatingTop(cn);   // 13e flottante (EXT) repliée → jouable 1 main (comme le general loop)
+		if(!_vl2_fitWindow(cn))return[];   // candidat unique (root/classic VL-off) → caler sous 108 plutôt que renvoyer [] muet (finding 1)
+		if(_vl2_checkIdentity(vc,cn,spec).length)return[];
+		return[{notes:cn,voicing:vc,fallback:fallback,canonical:true}];
+	}
+	var rotUp=function(arr){var r=_vl2_vs(arr);r.push(r.shift()+12);return _vl2_vs(r);};
+	var seen=new Set(),out=[],canonTagged=false;
+	// Ces quatre-là ne dépendent QUE de `vc`, invariant sur les trois boucles. Ils étaient
+	// relus à chaque tour : mesuré sur un seul appel, 57 `_vl2_ABSOLUTE.has` (table retirée depuis) et 20
+	// `_vl2_FOLD.has` en classic, 89 et 60 en piano. Et ce ne sont pas des `Set` natifs dans
+	// Max — c'est le polyfill maison, dont `has` concatène `(typeof v)+':'+v` à chaque appel.
+	// `_vl2_T[vc]` était lu dans la boucle `k`, jusqu'à 30 fois pour la même valeur.
+	// Hoists purement mécaniques : aucune des quatre valeurs ne peut changer en cours de route.
+	// isAbs et isFold s'AUTO-ASSIGNAIENT (`isAbs=isAbs, isFold=isFold`). Le hoisting `var` les
+	// rend `undefined` au moment de l'affectation : les deux valaient `undefined` a vie, et les
+	// cinq sites de lecture plus bas prenaient tous la branche falsy. Le commentaire ci-dessus
+	// decrit pourtant l'intention exacte — le hoist des deux `has` hors des trois boucles.
+	//
+	// MESURE de la reparation, 7200 cellules (5 tonalites x 6 styles x 4 types x 6 jeux de
+	// tensions, normal ET EXTENDED, par `_vl2_specFor` donc specs ENRICHIS) :
+	//     isAbs  : `_vl2_ABSOLUTE` est VIDE depuis le retrait des 24 styles -> rien ne change,
+	//              jamais, pour aucun spec.
+	//     isFold : 0 appel a `_vl2_compactFloatingTop` avant, 31 725 apres — et ZERO qui
+	//              modifie les notes. `_vl2_FOLD` ne contient plus que `classic`, dont les
+	//              voicings serres ne peuvent pas etre replies : le pire ecart au sommet est
+	//              de 6 demi-tons (> FLOAT_GAP = 5), mais replier passerait SOUS la
+	//              fondamentale et la garde `folded<=r[0]` sort au premier tour.
+	//     cout   : -1,0 % sur 960 realize — dans le bruit, le repli sort immediatement.
+	//
+	// Donc la reparation est INERTE aujourd'hui. Ce qu'elle repare est l'avenir : `_vl2_FOLD`
+	// etait a MOITIE cable. Remettre un style ouvert dedans faisait replier la branche
+	// `rootPos` (l. ~2621, ecrite correctement) et PAS la boucle generale — deux chemins
+	// divergents pour le meme style, VL off contre VL on.
+	var isStack=_vl2_STACK_BASE.has(vc), isFold=_vl2_FOLD.has(vc);
+	var TF=_vl2_T[vc]||_vl2_T.classic;
+	// Section et Chord Melody : rien ne passe sous regBase quand un candidat tient au-dessus.
+	// Descendre une voix de l'accord serré en position fondamentale tombait sous le plancher de
+	// Closed (Do7M : G2 C3 E3 B3). Chord Melody prend la fondamentale en basse (C3 B3 E4 G4).
+	// Section prend la note la plus grave au-dessus du plancher, HORS fondamentale (E3 B3 C4 G4) :
+	// sa forme à fondamentale en basse est celle d'Open, note pour note, sur 44 cases sur 44.
+	// Choisi à l'oreille par Antoine le 2026-11-05.
+	var isDrop=(vc==='drop2'||vc==='drop3');
+	for(var oct=-2;oct<=2;oct++){
+		var base=48+oct*12,rootMidi=base+_vl2_m(spec.rootPc-_vl2_m(base));
+		var inv=(isStack?_vl2_stackFrom:_vl2_closeFrom)(spec,rootMidi);
+		var nInv=spec.pcs.length;
+		for(var k=0;k<nInv;k++){
+			var shapes=TF(inv,octShift,spec);
+			for(var si=0;si<shapes.length;si++){
+				// (La stabilisation à N voix — option `targetVoices` — est partie le 2026-10-21, session 85 :
+				// aucun des deux appelants ne la passait, la branche n'était jamais prise.)
+				var notes=_vl2_vs(shapes[si]).slice(0,6);
+				if(isFold)notes=_vl2_compactFloatingTop(notes);   // replie l'extension flottante (EXT, voicings serrés) → jouable 1 main
+				// (pas de repli de basse ici — supprimé le 2026-08-13, ticket #16 ; cf. tombstone près de _vl2_FOLD)
+				if(Math.min.apply(null,notes)<24||Math.max.apply(null,notes)>108)continue;
+				if(_vl2_checkIdentity(vc,notes,spec).length)continue;
+				if(_vl2_lowIntervalViolations(notes,octShift).length)continue;
+				var key=notes.join(',');if(seen.has(key))continue;seen.add(key);
+				// forme maison : 1re inversion à base===regBase. Les drops la désignent après la boucle.
+				var canon=(!isDrop&&base===regBase&&k===0&&!canonTagged);if(canon)canonTagged=true;
+				out.push({notes:notes,voicing:vc,fallback:fallback,canonical:canon});
+			}
+			inv=rotUp(inv);
+		}
+	}
+	if(isDrop){
+		var hauts=[],ci=-1,pcRoot=_vl2_m(spec.rootPc),section=(vc==='drop2'&&!fallback);
+		for(var h=0;h<out.length;h++){
+			var nb=out[h].notes[0];
+			if(nb<regBase)continue;
+			hauts.push(out[h]);
+			if(section?(_vl2_m(nb)!==pcRoot&&(ci<0||nb<hauts[ci].notes[0])):(ci<0&&nb===regBase+pcRoot))ci=hauts.length-1;
+		}
+		if(hauts.length){if(ci>=0)hauts[ci].canonical=true;return hauts;}
+	}
+	return out;
+}
+
+// --- selector ---
+var _vl2_W={
+	move:1,leapOver:4,leapFactor:0.7,
+	common:-7,commonPc:-2,
+	soprano:2.2,bass:1.2,bassFreeLeaps:[5,7,12],
+	parallel:10,spacingGap:0.8,countDiff:6,
+	contrary:-1.5,spring:0.04,recall:-6,
+	window:9,knee:25,
+	tendency:-5,chromatic:-3,
+	crossing:12
+};
+var _vl2_W_jazz={
+	move:1,leapOver:4,leapFactor:0.5,
+	common:-7,commonPc:-2,
+	soprano:1.8,bass:1.0,bassFreeLeaps:[],
+	parallel:4,spacingGap:0.8,countDiff:6,
+	contrary:-1.5,spring:0.04,recall:-6,
+	window:9,knee:25,
+	tendency:-5,chromatic:-5,
+	crossing:12,
+	seventhToThird:1   // la 7e de TOUT accord de septième vise la 3ce suivante (cf. _vl2_harmBonus)
+};
+// « Jazz » est le nom HISTORIQUE de ce jeu de poids : le style Jazz a été retiré le 2026-09-14,
+// le réglage ne sert plus qu'à Section (drop2) et Chord Melody (drop3). La liste nommait encore
+// 14 styles retirés jusqu'au 2026-10-21.
+var _vl2_JAZZ_VC={drop2:1,drop3:1};
+function _vl2_pickW(vc){return _vl2_JAZZ_VC[vc]?_vl2_W_jazz:_vl2_W;}
+// prevSorted=true : `prev` est déjà trié (appelant l'a mis en cache — voir _vl2_select) -> saute le tri
+// interne. Défaut false (comportement inchangé) car aussi appelé depuis _sg_fluid avec un `ref` non garanti
+// trié (lastChordNotes/activeNotes) — audit perf 2026-07-15 : évite de retrier l'invariant st.voices à
+// chaque candidat de la boucle chaude de sélection VL.
+function _vl2_movCost(prev,cand,w,prevSorted){
+	if(!w)w=_vl2_W;
+	var a=prevSorted?prev:_vl2_vs(prev),b=_vl2_vs(cand),n=Math.min(a.length,b.length);
+	var tot=Math.abs(a.length-b.length)*w.countDiff;
+	var bObj={},_bi,commons=0;
+	for(_bi=0;_bi<b.length;_bi++) bObj[b[_bi]]=true;
+	for(var i=0;i<a.length;i++) if(bObj[a[i]]){tot+=w.common;commons++;}
+	for(var i=0;i<n;i++){
+		var isTop=i===n-1,isBass=i===0,d=Math.abs(b[i]-a[i]);if(d===0)continue;
+		var wv=w.move*(isTop?w.soprano:isBass?w.bass:1);
+		tot+=d*wv;
+		var freeBass=isBass&&w.bassFreeLeaps.indexOf(d)>=0;
+		if(d>w.leapOver&&!freeBass)tot+=(d-w.leapOver)*w.leapFactor*(isTop?w.soprano:1);
+		if(_vl2_m(a[i])===_vl2_m(b[i]))tot+=w.commonPc;
+	}
+	for(var j=0;j<n-1;j++){
+		var i1=_vl2_m(a[j+1]-a[j]),i2=_vl2_m(b[j+1]-b[j]);
+		if(i1===i2&&(i1===0||i1===7)&&a[j]!==b[j])tot+=w.parallel;
+	}
+	for(var j=1;j<b.length-1;j++) if(b[j+1]-b[j]>12)tot+=(b[j+1]-b[j]-12)*w.spacingGap;
+	if(n>=2){var db=b[0]-a[0],dt=b[n-1]-a[n-1];if(db!==0&&dt!==0&&(db>0)!==(dt>0))tot+=w.contrary;}
+	var crosses=0;
+	for(var ci=0;ci<n-1;ci++){var dir=Math.abs(b[ci]-a[ci])+Math.abs(b[ci+1]-a[ci+1]);var sw=Math.abs(b[ci+1]-a[ci])+Math.abs(b[ci]-a[ci+1]);if(sw<dir)crosses++;}
+	if(crosses)tot+=crosses*w.crossing;
+	return tot;
+}
+// Une VOIX (appariement trié, comme _vl2_movCost) partie de la classe `fromPc` bouge-t-elle de
+// `dmin`..`dmax` demi-tons (signés) — et atterrit-elle sur `toPc` quand il est donné ?
+// Les règles de tendance se testent VOIX PAR VOIX depuis le 2026-10-21. Elles se testaient en
+// classes de hauteur (« la 3ce est dans l'accord suivant ») : vrai pour TOUS les candidats, donc
+// le bonus ne départageait rien. Mesuré : tendency à 0 ne changeait aucune note, ni sur V7→I ni
+// sur la règle étendue avant sa réécriture.
+function _vl2_voixVa(a,b,n,fromPc,toPc,dmin,dmax){
+	for(var i=0;i<n;i++){var d=b[i]-a[i];
+		if(_vl2_m(a[i])===fromPc&&d>=dmin&&d<=dmax&&(toPc<0||_vl2_m(b[i])===toPc))return true;}
+	return false;
+}
+function _vl2_harmBonus(prev,cand,opts,w,prevSorted){
+	var ps=opts.prevSpec,sp=opts.spec;if(!ps||!sp||!prev||!prev.length)return 0;
+	if(!w)w=_vl2_W;
+	var a=prevSorted?prev:_vl2_vs(prev),b=_vl2_vs(cand),n=Math.min(a.length,b.length),bonus=0,chrom=0;
+	var tri7=_vl2_rolePc(ps.pcs,'seventh'),thi=_vl2_rolePc(sp.pcs,'third');
+	var quinte=_vl2_m(ps.rootPc-sp.rootPc)===7;
+	if(ps.isDominant){
+		// Le triton de la dominante se résout : la 3ce monte d'un demi-ton, la 7e descend d'un.
+		var tri3=_vl2_rolePc(ps.pcs,'third');
+		if(tri3&&_vl2_voixVa(a,b,n,tri3.pc,-1,1,1))bonus+=w.tendency;
+		if(tri7&&_vl2_voixVa(a,b,n,tri7.pc,-1,-1,-1))bonus+=w.tendency;
+	}
+	// V7→I, et depuis le 2026-10-21 tout accord de septième par quinte descendante (ii7-V7,
+	// vi7-ii7, Imaj7-IVmaj7) : la 7e descend sur la 3ce suivante. L'extension aux non-dominants
+	// est limitée aux poids « jazz » (Section, Chord Melody) — c'est leur écriture ; Closed,
+	// Open, Two Hands et Default gardent la règle sur la dominante seule. Antoine, 2026-10-21.
+	if(quinte&&tri7&&thi&&(ps.isDominant||w.seventhToThird)&&_vl2_voixVa(a,b,n,tri7.pc,thi.pc,-2,-1))bonus+=w.tendency;
+	for(var i=0;i<n&&chrom<2;i++) if(Math.abs(b[i]-a[i])===1){bonus+=w.chromatic;chrom++;}
+	return bonus;
+}
+// Rugosité perçue d'un accord, Hutchinson & Knopoff (1978), telle que dycon::roughness_hutch la
+// calcule : 11 partiels d'amplitude 1/n, hauteurs arrondies à 1e-6 et FUSIONNÉES quand elles
+// coïncident (sqrt(a²+b²)), puis Σ a_i·a_j·g(f_i,f_j) / Σ a². Réécrite du banc (tools/banc-vl/hp.mjs,
+// tuple-dev#102), à l'ordre de sommation près : l'oracle du lot 1 la compare au bit.
+// `notes` triées. Cache par accord (chaîne des notes), vidé au-delà de 4096 entrées.
+var _vl2_RUG_LOG={};
+for(var _rn=1;_rn<=11;_rn++)_vl2_RUG_LOG[_rn]=12*Math.log(_rn)/Math.LN2;
+var _vl2_rugCache={},_vl2_rugN=0;
+function _vl2_rough(notes){
+	var key=notes.join(',');
+	if(_vl2_rugCache.hasOwnProperty(key))return _vl2_rugCache[key];
+	var pit=[],amp=[],idx={},i,j,n;
+	for(i=0;i<notes.length;i++)for(n=1;n<=11;n++){
+		var k=Math.round((notes[i]+_vl2_RUG_LOG[n])*1e6)/1e6,a=1/n,s=String(k);
+		if(idx.hasOwnProperty(s)){var q=idx[s];amp[q]=Math.sqrt(amp[q]*amp[q]+a*a);}
+		else{idx[s]=pit.length;pit.push(k);amp.push(a);}
+	}
+	var f=[];for(i=0;i<pit.length;i++)f.push(440*Math.pow(2,(pit[i]-69)/12));
+	var num=0,den=0;
+	for(i=0;i<f.length;i++){
+		den+=amp[i]*amp[i];
+		for(j=i+1;j<f.length;j++){
+			var y=Math.abs(f[i]-f[j])/(1.72*Math.pow((f[i]+f[j])/2,0.65));
+			if(y>1.2)continue;
+			var t=(y/0.25)*Math.exp(1-y/0.25);
+			num+=amp[i]*amp[j]*t*t;
+		}
+	}
+	var r=f.length<2?0:num/den;
+	if(++_vl2_rugN>4096){_vl2_rugCache={};_vl2_rugN=1;}
+	_vl2_rugCache[key]=r;
+	return r;
+}
+// Poids de la rugosité dans la SÉLECTION, par style (tuple-dev#102) : 300 pour Closed, choisi à
+// l'écoute en Follow et confirmé en Anchor ; 23 ailleurs — le poids de H&P ramené en demi-tons de
+// mouvement (hutch_78 / vl_dist). Pas dans _vl2_movCost : SMART (_sg_fluid) le partage.
+var _vl2_RUG_W={classic:300,clear:300},_vl2_RUG_DEF=23;   // clear hérite de Closed
+function _vl2_rugW(vc){return _vl2_RUG_W.hasOwnProperty(vc)?_vl2_RUG_W[vc]:_vl2_RUG_DEF;}
+// Quintes et octaves parallèles entre TOUTES les paires de voix (appariement trié, celui de
+// _vl2_movCost), dans la SÉLECTION seulement (tuple-dev#92, #102). Binaire comme dans H&P :
+// au moins une paire, puis la paire basse-soprano, à leur poids relatif ramené en demi-tons de
+// mouvement (any_parallels / vl_dist, outer_parallels / vl_dist). Remplace le terme des voix
+// voisines de _vl2_movCost, que _sg_fluid garde intact. Open garde ce terme voisin : seul style
+// qui régresse au banc (86 → 77 % d'accord avec H&P).
+var _vl2_PAR_ANY=2.48914450280972/0.374935348715094,_vl2_PAR_OUT=2.3226944657203/0.374935348715094;
+var _vl2_PAR_VOISINES={open:1};
+// `r` : le coût harmonique en cours, rendu augmenté (a = précédent trié, b = candidat trié).
+function _vl2_par(a,b,i,j){var i1=_vl2_m(a[j]-a[i]),i2=_vl2_m(b[j]-b[i]);return i1===i2&&(i1===0||i1===7)&&a[i]!==b[i];}
+function _vl2_parAll(r,a,b,w){
+	var k=Math.min(a.length,b.length),i,j;
+	for(j=0;j<k-1;j++)if(_vl2_par(a,b,j,j+1))r-=w.parallel;   // retire le terme voisin compté par _vl2_movCost
+	var any=0;
+	for(i=0;i<k-1&&!any;i++)for(j=i+1;j<k;j++)if(_vl2_par(a,b,i,j)){any=1;break;}
+	var out=(k>=2&&_vl2_par(a,b,0,k-1))?1:0;
+	return r+w.move*(_vl2_PAR_ANY*any+_vl2_PAR_OUT*out);
+}
+var _vl2_st={voices:null,recall:new Map()};
+function _vl2_resetState(){_vl2_st.voices=null;_vl2_st.recall.clear();}
+var _vl2_prevSpec=null;
+function _vl2_reset(){_vl2_resetState();_vl2_prevSpec=null;}
+// Clear (tuple-dev#98) : écarte les candidats qui ont une seconde dans le grave — mineure sous
+// regBase + 7, majeure sous regBase + 5 (G3 / F3 à OCT 0), relatifs à l'octave pour que le style
+// existe à toutes les octaves. Si TOUS en ont une, rend la liste intacte : jamais muet.
+function _vl2_clearFiltre(cands){
+	var rb=_vl2_regBase(),out=[],i,j;
+	for(i=0;i<cands.length;i++){
+		var s=_vl2_vs(cands[i].notes),ok=true;
+		for(j=0;j<s.length-1&&ok;j++){var iv=s[j+1]-s[j];if((iv===1&&s[j]<rb+7)||(iv===2&&s[j]<rb+5))ok=false;}
+		if(ok)out.push(cands[i]);
+	}
+	return out.length?out:cands;
+}
+function _vl2_select(cands,opts){
+	var st=_vl2_st,mode=opts.mode,center=opts.center,key=opts.key;
+	var w=_vl2_pickW(opts.voicing||''),rugW=_vl2_rugW(opts.voicing||''),parVois=_vl2_PAR_VOISINES.hasOwnProperty(opts.voicing||'');
+	var mean=function(ns){var s=0;for(var i=0;i<ns.length;i++)s+=ns[i];return s/ns.length;};
+	var same=function(a,b){if(a.length!==b.length)return false;for(var i=0;i<a.length;i++)if(a[i]!==b[i])return false;return true;};
+	if(mode==='anchor'&&st.recall.has(key)){var nn=st.recall.get(key).slice();st.voices=nn.slice();return nn;}
+	if(opts.voicing==='clear')cands=_vl2_clearFiltre(cands);
+	var first=st.voices===null,best=null,bestC=Infinity;
+	// st.voices est invariant sur toute la boucle candidats -> trié UNE fois ici plutôt que 2x par
+	// candidat dans movCost+harmBonus (audit perf 2026-07-15). c.notes (varie par candidat) reste
+	// trié à l'intérieur de chaque fonction, inchangé.
+	var stSorted=first?null:_vl2_vs(st.voices);
+	for(var ci=0;ci<cands.length;ci++){
+		var c=cands[ci],cost;
+		// ABSOLUTE (registre fixe) : à froid on VERROUILLE la forme canonique signature (sinon la proximité-centre choisirait une rotation/octave secondaire et casserait l'identité). Les candidats ne servent qu'au VL chaud.
+		// À FROID, la forme MAISON du style gagne toujours. Le verrou canonique ne valait avant
+		// que pour les ABSOLUTE et pour classic ; partout ailleurs la canonique n'avait qu'une
+		// avance de 3 points, que la distance au centre écrasait — open/spread/drop2/drop3/
+		// rootless* partaient donc se recentrer sur 60 au lieu de jouer leur forme. Un « drop 2 »
+		// qui ne sonne pas comme un drop 2 n'est pas un drop 2 : choisir un style DOIT donner sa
+		// forme, et c'est au voice leading — et à lui seul — de bouger les notes ensuite.
+		// Mesuré : 118 cas sur 672 changent, tous dans open/spread/drop2/drop3/rootless*.
+		// classic et les ABSOLUTE sont inchangés (ils verrouillaient déjà).
+		if(first){cost=(c.canonical?-1000:3)+Math.abs(mean(c.notes)-center);}   // le VL chaud peut ensuite inverser
+		else{
+			var cs=_vl2_vs(c.notes),hb=_vl2_harmBonus(stSorted,c.notes,opts,w,true)+rugW*_vl2_rough(cs);
+			if(!parVois)hb=_vl2_parAll(hb,stSorted,cs,w);
+			cost=_vl2_movCost(stSorted,c.notes,w,true)+hb;
+			if(mode==='flow'){
+				var dev=Math.abs(mean(c.notes)-center);
+				cost+=w.spring*dev*dev;
+				// soft knee : au-delà de la fenêtre, freinage QUADRATIQUE (raccord en pente
+				// nulle à dev=window -> pas d'à-coup, et plus ferme à mesure qu'on s'éloigne).
+				if(dev>w.window){var ov=dev-w.window;cost+=w.knee*ov*ov;}
+				var rc=st.recall.get(key);
+				if(rc&&same(rc,c.notes))cost+=w.recall;
+			}
+		}
+		if(cost<bestC){bestC=cost;best=c;}
+	}
+	// best reste null si AUCUN candidat n'a marqué un coût fini (tout NaN/Infinity — arrive dès
+	// qu'une config pousse les notes hors 0..127 : la moyenne d'un tableau vide vaut NaN, et
+	// NaN<Infinity est faux). Sans ce garde-fou on déréférence null : l'exception remonte
+	// jusqu'à midinote() et AVORTE la note, touche après touche — le clavier a l'air mort.
+	// On retombe sur le 1er candidat (miroir de site/vl2/selector.js) ; s'il est vide,
+	// sendChord voit un v2 vide et applique son filet de secours applyVoicing().
+	if(!best)best=cands[0];
+	// Un candidat SANS notes ne doit RIEN commiter : st.voices=[] n'est pas `null`, donc le
+	// prochain appel ne repart pas "à froid" et recalcule des coûts NaN — l'état dégradé
+	// s'auto-entretient même une fois la config revenue à la normale. Pire, en mode anchor
+	// st.recall rendrait cet accord vide À VIE (relecture en tête de fonction). On repart
+	// froid et on laisse sendChord appliquer son filet de secours applyVoicing().
+	if(!best||!best.notes||!best.notes.length){ st.voices=null; return []; }
+	st.voices=best.notes.slice();
+	if(st.recall.size>64)st.recall.delete(st.recall.keys().next().value);
+	st.recall.set(key,best.notes.slice());
+	return best.notes;
+}
+
+// --- façade vl2 ---
+// Clone superficiel du recall (les notes mémorisées sont des slices que _vl2_select ne
+// mute pas — l'alias de valeur est sûr). Surface polyfill Map suffisante : keys()/next
+// + get + set, rien d'autre (voir l'en-tête du fichier).
+function _vl2_recallClone(m){
+	var out=new Map(),it=m.keys(),n=it.next();
+	while(!n.done){out.set(n.value,m.get(n.value));n=it.next();}
+	return out;
+}
+// UN SEUL CORPS pour le jeu ET l'aperçu (fusion 2026-08-20). L'aperçu (hover / audition
+// d'option) doit montrer EXACTEMENT ce que le clic jouerait — « l'affichage hover == le
+// jeu » — et deux corps parallèles ne tiennent pas ce contrat : ils dérivent en silence
+// (audit 2026-08-20, avant le clone du recall : Anchor chaud divergeait sur 7/10 voicings,
+// Flow chaud sur 3/10). Un seul chemin ici, et un drapeau `opts.preview` qui ne change QUE
+// l'isolation de l'état VL — le calcul (spec, realize, centre, clé, mode) est partagé.
+// Mapping mode v1 → v2 : "anchored"→"anchor" · "relative"→"flow" · "piano"→ voicing piano + flow
+//
+// Les quatre chemins (jeu/aperçu × chaud/froid) restent identiques à ce qu'ils étaient
+// avant la fusion — équivalences vérifiées ligne à ligne le 2026-08-20 :
+//   • prevSpec : l'ancien play passait _vl2_prevSpec INCONDITIONNELLEMENT, mais à froid il
+//     sortait de _vl2_reset() qui le met à null — donc (warm?_vl2_prevSpec:null) rend la
+//     même valeur sur les quatre chemins.
+//   • mode à froid unifié sur 'anchor' (l'aperçu disait 'flow') : mort dans les deux cas.
+//     Le rejeu anchor en tête de _vl2_select exige un recall NON VIDE (jeu froid : le reset
+//     l'a vidé ; aperçu froid : Map neuve), et la branche `first` (st.voices===null des deux
+//     côtés à froid) ne lit pas `mode`. Épinglé par les tests « à froid » de
+//     device/tests/preview-parite-jeu.test.mjs.
+//   • rejeu anchor à chaud en aperçu : son écriture st.voices=nn.slice() atterrit sur
+//     l'objet LOCAL et part au finally — le comportement du fix session 64 est conservé.
+//   • le jeu réel commet _vl2_prevSpec=spec inconditionnellement, comme avant (y compris à
+//     froid, où c'est invisible : tout chemin suivant re-reset).
+//   • rootPos:!warm === l'ancien !voiceLeadingEnabled, écrit à l'identique des deux côtés.
+// RÉALISER, PUIS PRÉPARER LA SÉLECTION — un seul corps pour les deux appelants.
+//
+// `_vl2_play` (le jeu et l'aperçu) et `_revoiceEntryWith` (une carte de progression)
+// faisaient ces quatre pas chacun de leur côté, à cent lignes d'écart : le plancher
+// d'octave, la réalisation, le centre de sélection, et la CLÉ DE RECALL.
+//
+// ⚠️ C'EST LA CLÉ QUI COMPTE. `_vl2_select` mémorise ses choix sous `specKey|voicing|centre` ;
+// une clé bâtie autrement d'un côté ne fait pas planter le recall, elle le fait MANQUER —
+// le même accord ressort ailleurs selon le chemin qui l'a demandé, sans une erreur. Le
+// dépôt a déjà payé cette classe de défaut : hover ≠ clic sur 7 voicings sur 10 en Anchor,
+// du 2026-06-23 au 2026-08-20, parce que l'aperçu partait d'un recall VIDE.
+//
+// Rend `null` quand la réalisation ne produit aucun candidat — les deux appelants
+// traitaient déjà ce cas en rendant `null` à leur tour.
+function _vl2_prepare(spec, vc, rootPos) {
+	var regBase = _vl2_regBase();
+	var cands = _vl2_realize(spec, vc, { regBase: regBase, rootPos: rootPos });
+	if (!cands.length) return null;
+	// SOURCE UNIQUE du centre (poche pour ABSOLUTE) — le même que `_sg_fluid`, sans quoi la
+	// heat-map VL peindrait un classement que le playback ne joue pas.
+	var selCtr = _vl2_selCtr(cands);
+	return {
+		cands: cands,
+		selCtr: selCtr,
+		key: _vl2_specKey(spec) + '|' + vc + '|' + selCtr
+	};
+}
+function _vl2_play(fn,d,colorSemis,colorType,opts){
+	opts=opts||{};
+	var preview=!!opts.preview;
+	var spec=_vl2_specFor(fn,d,colorSemis,colorType);   // pipeline de spec unique (build + EXT)
+	if(!spec)return null;
+	// opts.voicing (aperçu seulement) : réalise sur un style TEMPORAIRE sans toucher le
+	// voicing global — remplace l'échange sauvegarde/restauration de _realizeOption.
+	// Sûr : les seuls consommateurs de vc dans ce chemin sont _vl2_realize et la clé du
+	// recall ; _vl2_specFor ne lit pas currentVoicing (vérifié le 2026-08-20).
+	var vc=(preview&&opts.voicing)?String(opts.voicing):currentVoicing;
+	var warm=voiceLeadingEnabled;
+	var mode='anchor';
+	if(warm)mode=(vlMode==='anchored')?'anchor':'flow';
+	else if(!preview)_vl2_reset();   // VL OFF, jeu réel : pas de mémoire de mouvement -> chaque accord au plus proche du centre. L'aperçu, lui, n'efface RIEN (isolation).
+	// regBase : plancher de l'octave (multiple de 12, invariant).
+	// selCtr  : tonique pour classic (ancrage harmonique), C-ancré pour les autres voicings.
+	var prep=_vl2_prepare(spec,vc,!warm);
+	if(!prep)return null;
+	var cands=prep.cands;
+	var selOpts={mode:mode,center:prep.selCtr,key:prep.key,voicing:vc,spec:spec,prevSpec:(warm?_vl2_prevSpec:null)};
+	if(preview){
+		var savedSt=_vl2_st;                                               // snapshot l'état VL
+		// Recall CLONÉ, pas vidé : le jeu LIT ses entrées mémorisées (hit anchor, bonus flow
+		// de _vl2_select) — l'aperçu doit les lire aussi, sinon hover ≠ clic (audit
+		// 2026-08-20 : divergent 7/10 voicings en Anchor chaud, 3/10 en Flow). Les ÉCRITURES
+		// restent jetables : l'aperçu ne fige toujours pas l'anchor du jeu. Même idiome
+		// d'isolation que _revoiceEntry : objet local, restore de la RÉFÉRENCE en finally.
+		_vl2_st=warm?{voices:savedSt.voices,recall:_vl2_recallClone(savedSt.recall)}
+		            :{voices:null,recall:new Map()};                       // VL off : froid, comme le _vl2_reset du jeu ci-dessus
+		try{return _vl2_select(cands,selOpts);}
+		finally{_vl2_st=savedSt;}                                          // restore MÊME si _vl2_select lève (même règle que _revoiceEntry)
+	}
+	var notes=_vl2_select(cands,selOpts);
+	_vl2_prevSpec=spec;
+	return notes;
+}
+// Aperçu (hover) : le MÊME corps, en isolation — pas de second chemin à tenir en phase.
+function _vl2_previewNotes(fn,d,colorSemis,colorType){return _vl2_play(fn,d,colorSemis,colorType,{preview:true});}
+// =====================================================
+// VALIDATION D'UN NOM DE STYLE — la frontière que tout style franchit.
+// Le choix automatique de style (V-auto : scoring, catégories, sentinel "auto") a été
+// SUPPRIMÉ le 2026-08-11. Ne rien remettre ici qui choisisse à la place de l'utilisateur :
+// mesuré avant le retrait, « auto » libre ne rendait que 4 styles sur 28, et chaque clé de
+// catégorie rendait un seul et même membre sur 42/42 cases — 13 des 16 styles proposés
+// étaient donc inatteignables. Un style vient maintenant TOUJOURS d'un geste explicite.
+// =====================================================
+// Un nom de style est-il RÉEL ? _vl2_realize fait `_vl2_T[vc] || _vl2_T.classic` : un nom
+// inconnu retombe SILENCIEUSEMENT sur classic tout en s'affichant tel quel sur la carte.
+// Toute valeur venant de l'UI (message progvoicing) passe donc d'abord par ici.
+// indexOf sur le tableau, pas une table d'objet : un objet nu hérite d'Object.prototype, et
+// "constructor" ou "toString" y passaient pour des styles valides.
+function _isVoicingName(v) { return SPACING_NAMES.indexOf(String(v)) >= 0; }
+
+// Renversement d'un voicing DÉJÀ réalisé : monte les `inv` notes les plus graves d'une
+// octave puis re-trie. Vraie inversion type accord slash (seule la basse change), pas un
+// re-voicing — le caractère du voicing capturé est préservé.
+// PUR (ne mute pas `base`). inv=0 = no-op STRICT, ordre préservé : sans ça, toutes les
+// entrées de progression non inversées verraient leur ordre de notes changer, donc
+// l'affectation des voix dans _emitNotes.
+// MIROIR EXACT de site/vl2/invert.js — la parité est tenue par
+// device/tests/progression-inversion.test.mjs, qui confronte les deux sur la même matrice.
+var _INV_LO = 24, _INV_HI = 108;   // fenêtre du réalisateur
+function _invertVoicing(base, inv) {
+	if (!base || !base.length) return [];
+	var n = base.length, i;
+	inv = parseInt(inv); if (isNaN(inv)) inv = 0;
+	inv = ((inv % n) + n) % n;
+	if (!inv) return base.slice();
+	var out = base.slice().sort(function (a, b) { return a - b; });
+	for (i = 0; i < inv; i++) out[i] += 12;
+	out.sort(function (a, b) { return a - b; });
+	// Repli tant que le sommet dépasse le plafond ET qu'on peut descendre sans passer sous
+	// le plancher. Le repli peut être REFUSÉ (accord plus large que la fenêtre) : on rend
+	// alors le renversement là où la montée l'a laissé — le geste doit avoir un effet.
+	while (out[n - 1] > _INV_HI && out[0] - 12 >= _INV_LO) for (i = 0; i < n; i++) out[i] -= 12;
+	// Filet MIDI dur. INATTEIGNABLE avec une base valide (voir le commentaire du miroir) ;
+	// gardé pour borner la fonction, pas parce qu'un cas connu l'atteint.
+	if (out[0] < 0 || out[n - 1] > 127) return base.slice();
+	return out;
+}
+
+// Le style est lu sur la carte elle-même : `entry.voicing` porte TOUJOURS un nom concret
+// depuis le retrait du choix automatique. Le paramètre `styleOverride` de la tranche V a
+// disparu avec lui — il n'existait que pour injecter le style résolu par le scoring.
+// La garde reste : _vl2_realize fait `_vl2_T[vc] || _vl2_T.classic`, donc un nom de style
+// inconnu retombe SILENCIEUSEMENT sur la transformée classic et rendrait un accord
+// plausible mais FAUX, sans une seule erreur (design.md §9). On refuse bruyamment.
+// tuple-dev#68 : on réalise d'abord AVEC les tensions dans le spec. Si le style n'y arrive pas
+// (aucun candidat, ou verrou d'identité qui rejette — il ne sait que rejeter), on réalise le
+// spec nu et la tension est marquée « muted ». Une carte ne devient jamais muette parce
+// qu'on lui a demandé une couleur.
+function _revoiceEntry(entry, prevEntry) {
+	if (!entry) return null;
+	// 2026-09-11 (Antoine : « l'écriture des tensions semble changer la structure de l'accord ») : la BASE se réalise
+	// sans ses tensions — mêmes notes, même renversement qu'avant la pose — puis les tensions s'EMPILENT au-dessus du
+	// sommet (structure supérieure). Avant, le spec enrichi repassait par _vl2_realize : C + 9 sortait renversé,
+	// G + 13 mettait la 13 à la basse, Dm + 11 faisait un cluster.
+	var base = _revoiceEntryWith(entry, prevEntry);
+	// OCTAVE PAR CARTE (2026-09-18) : le décalage s'applique sur la BASE, avant l'empilement
+	// des tensions (elles suivent le sommet décalé) et avant l'écriture de notesBase (la
+	// carte suivante suit la position réellement entendue). Toute re-réalisation repasse
+	// ici : l'octave survit au rekey, au changement de style, au re-voice all.
+	if (base && entry.oct) {
+		var _ok, _od = (parseInt(entry.oct) || 0) * 12;
+		for (_ok = 0; _ok < base.length; _ok++) base[_ok] += _od;
+	}
+	entry.notesBase = base;   // la base seule : c'est elle qui conduit les voix de la carte suivante, pas la structure supérieure
+	return _tensStack(base, entry);
+}
+// Empile les tensions d'une carte au-dessus de ses notes : chacune à la position la plus proche STRICTEMENT au-dessus
+// du sommet courant, dans l'ordre des couleurs (♭9 … 13). Une tension déjà dans l'accord (construite) ne s'ajoute pas ;
+// une couleur que la gamme ne donne pas est dite muette. Ne touche jamais aux notes de la base.
+function _tensStack(notes, entry) {
+	entry.tensMuted = [];
+	if (!notes || !notes.length || !entry.tensions || !entry.tensions.length) return notes;
+	var out = notes.slice(), i, j, base = _tensBaseSpec(entry);
+	if (!base) return out;
+	_tensNormalize(entry, base);
+	var names = entry.tensions.slice().sort(function(a, b){ return _TENS_BY_NAME[a] - _TENS_BY_NAME[b]; });
+	for (i = 0; i < names.length; i++) {
+		var c = _tensCandidate(base, names[i]);
+		if (!c) { entry.tensMuted.push(names[i]); continue; }
+		var present = false; for (j = 0; j < out.length; j++) if (_vl2_m(out[j]) === c.pc) present = true;
+		if (present) continue;
+		var top = Math.max.apply(null, out), d = (c.pc - _vl2_m(top) + 12) % 12; if (d === 0) d = 12;
+		out.push(top + d);
+	}
+	return out;
+}
+// Re-réalise les notes d'UNE entrée de progression selon son (fn,deg,colorSemis,
+// colorType,voicing,vlMode), en isolation TOTALE de l'état VL live (_vl2_st /
+// _vl2_prevSpec) — sinon re-voicer une carte de progression casserait le
+// prochain accord joué sur la grille (cross-review 2026-07-20).
+// prevEntry = l'entrée PRÉCÉDENTE de la progression (ou null si idx===0 / hors
+// contexte) — sert de "prevSpec" local pour le lissage vlMode==="follow".
+// Ne modifie PAS l'entrée passée ; retourne le tableau de notes ou null.
+function _revoiceEntryWith(entry, prevEntry) {
+	var spec = _vl2_specFor(entry.fn, entry.deg, entry.colorSemis, entry.colorType);
+	if (spec && extendedOn && avoidNotesOn && entry.fn === "color") spec = _tensStripAvoided(spec, entry);   // carte EMPRUNTÉE sous EXT : ne complète qu'avec l'offre (tuple-dev#68) ; une carte diatonique n'est plus enrichie (2026-10-22)
+	if (!spec) return null;
+	var vc = entry.voicing || currentVoicing;
+	// On refuse TOUT ce qui n'est pas un nom de voicing réel. Valider par appartenance à
+	// SPACING_NAMES ferme la classe entière plutôt qu'un cas à la fois : c'est ce qui a
+	// rattrapé les jetons de catégorie quand la tranche V avait élargi le domaine de
+	// entry.voicing sans toucher à la garde.
+	if (!_isVoicingName(vc)) {
+		post("tuple: _revoiceEntry a recu '" + vc + "' qui n'est pas un style\n");
+		return null;
+	}
+	// ⚠️ DEUX CHOSES S'APPELLENT vlMode. La GLOBALE vaut "anchored"|"flow" (le contrôle
+	// VOICE LEADING) ; CE champ-ci est l'axe INVERSION/REGISTRE d'une carte et vaut
+	// "follow"|"pinned" depuis le 2026-08-11 (il disait "auto"|"lock"). Ne pas les confondre :
+	// une comparaison avec "flow" ou "anchored" ici ne serait jamais vraie, en silence.
+	var rootPos = (entry.vlMode !== "follow");   // pinned (ou tout mode futur ≠ follow) : position canonique, pas de lissage
+	var prep = _vl2_prepare(spec, vc, rootPos);
+	if (!prep) return null;
+	var cands = prep.cands;
+	var prevSpec = null;
+	if (entry.vlMode === "follow" && prevEntry) {
+		prevSpec = _vl2_specFor(prevEntry.fn, prevEntry.deg, prevEntry.colorSemis, prevEntry.colorType);
+	}
+	var mode = (entry.vlMode === "follow" && prevSpec) ? "flow" : "anchor";
+	// État VL LOCAL — jamais _vl2_st global. Seedé avec les notes de l'entrée
+	// précédente quand follow+prevEntry existent, sinon null (anchor, pas de lissage) :
+	// sans ce seed, select() voit toujours st.voices===null (first=true) et le
+	// lissage/harmonicBonus/flow (selector.js branche "else") ne s'exécute JAMAIS —
+	// bug trouvé par le bench Tâche 4 (_f0_revoice_bench.mjs), confirmé sur
+	// site/vl2/selector.js:120-158.
+	// La carte précédente conduit par sa BASE (`notesBase`, sans ses tensions empilées) : poser une 9 sur une carte ne
+	// doit pas reformer la suivante (2026-09-11). `notes` reste le repli des cartes d'avant cette règle.
+	var prevNotes = prevEntry && ((prevEntry.notesBase && prevEntry.notesBase.length) ? prevEntry.notesBase : prevEntry.notes);
+	var seedVoices = (entry.vlMode === "follow" && prevNotes && prevNotes.length) ? prevNotes.slice() : null;
+	var localSt = { voices: seedVoices, recall: new Map() };
+	var savedSt = _vl2_st;   // filet supplémentaire : si _vl2_select touchait _vl2_st par accident
+	_vl2_st = localSt;
+	var notes;
+	try {
+		notes = _vl2_select(cands, { mode: mode, center: prep.selCtr, key: prep.key, voicing: vc, spec: spec, prevSpec: prevSpec });
+	} finally {
+		_vl2_st = savedSt;   // restore inconditionnel (même si _vl2_select lève)
+	}
+	// Tranche I : le renversement s'applique EN SORTIE, sur le voicing déjà réalisé — c'est
+	// le point UNIQUE d'application. La cascade (_recascadeFrom), la tranche V (style
+	// per-accord) et la tranche M (clip live-sync) en héritent sans une ligne de plus, et
+	// l'ordre est le bon : on renverse la forme du style RÉSOLU, pas celle d'un style par
+	// défaut. inv=0 = no-op strict, donc aucune entrée non inversée ne bouge.
+	// Les tensions ne passent plus par ici (2026-09-11) : _revoiceEntry réalise la base puis les empile (_tensStack).
+	return (notes && notes.length && entry.inv) ? _invertVoicing(notes, entry.inv) : notes;
+}
+
+// Re-réalise progression[idx] PUIS propage aux entrées SUIVANTES tant qu'elles
+// sont en vlMode "follow" (elles dépendent du prevSpec de la précédente, qui vient
+// de changer). S'arrête à la première entrée "pinned" (figée, on ne la touche pas)
+// ou à la fin de la progression. Mute progression[] EN PLACE. Ne broadcast pas.
+function _recascadeFrom(idx) {
+	if (idx < 0 || idx >= progression.length) return;
+	// Plus aucune résolution de style ici : la carte porte son nom concret depuis la
+	// capture, il n'y a donc plus rien à choisir ni à mémoïser (le memo de formes servait
+	// au scoring, qui réalisait 16 styles par carte).
+	var i, prev, notes, style;
+	for (i = idx; i < progression.length; i++) {
+		// Garde AVANT toute mutation : la carte épinglée frontière arrête la cascade
+		// SANS être re-réalisée. Elle était en fin de boucle jusqu'au 2026-08-20 : la
+		// frontière était re-voicée PUIS le break tombait — si le registre global avait
+		// changé entre l'épinglage et la cascade (octave), elle sautait d'une octave
+		// pendant que l'épinglée suivante restait en place.
+		if (i > idx && progression[i].vlMode !== "follow") break;
+		prev = (i > 0) ? progression[i - 1] : null;
+		style = progression[i].voicing;
+		notes = _revoiceEntry(progression[i], prev);
+		// voicingResolved n'est écrit QU'EN CAS DE SUCCÈS : l'écrire d'avance laissait,
+		// quand _revoiceEntry rend null (spec introuvable), une carte annonçant un style
+		// que ses notes — restées les anciennes — ne jouent pas. Un champ dérivé qui ment
+		// sur ce qu'on entend est pire que pas de champ du tout.
+		if (notes) progression[i].voicingResolved = style;
+		if (notes) progression[i].notes = notes;
+	}
+	_clipSyncDirty();   // live-sync : un re-voicing change les NOTES sans changer la structure — et ne
+	                    // passe pas par broadcastProg. Sans ce hook, le clip garderait l'ancien voicing.
+}
+
+function preview(fn,d){
+	var notes=_vl2_previewNotes(String(fn),parseInt(d),0,'');
+	if(notes&&notes.length)outlet(7,['previewnotes'].concat(notes));
+}
+function previewcolor(semis,type){
+	var notes=_vl2_previewNotes('color',0,parseInt(semis),String(type));
+	if(notes&&notes.length)outlet(7,['previewnotes'].concat(notes));
+}
+
+// =====================================================
+
+// Distribution triangulaire centrée sur 0, plage [-1,1] (somme de 2 uniformes).
+// Plus musical qu'une uniforme : les petites variations dominent, les extrêmes rares.
+function _bell() { return Math.random() + Math.random() - 1; }
+
+function humanizeVel(v) {
+	v = Math.max(1, Math.min(127, Math.round(v)));   // clamp toujours (la rampe peut dépasser 127)
+	if (!humanizeAmt) return v;
+	var spread = humanizeAmt * 0.55;           // 100% → ±55
+	var off = Math.round(_bell() * spread);
+	return Math.max(1, Math.min(127, v + off));
+}
+
+// FILTRE DE VÉLOCITÉ (tuple-dev#38, arbitré le 2026-09-15 : CLAMP, pas rescale).
+// Ce qui dépasse la plage revient au bord ; le MILIEU sort exact. Le rescale, qui remapperait
+// 0..127 dans la plage, a été écarté : aucune frappe ne sortirait à sa valeur, et il faudrait
+// frapper 127 pour atteindre le max — au Push, c'est tout le jeu qui se tasse.
+//
+// ⚠️ DERNIER DE LA CHAÎNE, et ce n'est pas un goût. Humanize disperse de ±55 à 100 % et la
+// rampe de strum module de ±50 % : placé avant eux, le filtre serait re-dépassé et ne bornerait
+// plus rien. Il s'applique donc APRÈS `humanizeVel`, au jeu comme à l'écriture de clip.
+//
+// ⚠️ ZÉRO N'EST PAS UNE VÉLOCITÉ, C'EST UN NOTE-OFF. Le remonter à `velMin` laisserait toutes
+// les notes coincées — le mode de panne le plus cher du device. `_velPlage` le laisse passer,
+// et un test l'épingle.
+//
+// Défaut 1..127 : inactif. Tout autre défaut changerait le son des sets déjà sauvegardés.
+var velMin = 1, velMax = 127;
+_ccLast[CC_VEL_MIN] = _ccQuant(velMin);   // amorçage APRÈS la déclaration — voir le bloc d'amorçage des CC
+_ccLast[CC_VEL_MAX] = _ccQuant(velMax);
+function _velPlage(v) {
+	if (!(v > 0)) return 0;                       // note-off : intouchable
+	if (v < velMin) return velMin;
+	if (v > velMax) return velMax;
+	return v;
+}
+// UNE SEULE PORTE DE SORTIE pour la vélocité. `_emitNotes` a DEUX chemins — un rapide quand ni
+// strum ni humanize n'est armé, un autre à Tasks — et poser le filtre sur le second seulement
+// l'a rendu invisible dans le cas le plus courant : tout à zéro, la plage ne bornait rien.
+// Attrapé par le test du 2026-09-15, pas par la relecture. Passer par ici empêche un troisième
+// chemin d'oublier le filtre, et le note-off traverse intact (`_velPlage(0) === 0`).
+function _emitVel(v) { outlet(0, _velPlage(v)); }
+// Les deux bornes se poussent l'une l'autre plutôt que de se croiser : croiser rendrait la
+// plage vide, donc le device muet, sans rien dire. Une valeur HORS 1..127 est un appelant
+// fautif : refus bruyant, comme les autres réglages d'expression.
+function velmin(v) {
+	var n = parseInt(v);
+	if (!(n >= 1) || !(n <= 127)) { post("velmin: valeur invalide '" + v + "'" + String.fromCharCode(10)); return; }
+	velMin = n; if (velMax < velMin) velMax = velMin;
+	outlet(7, "velmin", velMin); outlet(7, "velmax", velMax);
+	_cc(CC_VEL_MIN, velMin);
+	_clipSyncDirty();
+}
+function velmax(v) {
+	var n = parseInt(v);
+	if (!(n >= 1) || !(n <= 127)) { post("velmax: valeur invalide '" + v + "'" + String.fromCharCode(10)); return; }
+	velMax = n; if (velMin > velMax) velMin = velMax;
+	outlet(7, "velmin", velMin); outlet(7, "velmax", velMax);
+	_cc(CC_VEL_MAX, velMax);
+	_clipSyncDirty();
+}
+
+// Décalage de timing en ms (humanize). 100% → ±60ms environ.
+function humanizeTime() {
+	if (!humanizeAmt) return 0;
+	return _bell() * (humanizeAmt / 100 * 60);
+}
+
+function _cancelEmit() {
+	for (var ci = 0; ci < _emitTasks.length; ci++) {
+		try { _emitTasks[ci].cancel(); } catch(e) {}
+	}
+	_emitTasks = [];
+}
+
+// Émet les notes avec strum (espacement courbé) et/ou humanize (vélocité + timing).
+// Chemin rapide (tout à 0) si ni strum ni humanize → aucun Task créé.
+function _emitNotes(notes) {
+	var n = notes.length;
+	var mag = Math.abs(_strumMs);
+	var strum = mag > 0 && n > 1;
+	if (!strum && !humanizeAmt) {
+		_emitVel(currentVelocity);
+		for (var i = 0; i < n && i < 6; i++) outlet(i + 1, notes[i]);
+		return;
+	}
+	var rank = _strumRank(notes);
+
+	var up = _strumMs >= 0;                      // sens : >0 grave→aigu, <0 aigu→grave
+	var T = strum ? (n - 1) * mag : 0;           // durée nominale du strum
+	var p = STRUM_CURVE_P[strumCurve] || 1.0;
+	for (var k = 0; k < n && k < 6; k++) {
+		(function(idx, note) {
+			// seq = position dans la SÉQUENCE de jeu (0 = 1ère note jouée), selon le sens.
+			var seq = strum ? _strumSeq(rank, idx, n, up) : 0;
+			var base = strum ? T * _strumFrac(seq, n, p) : 0;
+			var off = base + humanizeTime();
+			if (off < 0) off = 0;
+			// Rampe de vélocité le long de la séquence : pos 0..1, facteur 1±0.5·ramp.
+			var v = currentVelocity;
+			if (strum && strumRamp) v = currentVelocity * _strumRampFactor(seq, n, strumRamp);
+			var nv = humanizeVel(Math.round(v));   // le filtre s'applique dans `_emitVel`, DERNIER (#38)
+			if (off < 0.5) { _emitVel(nv); outlet(idx + 1, note); return; }
+			var t = new Task(function() { _emitVel(nv); outlet(idx + 1, note); });
+			_emitTasks.push(t);
+			t.schedule(off);
+		})(k, notes[k]);
+	}
+}
+
+function sendNoteOff() {
+	_cancelEmit();
+	if (activeNotes.length === 0) return;
+	_emitVel(0);   // velocity=0 arrive en PREMIER dans tous les noteout ; _velPlage la laisse à 0
+	for (var i = 0; i < activeNotes.length && i < 6; i++) {
+		outlet(i + 1, activeNotes[i]);  // pitches, déclenchent noteout avec vel=0
+	}
+	activeNotes = [];
+	outlet(7, "clearnotes");  // efface le clavier moniteur
+}
+
+// Libère toute note tenue AVANT de muter une config qui change l'identité de la note (root/
+// scale/octave/voicing/VL/extended/sync) — sinon une note jouée sous l'ancienne config reste
+// sonner alors que sa config a changé sous elle. sendNoteOff() seul ne suffit pas : il faut
+// aussi armer activeMidiNote=-1, sinon le dédoublonnage de midinote() (pitch===activeMidiNote)
+// avale silencieusement le prochain appui de la même touche ("touche morte", trouvé à l'audit
+// du 2026-07-15 — état caché sur 2 globals qui doivent rester réinitialisés ensemble).
+function _releaseHeld() {
+	sendNoteOff();
+	activeMidiNote = -1;
+}
+
+// Écho de surbrillance. Emprunt : 3e atome = le TYPE (ajouté EN FIN, 2026-10-22). Toutes les cases
+// de la page Ext partagent la même fondamentale, et une page en contexte change ses types sous la
+// case : la fondamentale seule faisait allumer la MAUVAISE case au clavier, au MIDI et au Push.
+// Le Push l'absorbe (`anything`), l'UI apparie fondamentale + type.
+function _activeEcho() {
+	if (lastFn === "color") outlet(7, "active", lastFn, lastDegree, String(lastColorType));
+	else outlet(7, "active", lastFn, lastDegree);
+}
+function sendChord(name, notes) {
+	// Voicing TOUJOURS via vl2 (6 voicings) ; le bouton VL ne pilote que le lissage dynamique.
+	// ⚠️ La VÉRITÉ = lastFn/lastDegree (posés par chaque fonction d'accord) ; l'argument `notes`
+	// n'est qu'un FILET DE SECOURS (applyVoicing) si vl2 ne sort aucun candidat.
+	var v2 = _vl2_play(lastFn, lastDegree, lastColorSemis, lastColorType);
+	notes = (v2 && v2.length) ? v2 : applyVoicing(notes);
+	sendNoteOff();
+	activeNotes = notes.slice();
+	lastChordNotes = notes.slice();            // survit au note-off → utilisé par le glisser → ajout
+	_emitNotes(notes);
+	_activeEcho();                             // highlight grille — AVANT la capture : l'UI fait s'envoler la carte depuis la case jouée (tuple-dev#127)
+	var dif = _capDefer;
+	_capDefer = false; _capAttente = null;
+	if (captureMode) {                         // progression -> clip (capture si ON)
+		if (dif) _capAttente = _progEntry(name, activeNotes);   // case tenue à la souris : la carte attend capturecommit
+		else captureChord(name);
+	}
+	// Pages dynamiques de la colonne Borrowed (Tritone, Ext) : APRÈS la capture — la carte lit son
+	// chiffrage dans la page qu'on vient de jouer, pas dans celle qui la remplace. Si la page
+	// visible bouge, grille + heat-map repartent ENSEMBLE (différé, comme la heat-map seule).
+	var _dyn = _borDynPlayed();
+	_sg_remember();                            // tenu même SMART éteint, comme _triHist : SMART allumé tard s'allume aussitôt (tuple-dev#93)
+	if (_dyn) _taskDefer(broadcastSurface);
+	else if (smartOn) _taskDefer(_sg_broadcast);   // smart chords : _sg_remember (léger) reste inline,
+	// _sg_broadcast (recalcule _vl2_realize sur ~50 cellules) est différé hors du chemin d'émission de l'accord —
+	// sinon il ajoute du jitter sur le thread bas-priorité de Max juste après avoir joué la note (audit 2026-07-15).
+	outlet(7, ["notes"].concat(activeNotes));  // → clavier moniteur
+}
+
+// =====================================================
+// PROGRESSION -> CLIP (device-only) — capture les accords joués puis les écrit
+// dans un clip Live. Voir docs/decisions.md (2026-06-16) + issue #1.
+// captureMode est OFF par défaut -> AUCUN impact sur le jeu normal.
+// =====================================================
+var captureMode = false;       // toggle UI : ON = on empile chaque accord joué
+var progression = [];          // [{ name:"Cmaj7", notes:[48,52,55,59] }]
+var PROG_MAX     = 8;          // largeur de la rangée Push (8 pads) — plus un plafond de cartes depuis le
+                               // 2026-09-18 (#77) : le compte était l'héritage des cartes bornées à 1 mesure ;
+                               // la PLACE décide seule (quart minimum, jusqu'à 64 cartes sur la piste)
+
+// Libellé de degré (chiffre romain) de l'accord courant, pour la carte de progression.
+// Diatonique : casse selon la qualité du triade du degré (I, ii, iii, IV, V, vi, vii°).
+// Emprunt (lastFn === "color") : chiffre romain de l'accord emprunté (carte violette côté UI).
+function currentRoman() {
+	if (lastFn === "color") {
+		var bl = borrowedFor();
+		for (var i = 0; i < bl.length; i++) {
+			if (bl[i].semis === lastColorSemis && bl[i].type === lastColorType) return bl[i].roman || "·";
+		}
+		return _dynRoman(lastColorSemis, lastColorType);   // case d'une page dynamique jouée hors de sa page
+	}
+	var ROMAN = ["I","II","III","IV","V","VI","VII"];
+	var base = ROMAN[lastDegree] || "·";
+	var q = chordQuality(lastDegree);
+	if (q === 1) return base.toLowerCase();             // mineur
+	if (q === 2) return base.toLowerCase() + "°";  // diminué (°)
+	if (q === 3) return base + "+";                     // augmenté
+	return base;                                         // majeur
+}
+
+// Construit une entrée de progression depuis l'accord COURANT (lastFn/lastDegree/last*).
+// `notesArr` = notes à stocker : activeNotes (jeu live) ou lastChordNotes (glisser → ajout).
+function _progEntry(name, notesArr) {
+	return {
+		name: String(name),
+		baseName: String(name),   // le nom SANS tension — _tensName le rhabille (tuple-dev#68), jamais l'inverse
+		roman: currentRoman(),
+		deg: (lastFn === "color" ? -1 : lastDegree),   // -1 = emprunt (violet) ; 0..6 = degré
+		fn: lastFn,                                     // re-dérivation (substituts/voicings/suite Push)
+		colorSemis: lastColorSemis, colorType: lastColorType,
+		notes: notesArr.slice(),
+		notesBase: notesArr.slice(),   // la base (sans structure supérieure) : ce que les tensions empilent, ce qui conduit la suivante (2026-09-11)
+		// La carte naît sur le style CONCRET en vigueur au moment de la capture — celui
+		// qu'on vient d'entendre sur la grille. Le picker de carte le remplace ensuite par
+		// un autre des SPACING_NAMES, et c'est le seul domaine possible de ce champ.
+		voicing: currentVoicing,
+		// Champ DÉRIVÉ : le style avec lequel les notes stockées ont RÉELLEMENT été
+		// réalisées — ici le voicing global du jeu live, puisque `notes` est exactement ce
+		// qui vient de sonner sur la grille. Même contrat que dans _recascadeFrom (écrit
+		// seulement quand la réalisation a réussi) : un champ dérivé qui ment sur ce qu'on
+		// entend est pire que pas de champ du tout. C'est ce que l'UI affiche sur la carte.
+		voicingResolved: currentVoicing,
+		// Axe INVERSION/REGISTRE de la carte — à ne pas confondre avec la globale vlMode
+		// ("anchored"|"flow"), qui porte le même nom et pilote le contrôle VOICE LEADING.
+		vlMode: "follow",          // "follow" = le VL a le droit de bouger cette carte ; "pinned" = figée où l'utilisateur l'a mise (tranche I)
+		inv: 0                     // offset d'inversion, pertinent seulement si vlMode==="pinned" (tranche I)
+	};
+}
+
+// Appelé depuis sendChord() quand captureMode est ON : empile l'accord joué (clic, clavier MIDI
+// ou pad Push). 1 déclenchement = 1 carte. `pre` : la carte construite à l'appui (capturecommit).
+function captureChord(name, pre) {
+	var entry = pre || _progEntry(name, activeNotes);
+	if (_progCommit) {                                 // édition depuis le Push (rangées 1-7, CAPTURE on)
+		var c = _progCommit; _progCommit = null;
+		// Mode Voicings du Push : l'utilisateur a DÉSIGNÉ un style au pad -> la carte le
+		// porte, plutôt que le style global qu'elle hériterait de _progEntry.
+		// (Device-only : le Push n'existe pas côté démo, ne rien répliquer de ce bloc.)
+		if (c.voicing) entry.voicing = c.voicing;
+		if (c.mode === "replace" && c.idx >= 0 && c.idx < progression.length) {
+			// ⚠️ LA DURÉE S'HÉRITE. `_progEntry` ne pose pas `bars` — c'est `_progInsert` qui
+			// l'écrit, et cette branche le court-circuite puisque la taille ne change pas. Sans la
+			// reprise, la carte remplacée retombait sur le défaut d'`_entryBars` (une mesure) et
+			// décalait toute la suite de la bande. Épinglé par device/tests/prog-push-remplace.test.mjs.
+			_undoPush();
+			_progFige();
+			entry.bars = progression[c.idx].bars;
+			entry.start = progression[c.idx].start;   // et sa place : la piste libre ne la déduit plus (tuple-dev#141)
+			entry.uid = progression[c.idx].uid;        // même carte, éditée : la sélection la retrouve après une annulation
+			progression.splice(c.idx, 1, entry);      // Subs/Voicings : remplace l'étape (taille inchangée, ignore PROG_MAX)
+		} else if (!_progInsert(entry, (c.idx >= 0 && c.idx < progression.length) ? c.idx : -1)) {
+			outlet(7, "progfull"); return;             // Suite : la carte se pose juste après l'étape désignée
+		}
+		broadcastProg();
+		return;
+	}
+	// Plus de plafond de COMPTE depuis le 2026-09-18 (#77) : la PLACE décide, dans _progInsert.
+	// Juste APRÈS la carte sélectionnée, sinon après la dernière carte, et la carte capturée devient la
+	// sélection : la capture suivante se pose derrière (tuple-dev#127, #141). Moins d'un quart → progfull.
+	if (!_progInsert(entry, (progSel >= 0 && progSel < progression.length) ? progSel : -1)) { outlet(7, "progfull"); return; }
+	progSel = progression.indexOf(entry);
+	broadcastProg();
+}
+
+// Case de la grille tenue à la souris (tuple-dev#146) : à l'appui, on ne sait pas encore si c'est un clic ou le début
+// d'un glisser. L'UI envoie `capturedefer` juste avant l'accord ; sa carte, construite à l'appui (ce qu'on vient
+// d'entendre, dans la page qu'on vient de jouer), attend le relâchement : `capturecommit 1` (clic) la pose,
+// `capturecommit 0` (glisser) la jette — le dépôt la pose par captureone, une seule carte par geste. Clavier MIDI,
+// Push et clavier ordinateur n'envoient pas `capturedefer` : ils capturent tout de suite.
+var _capDefer = false, _capAttente = null;
+function capturedefer() { _capDefer = true; }
+function capturecommit(v) {
+	var e = _capAttente;
+	_capDefer = false; _capAttente = null;
+	if (e && parseInt(v) === 1 && captureMode) captureChord(e.name, e);
+}
+
+function capture(v) {                      // toggle « Capture » depuis l'UI
+	captureMode = (parseInt(v) === 1);
+	outlet(7, "capture", captureMode ? 1 : 0);
+}
+function capturetoggle() {                 // bascule CAPTURE depuis le pad Push (ligne vide) — flippe + re-broadcast (UI + Push synchro)
+	capture(captureMode ? 0 : 1);
+	if (progPushOn) broadcastProgPush();   // rafraîchit le pad CAPTURE (et l'état audition/édition)
+}
+// ── Annulation (tuple-dev#126) ────────────────────────────────────────────────
+// Une pile d'instantanés de la progression, pris AVANT chaque geste qui la modifie (insertion,
+// capture, déplacement, durée, édition, suppression, CLEAR, voice-lead all). Un geste = un
+// instantané : la cascade et les re-réalisations internes n'en prennent pas. Elle vit ici et pas
+// dans l'UI : le moteur est la seule vérité, donc le Push, le clip lié et les deux fenêtres suivent
+// l'annulation par le même broadcastProg que tout le reste.
+// Copie PROFONDE : `notes`, `notesBase` et `tensions` sont édités en place (setoct, settension).
+var UNDO_MAX = 50;
+var _undo = [];       // [{ prog:[cartes copiées], ton:"root:gamme" }]
+var _progUid = 0;     // identité d'une carte, gardée à travers l'annulation (la sélection la suit)
+function _cloneEntry(p) {
+	var c = {}, k;
+	for (k in p) if (p.hasOwnProperty(k)) c[k] = p[k];
+	if (p.notes && p.notes.slice) c.notes = p.notes.slice();
+	if (p.notesBase && p.notesBase.slice) c.notesBase = p.notesBase.slice();
+	if (p.tensions && p.tensions.slice) c.tensions = p.tensions.slice();
+	return c;
+}
+function _undoPush() {
+	var snap = [], k;
+	for (k = 0; k < progression.length; k++) {
+		if (!progression[k].uid) progression[k].uid = ++_progUid;   // posée au premier instantané qui la voit
+		snap.push(_cloneEntry(progression[k]));
+	}
+	_undo.push({ prog: snap, ton: root + ":" + scaleName });
+	if (_undo.length > UNDO_MAX) _undo.shift();
+}
+// Restaure la progression d'avant le dernier geste. La sélection suit sa carte (par `uid`) si elle
+// existe dans l'état restauré, sinon -1. Un instantané pris dans une autre tonalité se re-tonalise :
+// rendu tel quel, il rejouerait l'ancienne tonique sous la nouvelle (le défaut soldé en session 73).
+function progundo() {
+	if (!_undo.length) return;
+	var u = _undo.pop(), cur = (progSel >= 0 && progSel < progression.length) ? progression[progSel].uid : 0, k;
+	progression = u.prog;
+	progSel = -1;
+	if (cur) for (k = 0; k < progression.length; k++) if (progression[k].uid === cur) { progSel = k; break; }
+	if (progression.length && u.ton !== root + ":" + scaleName) { _tensPrune(); _progRekey(); return; }   // _progRekey rediffuse
+	broadcastProg();
+}
+function clearprog()  { if (progression.length) _undoPush(); progression = []; broadcastProg(); }
+function removeat(i)  {
+	i = parseInt(i);
+	if (i >= 0 && i < progression.length) {
+		_undoPush();
+		var selRef = (progSel >= 0 && progSel < progression.length) ? progression[progSel] : null, k;
+		_progFige();
+		progression.splice(i, 1);       // sa place devient un trou : rien ne bouge (tuple-dev#141)
+		progSel = -1;                   // la sélection suit sa carte, et tombe avec elle
+		if (selRef) for (k = 0; k < progression.length; k++) if (progression[k] === selRef) { progSel = k; break; }
+		_progRelink(i);                 // la carte qui suivait a un nouveau prédécesseur
+		broadcastProg();
+	}
+}
+// Style de voicing d'UNE carte de progression (tranche V, design §5). `v` est un
+// VOICING_NAME, et rien d'autre. Re-réalise la carte PUIS propage aux cartes suivantes
+// restées en vlMode "follow" (_recascadeFrom), puis rediffuse.
+// N'ÉCRIT JAMAIS currentVoicing : le voicing GLOBAL reste celui du jeu live sur la grille
+// (design §3, face performance intacte).
+function progvoicing(i, v) {
+	i = _idx(i, progression.length);
+	if (i < 0) return;
+	var name = String(v);
+	if (!_isVoicingName(name)) {
+		post("progvoicing: style inconnu '" + name + "'\n");   // refus BRUYANT : silencieux = indébogable dans Max
+		return;
+	}
+	_undoPush();
+	progression[i].voicing = name;
+	_recascadeFrom(i);     // re-réalise i, puis les suivantes tant qu'elles sont vlMode "follow"
+	broadcastProg();       // -> prog + progvoic + cursor + Push + _clipSyncDirty
+}
+// settension idx t v — pose (v=1) ou retire (v=0) la tension t (9 | 11 | 13) sur la carte idx.
+// Refus silencieux hors bornes, hors {9,11,13}, ou si l'offre ne la propose pas (built, avoid,
+// none) : l'UI grise ce que le moteur refuse, et le moteur reste la seule autorité.
+function settension(idx, t, v) {
+	idx = _idx(idx, progression.length);
+	if (idx < 0) return;
+	var c = _tensVise(progression[idx], t);
+	if (!c) return;
+	_undoPush();
+	_tensPose(progression[idx], c.color, parseInt(v) === 1);
+	broadcastProg();
+	previewprog(idx);
+}
+// La couleur que `t` désigne sur la carte `p`, et son état dans l'offre — null si l'offre ne la propose
+// pas (built, avoid, none) : seules « off » et « on » se posent ou se retirent.
+// tuple-dev#73 : `t` est une couleur (« b9 » … « 13 », ou son intervalle 1 2 3 5 6 8 9) ; 9 / 11 / 13 en nombre
+// restent acceptés et désignent la couleur diatonique de la famille (Push, sets anciens).
+function _tensVise(p, t) {
+	var spec = _tensBaseSpec(p);
+	if (!spec) return null;
+	var iv = _tensIv(spec, t);
+	if (iv < 0) return null;
+	var color = _TENS_COLOR[iv], o = _tensOffer(p), i, st = null;
+	for (i = 0; i < o.length; i++) if (o[i].color === color) st = o[i].state;
+	return (st === "off" || st === "on") ? { color: color, state: st } : null;
+}
+// Pose (v vrai) ou retire la couleur `t` sur la carte `p`, déjà validée par _tensVise. Sans instantané ni broadcast :
+// l'appelant les fait, une fois par geste.
+function _tensPose(p, t, v) {
+	var cur = p.tensions ? p.tensions.slice() : [], k = cur.indexOf(t);
+	if (v && k < 0) cur.push(t);
+	if (!v && k >= 0) cur.splice(k, 1);
+	cur.sort(function(a, b){ return _TENS_BY_NAME[a] - _TENS_BY_NAME[b]; });
+	p.tensions = cur;
+	p.name = _tensName(p);
+	// 2026-09-11 : poser ou retirer une tension ne RE-RÉALISE rien — ni cette carte, ni les suivantes. La base de la
+	// carte (`notesBase` : ses notes telles que capturées ou voicées) reste, la structure supérieure s'empile dessus.
+	// Une carte d'avant cette règle n'a pas de `notesBase` : ses notes courantes en tiennent lieu.
+	if (!p.notesBase || !p.notesBase.length) p.notesBase = p.notes ? p.notes.slice() : [];
+	p.notes = _tensStack(p.notesBase, p);
+}
+
+// OCTAVE PAR CARTE (2026-09-18, Antoine : « dans les options de cartes je veux un
+// sélecteur d'octave ») : un offset -2..+2 borné, ±12 demi-tons par cran, appliqué en
+// DELTA sur les notes déjà réalisées (`notes` ET `notesBase` — la carte suivante suit la
+// position entendue). La convention : les notes STOCKÉES portent l'octave ; toute
+// re-réalisation (_revoiceEntry) la ré-applique depuis sa base canonique.
+function setoct(i, v) {
+	i = _idx(i, progression.length);
+	if (i < 0) return;
+	var n = parseInt(v);
+	if (isNaN(n)) { post("setoct: octave invalide '" + v + "'\n"); return; }
+	if (n < -2) n = -2; if (n > 2) n = 2;
+	var p = progression[i];
+	if (n === (parseInt(p.oct) || 0)) return;
+	_undoPush();
+	_octPose(p, n);
+	broadcastProg();
+}
+// Pose l'octave `n` (déjà bornée) sur la carte `p`, en DELTA sur ses notes. Sans instantané ni broadcast.
+function _octPose(p, n) {
+	var d = (n - (parseInt(p.oct) || 0)) * 12, k;
+	p.oct = n;
+	if (p.notes) for (k = 0; k < p.notes.length; k++) p.notes[k] += d;
+	if (p.notesBase) for (k = 0; k < p.notesBase.length; k++) p.notesBase[k] += d;
+}
+
+// ── Tranche I — renversement d'UNE étape ──────────────────────────────────────
+// Le geste ± prend la main sur l'axe INVERSION : l'étape est ÉPINGLÉE (vlMode "pinned")
+// (design §2.1 — `follow`|`pinned` est l'axe inversion/registre, distinct de l'axe
+// `voicing`. Les deux disaient "auto" jusqu'au 2026-08-11 : quatre mécanismes portaient
+// ce mot, dont deux sur la même carte. Ici, épinglée veut dire « le voice-leading n'a
+// plus le droit de bouger cette carte »). L'inversion est cyclée modulo la taille de l'accord RÉALISÉ, jamais
+// bornée en dur : un accord à 3 notes a 3 renversements, un accord à 5 en a 5.
+// _idx (et non `if (i<0||i>=len)`) : NaN met en échec TOUTE comparaison, donc la forme
+// naïve le laisse passer — trou rebouché sur 6 entrées au fuzz du 2026-08-05.
+function setinv(idx, inv) {
+	idx = _idx(idx, progression.length);
+	if (idx < 0) return;
+	var p = progression[idx];
+	var n = (p.notes && p.notes.length) ? p.notes.length : 0;
+	if (!n) return;
+	inv = parseInt(inv);
+	if (isNaN(inv)) return;   // refus AVANT de toucher vlMode : un inv invalide ne doit pas épingler la carte
+	_undoPush();
+	p.vlMode = "pinned";
+	p.inv = ((inv % n) + n) % n;
+	_recascadeFrom(idx);   // re-réalise l'étape PUIS propage aux suivantes en "follow" (F0)
+	broadcastProg();
+	previewprog(idx);      // retour VISUEL au clavier moniteur — previewprog ne joue rien
+}
+
+// Ré-applique le voice leading à TOUTE la progression, d'un bout à l'autre.
+//
+// Pourquoi ça manquait : `captureone` et le chemin de capture AJOUTENT une carte
+// sans jamais appeler `_recascadeFrom`. Chaque accord garde donc le voicing qu'il
+// avait au moment où il a été joué, et rien ne conduit les voix d'un accord au
+// suivant. La cascade n'existait que sur les ÉDITIONS (inversion, style, dépinglage).
+//
+// ⚠️ Contrairement à `_recascadeFrom`, cette fonction NE S'ARRÊTE PAS à la première
+// carte épinglée. La propagation d'une édition s'y arrête — c'est la sémantique
+// gelée dans CONTEXT.md, et elle est juste : éditer une carte ne doit pas déranger
+// ce que l'utilisateur a figé plus loin. Mais cette action-ci est explicite et
+// globale : une carte épinglée reste exactement où elle est ET sert de référence à
+// la suivante. Passer outre ferait perdre le travail d'épinglage ; s'arrêter
+// laisserait la moitié de la progression non conduite, ce que le bouton promet.
+function voiceleadall() {
+	var i, prev, notes;
+	if (progression.length) _undoPush();
+	for (i = 0; i < progression.length; i++) {
+		prev = (i > 0) ? progression[i - 1] : null;
+		if (progression[i].vlMode !== "follow") continue;   // épinglée : intacte, mais elle reste `prev` pour la suivante
+		notes = _revoiceEntry(progression[i], prev);
+		// Même garde que la cascade : `voicingResolved` n'est écrit qu'en cas de
+		// succès, sinon la carte annoncerait un style que ses notes ne jouent pas.
+		if (notes) { progression[i].voicingResolved = progression[i].voicing; progression[i].notes = notes; }
+	}
+	broadcastProg();
+}
+
+// ══ RE-TONALISATION DE LA PROGRESSION (constat session 71, soldé session 73) ═══════════
+// Un changement de KEY / SCALE re-dérive TOUTE la progression : nom, chiffrage et notes
+// des cartes restaient figés dans la tonalité de capture — le panneau annonçait « KEY D »
+// au-dessus de cartes qui jouaient encore en C. Chaque carte se re-dérive de son identité
+// (fn, deg, colorSemis/colorType), jamais de ses notes :
+//   - nom     : gridLabel (degrés — même recette que la grille, cf. « identique à la
+//               grille » dans seven()/nine()) ou la table d'emprunts (color) ;
+//   - chiffre : chordQuality (degrés) ou la table d'emprunts (color) ;
+//   - notes   : _revoiceEntry — pinned COMPRIS : l'épinglage fige registre et
+//               renversement (rootPos + inv), pas la tonalité. C'est un changement
+//               global explicite, pas une cascade d'édition — même raison que
+//               voiceleadall() de ne pas s'arrêter aux cartes épinglées.
+// Quand la nouvelle gamme ne sait pas réaliser une carte (type invalide sur ce degré),
+// ses notes et son nom restent — même convention que _recascadeFrom : un champ qui ment
+// sur ce qu'on entend est pire qu'un champ périmé.
+// ⚠️ COALESCENCE — une RAFALE de changements de tonalité ne doit re-réaliser qu'UNE fois.
+// Mesuré le 2026-09-14 dans Live (sonde de décrochage : ping du remote script toutes les
+// 30 ms, un trou > 80 ms est un freeze ressenti). 24 cartes, un `rootidx` toutes les 120 ms :
+//   avec re-réalisation immédiate .... 21 pings sur 25 décrochent, pire 102 ms
+//   `_progRekey` neutralisé .......... 0 ping sur 28
+// Le coût est la RÉALISATION, pas la diffusion — chronométré dans le harnais sur 24 cartes :
+// `_progRekey` 6,9 ms, `broadcastProg` 0,6 ms, `_tensPrune` 0,5 ms. On ne peut donc pas le
+// rendre gratuit, seulement ne le payer qu'une fois par rafale. Une molette sur KEY, une
+// automation Live sur `rootidx`, un `synclive` qui suit la gamme de Live produisent
+// exactement cette rafale ; un geste isolé, lui, ne voit que 60 ms de retard.
+// ⚠️ Un appelant ne doit donc PAS lire `progression[].notes` juste après un changement de
+// tonalité : c'est le Task qui les écrit. Sous le harnais, `env.clock.advance(100)`.
+var _rekeyTask = null;
+function _progRekeyDefer() {
+	if (!progression.length) return;
+	if (typeof Task === 'undefined') { _progRekey(); return; }   // hors Max : pas d'ordonnanceur, on paie tout de suite
+	if (!_rekeyTask) _rekeyTask = new Task(_progRekey, this);
+	_rekeyTask.schedule(60);   // `schedule` sur un Task en attente le REPLANIFIE : la rafale glisse au lieu d'empiler
+}
+function _progRekey() {
+	if (!progression.length) return;
+	var i, p, prev, notes;
+	for (i = 0; i < progression.length; i++) {
+		p = progression[i];
+		prev = (i > 0) ? progression[i - 1] : null;
+		notes = _revoiceEntry(p, prev);
+		if (notes) {
+			p.voicingResolved = p.voicing;
+			p.notes = notes;
+			if (p.fn === "color") {
+				var bl = borrowedFor(), suf = null, rom = null, j;
+				for (j = 0; j < bl.length; j++) if (bl[j].semis === p.colorSemis && bl[j].type === p.colorType) { suf = bl[j].suf; rom = bl[j].roman; }
+				// Hors table de la nouvelle gamme : le suffixe se re-dérive du type (même
+				// recette que colorchord), le chiffrage — relatif à la tonique — reste vrai.
+				// (2026-10-21 : `_borSuffix(…, false)` EST cette recette, et elle connaît `sub7` et les
+				// types x de la page Ext — dont le nom est dans le type, la page ayant bougé depuis.)
+				if (suf === null) suf = _borSuffix(p.colorSemis, p.colorType, false);
+				p.baseName = NOTE_NAMES[((root + p.colorSemis) % 12 + 12) % 12] + suf;
+				if (rom) p.roman = rom;
+			} else {
+				// Les noms de capture viennent des handlers (seven, nine…) — jamais une forme étendue,
+				// et gridLabel n'en produit plus depuis le 2026-10-22.
+				p.baseName = gridLabel(p.deg, p.fn);
+				var ROMAN = ["I","II","III","IV","V","VI","VII"];
+				var base = ROMAN[p.deg] || "·", q = chordQuality(p.deg);
+				p.roman = (q === 1) ? base.toLowerCase() : (q === 2) ? base.toLowerCase() + "°"
+				        : (q === 3) ? base + "+" : base;
+			}
+			p.name = (p.tensions && p.tensions.length) ? _tensName(p) : p.baseName;
+		}
+	}
+	broadcastProg();
+}
+
+// « désépingler réinitialise » (critère d'acceptation, design §5) : rend l'axe inversion
+// au voice-leading. inv=0 + vlMode="follow" -> _revoiceEntry retrouve le voicing lissé.
+function resetinv(idx) {
+	idx = _idx(idx, progression.length);
+	if (idx < 0) return;
+	_undoPush();
+	progression[idx].vlMode = "follow";
+	progression[idx].inv = 0;
+	_recascadeFrom(idx);
+	broadcastProg();
+	previewprog(idx);
+}
+
+// Pose l'accord COURANT (dernier joué/glissé) à la mesure `pos` de la piste, comme on pose une carte
+// qu'on déplace (tuple-dev#141) — hors mode capture (le glisser d'une case de la grille vers la piste).
+// -1 ou absent : juste après la dernière carte. Une mesure, ou ce qui reste de libre sur la piste.
+function captureone(name, pos) {
+	var entry = _progEntry(name, lastChordNotes);   // ← dernier accord joué (activeNotes a pu être vidé par le release)
+	var p = parseFloat(pos), b, v;
+	if (!(p >= 0)) { if (!_progInsert(entry, -1)) { outlet(7, "progfull"); return; } }
+	else {
+		_progFige();
+		b = Math.min(1, Math.floor((PROG_TRACK_BARS - _progTotal()) / PROG_BARS_MIN + 1e-9) * PROG_BARS_MIN);
+		v = (b >= PROG_BARS_MIN) ? _progVise(b, p) : null;
+		if (!v) { outlet(7, "progfull"); return; }
+		_undoPush();
+		entry.bars = b;
+		_progRange(entry, v.s, v.k, null);
+		_progRelink(v.k + 1);                       // la carte d'après a changé de prédécesseur ; la posée garde ce qu'on a entendu
+	}
+	progSel = progression.indexOf(entry);           // l'UI inspecte la carte posée : la capture suivante se pose derrière (tuple-dev#127)
+	broadcastProg();
+}
+// La carte a été désélectionnée dans l'UI (clic ailleurs) : la capture suivante retourne en fin de bande.
+function progdesel() {
+	progSel = -1;
+	if (progPushOn) broadcastProgPush();
+}
+// Écoute (audition) d'UN accord de la progression : rejoue ses notes, tenues jusqu'au message 'release'.
+// Pas de séquence — un seul accord, conforme au principe « pas un séquenceur ».
+function playprog(i) {
+	i = _idx(i, progression.length);
+	if (i < 0) return;
+	var p = progression[i];
+	var notes = p.notes;
+	if (!notes || !notes.length) return;
+	sendNoteOff();
+	activeNotes = notes.slice();
+	lastChordNotes = notes.slice();             // survit au note-off
+	_progContexte(p);
+	_emitNotes(notes);                          // MÊME chemin d'émission que le jeu de la grille (fiable)
+	_progEcran(p, activeNotes);
+	// pas de note-off auto : la note tient jusqu'au relâchement (message 'release', comme la grille)
+}
+// Reconstruit le contexte de l'accord (depuis l'entrée) → le smart + la grille à l'écran SUIVENT
+// l'accord de progression joué, à la main comme en lecture (_seqTick).
+function _progContexte(p) {
+	lastFn = p.fn || "triad";
+	lastColorSemis = p.colorSemis; lastColorType = p.colorType;
+	if (lastFn === "color") lastDegree = p.colorSemis;   // comme colorchord : _activeEcho le renvoie en demi-tons (tuple-dev#93)
+	else if (p.deg != null && p.deg >= 0) lastDegree = p.deg;
+}
+// `lecture` : la page Borrowed en cours ne bouge pas toute seule pendant que le morceau tourne, seul le jeu la déplace.
+function _progEcran(p, notes, lecture) {
+	// Monitor : nom + degré de la carte. APRÈS sendNoteOff (qui émet 'clearnotes' → l'UI vide
+	// activeChordName) et AVANT 'notes' (qui rend le Monitor) — sinon le texte resterait vide.
+	outlet(7, "monitor", p.name, (p.deg == null ? -1 : p.deg));
+	outlet(7, ["notes"].concat(notes));         // clavier moniteur
+	_activeEcho();                              // surbrillance de la grille à l'écran
+	// Même suite que sendChord : les pages Tritone / Ext / Borrowed en contexte suivent la carte
+	// écoutée, et la heat-map aussi (tuple-dev#93).
+	var _dyn = lecture ? false : _borDynPlayed();
+	_sg_remember();
+	if (_dyn) broadcastSurface();
+	else if (smartOn) _sg_broadcast();
+}
+
+// APERÇU au survol d'une carte de progression (UI) : émet ses notes stockées via 'previewnotes' (même
+// pipeline que l'aperçu de la grille) — SANS jouer ni toucher l'état (activeNotes/smart/last*). Le nom
+// est géré côté UI (_previewLabel). Mineur : ne recalcule pas le voicing, montre les notes capturées.
+function previewprog(idx) {
+	idx = _idx(idx, progression.length);
+	if (idx < 0) return;
+	var p = progression[idx];
+	if (p.notes && p.notes.length) outlet(7, ["previewnotes"].concat(p.notes));
+}
+
+// Diffuse la progression à l'UI par n-uplets de PROG_STRIDE atomes (10 depuis l'octave par
+// carte, 2026-09-18) : "prog <nom> <romain> <deg> <inv> <bassPc> <épinglé> <bars> <tensions> <départ> <oct> …"
+// (vide = "prog" seul).
+// deg : -1 = emprunt (carte violette) ; 0..6 = degré (couleur de la grille).
+// Ce que l'UI doit AFFICHER pour une carte : le style DEMANDÉ (ce que l'utilisateur a
+// choisi au picker) et le style avec lequel ses notes ont réellement été réalisées.
+// Depuis le retrait du choix automatique les deux coïncident tant que la réalisation
+// réussit ; ils divergent encore quand _revoiceEntry rend null, cas où voicingResolved
+// reste sur le style que les notes stockées jouent VRAIMENT — c'est ce qu'il faut montrer.
+function _progVoicKey(p) { return (p && p.voicing) ? String(p.voicing) : "classic"; }
+function _progVoicShown(p) {
+	if (p && _isVoicingName(p.voicingResolved)) return p.voicingResolved;
+	if (p && _isVoicingName(p.voicing)) return p.voicing;
+	return "classic";   // dernier repli : _vl2_realize retombe de toute façon sur classic
+}
+// Classe de hauteur de la basse RÉELLE si elle diffère de la fondamentale, sinon -1.
+// La fondamentale est relue sur le spec (clé COURANTE) et non figée à la capture : les
+// notes sont dérivées depuis F0, un rootPc gelé se désaccorderait d'elles dès un
+// changement de tonalité.
+// min() et NON notes[0] : l'ordre interne d'un voicing n'est pas trié (cf. _emitNotes),
+// lire la première note stockée rendrait un slash faux sans rien casser d'autre.
+function _progBassPc(p) {
+	if (!p.notes || !p.notes.length) return -1;
+	var spec = _vl2_specFor(p.fn, p.deg, p.colorSemis, p.colorType);
+	if (!spec) return -1;
+	var pc = _vl2_m(Math.min.apply(null, p.notes));
+	return (pc === _vl2_m(spec.rootPc)) ? -1 : pc;
+}
+// Largeur du n-uplet — le parseur UI (tuple_ui.html renderProg) DOIT coller.
+// 5 → 6 le 2026-08-16 (tuple-dev#9, atome épinglé) ; 6 → 7 le 2026-08-18 (durée en mesures,
+// ajoutée EN FIN du n-uplet, session 60b).
+var PROG_STRIDE = 10;   // 9e atome (tuple-dev#72) : le départ, en mesures ; 10e (2026-09-18) : l'octave de la carte
+function broadcastProg() {
+	var flat = [], voic = [];
+	for (var i = 0; i < progression.length; i++) {
+		var p = progression[i];
+		flat.push(p.name);
+		flat.push(p.roman || "·");
+		flat.push(p.deg);
+		// Tranche I. inv : renversement courant de l'étape, 0 = aucun.
+		// bassPc : classe de hauteur (0-11) de la note la plus GRAVE si elle diffère de la
+		// fondamentale, sinon -1. C'est la « vérité de la basse » — un voicing rootless
+		// affiche son slash MÊME à inv=0, et un renversement le fait suivre. Le moteur
+		// diffuse un ENTIER, jamais un nom : l'orthographe ♯/♭ appartient à l'UI (useflats
+		// est un simple relais, le moteur ne stocke pas la préférence).
+		flat.push(p.inv || 0);
+		flat.push(_progBassPc(p));
+		// tuple-dev#9 — l'état ÉPINGLÉ, diffusé TEL QUEL ("follow" | "pinned"). L'UI le
+		// DÉDUISAIT de `inv`, ce qui mentait dès que le cycle ▲ ramenait inv à 0 : la carte
+		// restait épinglée sans badge, donc sans le seul contrôle qui la rend au voice-leading.
+		// Mesuré : borner le cycle n'aurait rien réglé (▼ atteint inv=0 tout autant), et faire
+		// que inv=0 désépingle aurait DÉTRUIT un état réel — épinglée en position fondamentale
+		// rend 48 52 55 là où la même carte en "follow" rend 55 60 64 (anchor) / 52 55 60 (flow).
+		// ⚠️ C'est le vlMode DE LA CARTE (axe inversion/registre), jamais la globale
+		// "anchored"|"flow" — deux choses portent ce nom, elles ne partagent aucune valeur.
+		// Un NOM et non un booléen : `rootPos` se lit `!== "follow"`, donc un futur 3e mode
+		// épinglant reste diffusable sans re-changer la largeur du n-uplet.
+		flat.push(p.vlMode || "follow");
+		// Durée de la carte, en mesures. AJOUTÉE EN FIN du n-uplet, comme tout ce qui s'ajoute au
+		// fil : insérer ailleurs décalerait tous les atomes suivants et l'UI lirait le champ d'à
+		// côté, en silence. `_entryBars` et pas `p.bars` — une carte capturée avant ce champ n'en
+		// a pas, et le fil ne doit jamais porter `undefined`.
+		flat.push(_entryBars(p));
+		// 8e atome (tuple-dev#68) : les tensions POSÉES de la carte, croissantes, séparées par un
+		// point (« 9.13 »), ou « - » — jamais une chaîne vide, un atome vide se perd sur le fil.
+		flat.push((p.tensions && p.tensions.length) ? _tensNames(p) : "-");
+		// 9e atome (tuple-dev#72) : le départ de la carte, en mesures — toujours un nombre, jamais `undefined`.
+		flat.push(_entryStart(i));
+		// 10e atome (2026-09-18) : l'octave de la carte (-2..+2, 0 = aucune) — en FIN, comme tout ajout au fil.
+		flat.push(p.oct || 0);
+		// 2 atomes par carte, alignés sur les n-uplets de "prog" PAR CARTE : un décalage
+		// poserait la mauvaise pastille sur la mauvaise carte, en silence.
+		voic.push(_progVoicKey(p));
+		voic.push(_progVoicShown(p));
+	}
+	outlet(7, ["prog"].concat(flat));
+	outlet(7, ["progvoic"].concat(voic));   // point de passage UNIQUE, comme "prog"
+	outlet(7, "progloop", _loopBars());     // la boucle effective : la largeur de la piste et ses pages, à l'UI
+	broadcastProgTens();                    // l'offre de tensions par carte, alignée comme "progvoic"
+	if (progPushOn) broadcastProgPush();   // le Push reflète la progression à chaque changement
+	_clipSyncDirty();                      // live-sync : point de passage UNIQUE de toutes les mutations
+	                                       // (capture/insert/reorder/remove/clear) — accrocher
+	                                       // ici plutôt que dans chaque fonction évite d'en oublier une.
+	_persistDirty();                       // le Blob du set, par le même point de passage (tuple-dev#150)
+}
+
+// =====================================================
+// LA PROGRESSION SAUVÉE AVEC LE SET (tuple-dev#150, décisions #116, mesures #118)
+// =====================================================
+// Un [pattr] Blob « Stored Only » du patch garde la progression ET la tonalité dans le .als. Le moteur
+// l'écrit par l'outlet 8 ; le pattr la rend par [prepend persist] — au chargement, AVANT le loadbang
+// (mesuré, ~150 ms), comme sur un Ctrl+Z de Live, qui restaure le Blob d'avant.
+// Format : JSON { v:1, root, scale, cards:[cartes entières sans `uid`, notes comprises] }, encodé par
+// encodeURIComponent (ASCII sûr : ni espace, ni ♭, ni barre oblique inverse dans un symbole Max), puis
+// découpé en morceaux de PERSIST_MORCEAU caractères — un symbole seul plafonne vers 32 767.
+// ⚠️ Chaque écriture du Blob est une étape de l'historique d'annulation de Live (#118) : d'où l'écriture
+// DIFFÉRÉE d'une seconde (une rafale = une étape) et la comparaison à la dernière valeur connue (rien
+// n'est écrit quand rien n'a changé). Le pattr RENVOIE ce qu'on lui écrit (sonde #118) : cet écho
+// arrive dans persist() avec la valeur qu'on vient de poser, et la même comparaison l'ignore.
+// La tonalité appartient à la progression : une progression vide vaut « rien d'enregistré », et la
+// synchro de chargement (`synclive load`) ne cède qu'à une restauration qui a rendu des cartes.
+var PERSIST_MORCEAU = 1000;
+var _persistTask = null;
+var _persistDerniere = "";   // JSON de la dernière progression écrite ou restaurée ; "" = aucune carte
+var _persistRendu = false;   // une restauration a-t-elle rendu des cartes ? (garde de `synclive load`)
+function _persistTexte() {
+	return JSON.stringify({ v: 1, root: root, scale: scaleName, loop: progLoopChoisie, coupe: progLoopCoupe, cards: progression },
+		function(cle, val) { return (cle === "uid") ? undefined : val; });
+}
+function _persistDirty() {
+	if (typeof Task === 'undefined') { _persistEcrire(); return; }
+	if (!_persistTask) _persistTask = new Task(_persistEcrire, this);
+	_persistTask.schedule(1000);   // replanifie : la rafale glisse, une seule écriture une seconde après le dernier geste
+}
+function _persistEcrire() {
+	var txt = _persistTexte(), sig = progression.length ? txt : "", enc, out = [], i;
+	if (sig === _persistDerniere) return;
+	_persistDerniere = sig;        // AVANT l'outlet : l'écho du pattr revient pendant l'appel
+	enc = encodeURIComponent(txt);
+	for (i = 0; i < enc.length; i += PERSIST_MORCEAU) out.push(enc.substring(i, i + PERSIST_MORCEAU));
+	outlet(8, out);
+}
+// Le Blob décodé et vérifié, ou null. Tolérante : rien de ce qu'un Blob contient ne doit lever.
+function _persistLire(s) {
+	var d, k, c;
+	try { s = decodeURIComponent(s); d = JSON.parse(s); } catch (e) { return null; }
+	if (!d || d.v !== 1 || !(d.cards instanceof Array) || !SCALES[d.scale]) return null;
+	if (d.root !== parseInt(d.root) || d.root < 0 || d.root > 11) return null;
+	for (k = 0; k < d.cards.length; k++) {
+		c = d.cards[k];
+		if (!c || typeof c !== 'object' || !(c.notes instanceof Array)) return null;
+	}
+	return { txt: s, d: d };
+}
+function persist() {
+	var a = Array.prototype.slice.call(arguments), s = a.join(""), r = null, sig;
+	if (s.length && s !== "0") {   // vide / 0 : un Blob jamais écrit, pas une erreur
+		r = _persistLire(s);
+		if (!r) post("tuple: progression du set illisible (version inconnue ou Blob abîmé) — progression vide\n");
+	}
+	sig = (r && r.d.cards.length) ? r.txt : "";
+	if (sig === _persistDerniere) return;   // l'écho de notre propre écriture, ou rien de neuf
+	_persistDerniere = sig;
+	if (_rekeyTask) _rekeyTask.cancel();   // une re-tonalisation en attente re-réaliserait les cartes rendues
+	progression = [];                       // vide pendant le changement de tonalité : rien à re-réaliser
+	if (r && (r.d.root !== root || r.d.scale !== scaleName)) { setscale(r.d.scale); rootidx(r.d.root); }
+	progression = r ? r.d.cards : [];       // les notes du Blob telles quelles : le set sonne comme à l'enregistrement
+	// La taille de boucle choisie (champ facultatif : un Blob d'avant la façade v4 n'en a pas → 4, la fin des cartes l'emporte).
+	progLoopChoisie = (r && r.d.loop >= PROG_BLOC_BARS && r.d.loop <= PROG_TRACK_BARS && r.d.loop % PROG_BLOC_BARS === 0) ? r.d.loop : PROG_BLOC_BARS;
+	progLoopCoupe = (r && r.d.coupe >= PROG_BLOC_BARS && r.d.coupe % PROG_BLOC_BARS === 0) ? r.d.coupe : 0;
+	if (progression.length) _persistRendu = true;
+	progSel = -1;
+	_progCommit = null;
+	_undo = [];                             // l'historique de Tuple ne correspond plus à cette progression
+	broadcastProg();                        // UI, Push, clip lié ; le Blob ne se réécrit pas (sig inchangée)
+}
+
+// =====================================================
+// PROGRESSION → PUSH (device-only) — layout « progression » sur le Push 2 : rangée du BAS = les étapes
+// capturées ; au-dessus de CHAQUE accord (dans sa colonne) = ses options (6 max) selon le mode actif
+// (Substituts / Suite / Voicings), séparées par une rangée vide. Spec :
+// docs/superpowers/specs/2026-06-22-push-progression-3modes-design.md.
+// =====================================================
+var PROG_MODE_SUBS = 0, PROG_MODE_SUITE = 1, PROG_MODE_VOIC = 2;
+var progMode   = PROG_MODE_SUBS;   // mode actif des options (rangées 1-7)
+var progSel    = -1;               // étape sélectionnée ; -1 = dernière étape de la progression
+var progPushOn = false;            // le layout Push « progression » est-il actif ? (toggle UI 'progmode')
+// FENÊTRE Push (tuple-dev#123) : la rangée de huit pads montre les cartes [progWin, progWin + 8). Elle
+// suit la sélection QUAND ELLE CHANGE (écran, insertion, capture), et ◀ ▶ la décalent (`progwin`) sans
+// toucher à la sélection — d'où `_progWinSel` : un rebroadcast à sélection égale ne la ramène pas.
+var progWin = 0, _progWinSel = -1;
+function _progSelIdx(){ return (progSel >= 0 && progSel < progression.length) ? progSel : progression.length - 1; }
+
+// Options empilées au-dessus de l'accord `idx` selon le mode actif, **PROG_OPT_MAX au plus** (6 rangées × 8 ;
+// la rangée du bas = étapes + 1 rangée vide séparatrice réservent 2 des 8 rangées). Retourne [{deg, fn, kind, …}] — voic: +voicing ;
+// emprunt: +colorSemis/colorType.
+var PROG_OPT_MAX = 48;   // options de l'étape sélectionnée → remplissent la grille 6×8 (rows 0-5)
+// Ordre d'affichage des voicings en mode Voic, GROUPÉ par famille (bottom-up : basiques en bas, près des étapes).
+var _VOIC_ORDER = ["root", "classic", "clear", "open", "drop2", "drop3", "piano", "rootless"];   // = SPACING_NAMES, neutre en tete (ordre d'AFFICHAGE, sans effet sur les index)
+function _progOptions(idx){
+	if (idx < 0 || idx >= progression.length) return [];
+	var step = progression[idx], out, v;
+	if (progMode === PROG_MODE_VOIC){
+		out = [];                                       // voicings de CET accord, ordre par famille (_VOIC_ORDER)
+		for (v = 0; v < _VOIC_ORDER.length && out.length < PROG_OPT_MAX; v++)
+			out.push({ deg:step.deg, fn:step.fn, kind:"voic", voicing:_VOIC_ORDER[v], colorSemis:step.colorSemis, colorType:step.colorType });
+		return out;
+	}
+	out = (progMode === PROG_MODE_SUITE) ? _suiteOptions(idx) : substitutesFor(step, (idx + 1 < progression.length) ? progression[idx + 1] : null);
+	if (progMode === PROG_MODE_SUITE) out.sort(function(a,b){ return (b.lvl||0) - (a.lvl||0); });   // meilleur enchaînement d'abord (option 0 = bas)
+	return (out.length > PROG_OPT_MAX) ? out.slice(0, PROG_OPT_MAX) : out;
+}
+
+// Diffuse la progression + les options PAR COLONNE vers le Push (outlet 7). Layout : rangée du bas =
+// Rangée du bas = les étapes. Au-dessus = les options de la SEULE étape SÉLECTIONNÉE, en liste À PLAT
+// (le spike/UI les étalent sur la grille 6×8, bottom-up). progopt = (flatIdx, deg, kind).
+// progclear → progstep* → progopt* → capture → progsel → progdone.
+function broadcastProgPush(){
+	outlet(7, "progclear");
+	var i, j, opts, sel = _progSelIdx();
+	// ⚠️ HUIT pads de large : la piste porte jusqu'à 64 cartes — la rangée montre la FENÊTRE
+	// [progWin, progWin + 8), colonne = index de carte − progWin. Sans cette borne, progstep 8+
+	// viserait un pad hors matrice.
+	if (sel !== _progWinSel){                                     // sélection neuve : la montrer
+		if (sel >= 0 && sel < progWin) progWin = sel;
+		else if (sel >= progWin + PROG_MAX) progWin = sel - PROG_MAX + 1;
+		_progWinSel = sel;
+	}
+	progWin = Math.max(0, Math.min(progWin, progression.length - PROG_MAX));   // la bande a pu raccourcir
+	for (i = progWin; i < progression.length && i < progWin + PROG_MAX; i++)
+		outlet(7, "progstep", i - progWin, progression[i].deg);   // rangée du bas (deg : -1 emprunt ; 0..6 degré)
+	// Progression VIDE : _progSelIdx() rend length-1 = -1, et _progOptions(-1) lirait
+	// progression[-1] (undefined) → TypeError. Activer le layout Push progression avant
+	// d'avoir capturé le moindre accord suffisait à le déclencher (fuzz du 2026-08-05).
+	opts = (sel >= 0) ? _progOptions(sel) : [];                   // options de l'étape SÉLECTIONNÉE
+	for (j = 0; j < opts.length; j++)
+		outlet(7, "progopt", j, (opts[j].deg == null ? -1 : opts[j].deg), opts[j].kind);   // flatIdx, deg, kind
+	outlet(7, "capture", captureMode ? 1 : 0);                   // état CAPTURE (pad ligne vide)
+	// progsel = (colonne dans la fenêtre ou -1 hors fenêtre, mode, début de fenêtre) : le spike ajoute
+	// le début de fenêtre à la colonne d'un pad pour renvoyer `selprog` en index de carte RÉEL.
+	outlet(7, "progsel", (sel >= progWin && sel < progWin + PROG_MAX) ? sel - progWin : -1, progMode, progWin);
+	outlet(7, "progdone");
+}
+
+// --- Handlers du layout Push « progression » (toggle / cycle de mode / sélection d'étape / option) ---
+var _progCommit = null;   // {mode:"replace"|"insert", idx} : posé par selopt, consommé par captureChord
+
+// Réalise les notes d'une option SANS effet de bord (preview VL jetable) — pour l'audition (CAPTURE off).
+function _realizeOption(idx, opt){
+	var step = progression[idx], fn, d, cs, ct;
+	if (opt.kind === "voic"){ fn = step.fn; d = step.deg; cs = step.colorSemis; ct = step.colorType; }   // re-voice de l'étape
+	else if (opt.fn === "color"){ fn = "color"; d = 0; cs = opt.colorSemis; ct = opt.colorType; }        // emprunt (suite)
+	else { fn = opt.fn; d = opt.deg; cs = 0; ct = ""; }                                                   // diatonique
+	if (fn === "color") d = 0;
+	// Style temporaire : passé en option d'aperçu, plus d'échange sur currentVoicing — le
+	// voicing global n'est jamais écrit, donc rien à restaurer et rien à perdre sur exception.
+	var notes;
+	if (opt.kind === "voic" && opt.voicing) notes = _vl2_play(fn, d, cs, ct, {preview:true, voicing:opt.voicing});
+	else notes = _vl2_previewNotes(fn, d, cs, ct);
+	return notes || [];
+}
+// Émet un accord d'audition (même chemin que playprog : note-off + _emitNotes + Monitor + clavier).
+function _auditionNotes(notes, name, deg){
+	if (!notes || !notes.length) return;
+	sendNoteOff();
+	activeNotes = notes.slice();
+	_emitNotes(notes);
+	if (name != null) outlet(7, "monitor", String(name), (deg == null ? -1 : deg));   // nom + degré (APRÈS clearnotes de sendNoteOff, AVANT 'notes' — sinon le Monitor reste vide)
+	outlet(7, ["notes"].concat(activeNotes));
+}
+// Nom d'affichage d'une option pour le Monitor : libellé diatonique (gridLabel) ou nom d'emprunt.
+function _optName(opt){
+	if (opt.fn === "color"){
+		var bl = borrowedFor(), i;
+		for (i = 0; i < bl.length; i++) if (bl[i].semis === opt.colorSemis && bl[i].type === opt.colorType) return NOTE_NAMES[(((root + bl[i].semis) % 12) + 12) % 12] + (extendedOn ? _borSuffix(bl[i].semis, bl[i].type, true) : bl[i].suf);
+		return "·";
+	}
+	return gridLabel(opt.deg, opt.fn);
+}
+// Cellule de grille (forme playFlatCell) pour une option / une étape : emprunt -> "b", sinon "d".
+function _cellFor(o){ return (o.fn === "color") ? { kind:"b", semis:o.colorSemis, type:o.colorType } : { kind:"d", fn:o.fn, degree:o.deg }; }
+
+// ⚠️ Allumer PROG remettait la sélection à 0 SANS CONDITION, écrasant l'étape que
+// l'utilisateur venait de choisir dans le tiroir — le focus Push sautait à la
+// première carte au moment précis où on activait Push pour la regarder. La remise
+// à 0 ne vaut que pour une sélection ABSENTE ou périmée ; sinon on garde celle qui
+// existe. Mesuré le 2026-09-02 avec l'audit des contrôles du tiroir.
+function progmode(v){
+	progPushOn = (parseInt(v) === 1);
+	if (progPushOn && (progSel < 0 || progSel >= progression.length)) progSel = 0;
+	outlet(7, "progmode", progPushOn ? 1 : 0);
+	if (progPushOn) broadcastProgPush();
+}
+// ◀ ▶ du Push : décale la fenêtre d'une carte (d = -1 | 1) ; broadcastProgPush la borne au début et
+// à la fin de la bande.
+function progwin(d){
+	progWin += (parseInt(d) < 0) ? -1 : 1;
+	if (progPushOn) broadcastProgPush();
+}
+function progmodecycle(){ progMode = (progMode + 1) % 3; outlet(7, "progmodeui", progMode); if (progPushOn) broadcastProgPush(); }
+// Sélection d'une étape (rangée 0 du Push) : la sélectionne + l'écoute (réutilise playprog).
+function selprog(col){
+	var i = _idx(col, progression.length);   // index de carte RÉEL : le spike y a ajouté le début de fenêtre (tuple-dev#123)
+	if (i < 0) return;
+	progSel = i;
+	playprog(i);
+	if (progPushOn) broadcastProgPush();
+}
+// Appui d'une option dans la grille. `flat` = index à plat dans les options de l'étape SÉLECTIONNÉE.
+// CAPTURE off -> écoute ; CAPTURE on -> édite : Subs/Voicings remplacent l'étape, Suite insère après —
+// en rejouant l'option par le VRAI chemin (son/nom/état) via _progCommit.
+function selopt(flat){
+	var idx = _progSelIdx(), f = parseInt(flat);
+	if (idx < 0 || idx >= progression.length) return;
+	var opts = _progOptions(idx);
+	if (f < 0 || f >= opts.length) return;
+	var opt = opts[f];
+	if (!captureMode){ _auditionNotes(_realizeOption(idx, opt), _optName(opt), (opt.deg == null ? -1 : opt.deg)); return; }   // écoute + nom dans le Monitor
+	var step = progression[idx], cell, savedVc = null;
+	if (opt.kind === "voic"){
+		cell = _cellFor({ fn:step.fn, deg:step.deg, colorSemis:step.colorSemis, colorType:step.colorType });
+		if (opt.voicing){ savedVc = currentVoicing; currentVoicing = opt.voicing; }   // re-voice temporaire (n'altère pas le voicing live)
+		_progCommit = { mode:"replace", idx:idx, voicing: opt.voicing };             // style EXPLICITE sur la carte (sinon le style global, cf. _progEntry)
+	} else if (progMode === PROG_MODE_SUITE){
+		cell = _cellFor(opt);
+		_progCommit = { mode:"insert", idx:idx };
+	} else {                                                                          // SUBS
+		cell = _cellFor(opt);
+		_progCommit = { mode:"replace", idx:idx };
+	}
+	try {
+		playFlatCell(cell);             // -> sendChord -> captureChord consomme _progCommit (splice)
+	} finally {
+		if (savedVc !== null) currentVoicing = savedVc;   // le voicing global survit à une exception de jeu
+		_progCommit = null;             // filet : déjà consommé en temps normal — et JAMAIS laissé à une capture future
+	}
+}
+
+// Durée d'une carte, en MESURES. Une carte d'avant l'introduction du champ (ou toute carte dont
+// la valeur ne tient pas debout) vaut UNE mesure : c'est le comportement historique, et le défaut
+// doit être celui-là, jamais zéro — une carte de durée nulle empilerait deux accords sur le même
+// temps sans qu'aucune erreur ne le dise.
+var PROG_BARS_MIN = 0.125;  // croche (1/8 de mesure, 2026-11-04, Antoine) : le pas de la pose et de la durée, et la plus petite carte
+var PROG_BARS_MAX = 16;
+// LA PISTE LIBRE (tuple-dev#141, révision d'Antoine du 2026-11-02 sur la spec #121) : une carte se
+// pose où on la lâche, au quart de mesure, et les TROUS RESTENT. Le départ (`start`, en mesures) est
+// une donnée posée ; la progression reste triée par départ, sans chevauchement, et finit au plus à
+// seize mesures. Une carte qui en pousse d'autres ne les pousse qu'autant qu'elle les chevauche : un
+// trou plus loin absorbe la poussée. Ce modèle remplace la bande sans trou de tuple-dev#122.
+// LA BOUCLE SE CHOISIT (2026-11-03, Antoine, façade v4) : la piste EST la boucle. L'UI en règle la taille
+// (`progloop`, par blocs, 4 mesures par défaut) ; elle ne descend jamais sous la fin de la dernière carte, et une
+// carte posée au-delà l'allonge. PROG_TRACK_BARS n'est plus que le plafond de la piste (seize mesures jusque-là).
+var PROG_TRACK_BARS = 32;       // plafond de la piste : trente-deux mesures, huit pages de quatre
+var PROG_BLOC_BARS = 4;         // un BLOC : unité de longueur de la boucle et du clip
+var progLoopChoisie = PROG_BLOC_BARS;   // la taille demandée par l'UI ; la boucle effective est _loopBars()
+var progLoopCoupe = 0;                 // une boucle demandée SOUS la dernière carte (0 : aucune) ; ces cartes restent, muettes
+var PROG_BEATS_PER_BAR = 4;     // la mesure fait toujours quatre temps — la signature du set n'est pas lue
+// Durée OCCUPÉE par les cartes, trous exclus, en mesures.
+function _progTotal() {
+	var t = 0, k;
+	for (k = 0; k < progression.length; k++) t += _entryBars(progression[k]);
+	return t;
+}
+// Fin de la dernière carte, en mesures (0 sans carte) — trous compris.
+function _progEnd() {
+	var n = progression.length;
+	return n ? _entryStart(n - 1) + _entryBars(progression[n - 1]) : 0;
+}
+// La BOUCLE : la taille choisie, ou les blocs entamés jusqu'à la fin de la dernière carte si elle dépasse
+// (fin 10 → 12). Les trous et le reste de la boucle sont des silences. C'est aussi la longueur du clip Live.
+// Raccourcie sous les cartes (2026-11-07, Antoine), elle l'emporte : les cartes d'au-delà restent, ni jouées ni écrites.
+function _loopBars() {
+	var n = Math.ceil(_progEnd() / PROG_BLOC_BARS - 1e-9) * PROG_BLOC_BARS;
+	if (progLoopCoupe > 0 && progLoopCoupe < n) return progLoopCoupe;
+	return Math.max(progLoopChoisie, n, PROG_BLOC_BARS);
+}
+// UI : « progloop n » — la taille voulue, arrondie au bloc et bornée à la piste. L'UI reçoit la taille effective.
+function progloop(n) {
+	n = Math.round(parseFloat(n) / PROG_BLOC_BARS) * PROG_BLOC_BARS;
+	if (!(n >= PROG_BLOC_BARS)) n = PROG_BLOC_BARS;
+	if (n > PROG_TRACK_BARS) n = PROG_TRACK_BARS;
+	progLoopChoisie = n;
+	progLoopCoupe = (n < Math.ceil(_progEnd() / PROG_BLOC_BARS - 1e-9) * PROG_BLOC_BARS) ? n : 0;
+	broadcastProg();   // le clip lié, le séquenceur et le Blob suivent la boucle
+}
+// Départ d'une carte en MESURES : sa donnée posée. Une carte qui n'en a pas (rangée sans passer par la
+// pose) part à la fin de la précédente.
+function _entryStart(i) {
+	var p = progression[i], s = p ? parseFloat(p.start) : NaN;
+	if (s >= 0) return s;
+	return (i > 0) ? _entryStart(i - 1) + _entryBars(progression[i - 1]) : 0;
+}
+function _entryBars(e) {
+	var b = (e && e.bars !== undefined) ? parseFloat(e.bars) : 1;
+	if (!(b >= PROG_BARS_MIN) || !(b <= PROG_BARS_MAX)) return 1;
+	return b;
+}
+function _quart(b) { return Math.round(b / PROG_BARS_MIN) * PROG_BARS_MIN; }
+// Écrit le départ de chaque carte (celles qui n'en ont pas le reçoivent) : une mutation lit et écrit des
+// départs posés, jamais des départs déduits qui bougeraient avec elle.
+function _progFige() {
+	for (var k = 0; k < progression.length; k++) progression[k].start = _entryStart(k);
+}
+// Poussée en cascade depuis le rang k : chaque carte suivante qui chevauche la précédente part à sa
+// fin ; la première qui ne la chevauche plus arrête tout (le trou a absorbé la poussée).
+function _progPousse(k) {
+	for (var j = k + 1; j < progression.length; j++) {
+		var fin = _entryStart(j - 1) + _entryBars(progression[j - 1]);
+		if (_entryStart(j) >= fin - 1e-9) break;
+		progression[j].start = fin;
+	}
+}
+// Place qu'une carte peut prendre en partant de `pos`, devant les cartes à partir du rang k : la piste
+// moins leurs durées — tous les trous derrière elle peuvent être mangés par la poussée.
+function _progRoom(pos, k) {
+	var r = PROG_TRACK_BARS - pos, j;
+	for (j = k; j < progression.length; j++) r -= _entryBars(progression[j]);
+	return r;
+}
+// Où tombe une carte de durée `b` lâchée à la mesure `pos` (au quart, bornée à la piste) : DANS une
+// carte, elle se place avant ou après elle selon la moitié visée (prototype de tuple-dev#111,
+// variante A). Rend { s, k } (départ, rang d'arrivée), ou null si la poussée dépasserait seize mesures.
+// Les départs doivent être figés, et la carte déplacée retirée de la progression.
+function _progVise(b, pos) {
+	var s = _quart(pos), k, st, fin;
+	if (s > PROG_TRACK_BARS - b) s = PROG_TRACK_BARS - b;
+	if (s < 0) s = 0;
+	for (k = 0; k < progression.length; k++) {
+		st = _entryStart(k); fin = st + _entryBars(progression[k]);
+		if (st < s - 1e-9 && s < fin - 1e-9) { s = (s - st < (fin - st) / 2) ? st : fin; break; }
+	}
+	for (k = 0; k < progression.length && _entryStart(k) < s - 1e-9; k++);
+	return (b <= _progRoom(s, k) + 1e-9) ? { s: s, k: k } : null;
+}
+// Range la carte `e` au rang k, au départ s, et pousse ce qu'elle chevauche. La sélection moteur suit
+// sa carte : `sel` est la carte sélectionnée avant le geste (null : aucune).
+function _progRange(e, s, k, sel) {
+	e.start = s;
+	progression.splice(k, 0, e);
+	_progPousse(k);
+	if (sel) progSel = progression.indexOf(sel);
+}
+function _progSelRef() { return (progSel >= 0 && progSel < progression.length) ? progression[progSel] : null; }
+// Insère une NOUVELLE carte juste après la carte `ref` (-1 : après la dernière carte de la piste),
+// sans trou, en poussant la suivante si elle est collée. Elle garde sa durée (une mesure par défaut)
+// si la place le permet, sinon elle prend ce qui reste au quart près ; moins d'un quart → false
+// (l'appelant dit progfull). Capture et mode Suite du Push passent ici.
+function _progInsert(entry, ref) {
+	_progFige();
+	var r = parseInt(ref), k, pos;
+	if (r >= 0 && r < progression.length) { k = r + 1; pos = _entryStart(r) + _entryBars(progression[r]); }
+	else { k = progression.length; pos = _progEnd(); }
+	var room = _progRoom(pos, k);
+	if (room < PROG_BARS_MIN - 1e-9) return false;
+	_undoPush();
+	var b = (entry.bars > 0) ? entry.bars : 1;
+	if (b > room) b = Math.floor(room / PROG_BARS_MIN + 1e-9) * PROG_BARS_MIN;
+	entry.bars = b;
+	_progRange(entry, pos, k, _progSelRef());
+	if (progLoopCoupe > 0 && pos + b > progLoopCoupe) progLoopCoupe = 0;   // jouer au-delà de la boucle courte la rouvre
+	// La carte suivante a changé de prédécesseur : elle se re-conduit (arrêt à la première épinglée).
+	// La carte insérée, elle, garde les notes qu'on vient d'entendre — comme une capture en fin.
+	_progRelink(k + 1);
+	return true;
+}
+// Une édition de l'ORDRE (insertion, déplacement, suppression) change le prédécesseur d'une carte :
+// le voice leading se re-conduit depuis ce rang, avec la règle habituelle — une carte épinglée arrête
+// la cascade, et une épinglée au rang de départ n'est pas touchée.
+function _progRelink(i) {
+	if (i >= 0 && i < progression.length && progression[i].vlMode === "follow") _recascadeFrom(i);
+}
+// Pose la carte `i` à la mesure `pos` (tuple-dev#141) : là où on la lâche, au quart ; dans une carte,
+// avant ou après elle selon la moitié visée, puis poussée en cascade des suivantes chevauchées. Les
+// durées ne changent pas, les trous restent. Sans la place : refus, rien ne bouge. Le voice leading se
+// re-conduit depuis la première carte dont la précédente a changé.
+function progplace(i, pos) {
+	var n = progression.length, p = parseFloat(pos);
+	i = _idx(i, n);
+	if (i < 0 || isNaN(p)) return;
+	_progFige();
+	var avant = progression.slice(), sel = _progSelRef(), e = progression.splice(i, 1)[0];
+	var v = _progVise(_entryBars(e), p), k, j;
+	progression = avant;
+	if (!v || (v.s === e.start && v.k === i)) return;   // refus, ou reposée sur place
+	_undoPush();
+	progression = avant.slice();
+	progression.splice(i, 1);
+	_progRange(e, v.s, v.k, sel);
+	for (k = 0; k < progression.length; k++) {
+		j = avant.indexOf(progression[k]);
+		if ((k ? progression[k - 1] : null) !== (j > 0 ? avant[j - 1] : null)) { _progRelink(k); break; }
+	}
+	broadcastProg();
+}
+
+// LA CARTE ÉTIRÉE REMPLACE CE QU'ELLE RECOUVRE, comme un clip dans Live (2026-11-05, Antoine) : rien n'est
+// poussé. Une carte entièrement couverte disparaît, une carte couverte en partie garde ce qui dépasse, à
+// condition qu'il en reste une croche. Rend vrai si une carte a disparu : le voice leading se re-conduit.
+function _progRecouvre(e) {
+	var s = e.start, fin = s + _entryBars(e), sel = _progSelRef(), retiree = false, k, c, cs, cf;
+	for (k = progression.length - 1; k >= 0; k--) {
+		c = progression[k];
+		if (c === e) continue;
+		cs = _entryStart(k); cf = cs + _entryBars(c);
+		if (cf <= s + 1e-9 || cs >= fin - 1e-9) continue;
+		if (cs < s - 1e-9) c.bars = s - cs;
+		else if (cf > fin + 1e-9) { c.start = fin; c.bars = cf - fin; }
+		else c.bars = 0;
+		if (c.bars < PROG_BARS_MIN - 1e-9) { progression.splice(k, 1); retiree = true; }
+	}
+	if (sel) progSel = progression.indexOf(sel);
+	return retiree;
+}
+// Règle la DURÉE d'une carte. Allongée, elle remplace ce qu'elle recouvre (_progRecouvre) ; raccourcie,
+// elle laisse un trou. Elle s'arrête à la fin de la piste. Passe par broadcastProg, donc le clip lié se
+// réécrit tout seul (broadcastProg -> _clipSyncDirty -> _clipRewrite), et en Arrangement l'étendue
+// suit via _clipArrFit.
+function progbars(i, n) {
+	i = _idx(i, progression.length);
+	if (i < 0) return;
+	var b = parseFloat(n);
+	// Refus BRUYANT plutôt que valeur rabotée : une durée hors bornes vient d'un appelant fautif,
+	// et la corriger en silence masquerait le défaut au lieu de le montrer.
+	if (!(b >= PROG_BARS_MIN) || !(b <= PROG_BARS_MAX)) { post("progbars: duree invalide '" + n + "'\n"); return; }
+	b = _quart(b);   // quantifié au quart de mesure
+	_progFige();
+	var room = PROG_TRACK_BARS - _entryStart(i);
+	if (b > room) b = Math.floor(room / PROG_BARS_MIN + 1e-9) * PROG_BARS_MIN;
+	if (b < PROG_BARS_MIN) b = PROG_BARS_MIN;
+	if (b === _entryBars(progression[i])) return;
+	_undoPush();
+	var e = progression[i];
+	e.bars = b;
+	if (_progRecouvre(e)) _progRelink(progression.indexOf(e) + 1);
+	broadcastProg();
+}
+
+// APERÇU DU GESTE (2026-11-07, Antoine : le clip doit suivre pendant qu'on étire). La carte n'est posée qu'au lâcher :
+// recouvrir une carte l'efface, et revenir en arrière dans le même geste doit la rendre. Le clip reçoit donc l'état
+// du geste, puis la progression reprend le sien, sans diffusion ni annulation. En Arrangement, changer le nombre de
+// blocs recrée le clip (_clipArrFit) : l'aperçu s'en abstient, le lâcher le fera une seule fois.
+function progapercu(i, debut, duree) {
+	i = _idx(i, progression.length);
+	var s = parseFloat(debut), b = parseFloat(duree);
+	if (i < 0 || !(s >= 0) || !(b >= PROG_BARS_MIN) || !_clipLink.id || !_clipOwned) return;
+	var garde = progression.slice(), sel = progSel, etats = [], k, lb = _loopBars();
+	_progFige();
+	for (k = 0; k < garde.length; k++) etats.push([garde[k].start, garde[k].bars]);
+	var e = progression[i];
+	e.start = _quart(s); e.bars = _quart(b);
+	_progRecouvre(e);
+	if (_clipLink.target !== "arrangement" || _loopBars() === lb) _clipRewrite();
+	progression.length = 0;
+	for (k = 0; k < garde.length; k++) { progression.push(garde[k]); garde[k].start = etats[k][0]; garde[k].bars = etats[k][1]; }
+	progSel = sel;
+}
+
+// Le BORD GAUCHE d'une carte (2026-11-03, Antoine : « on ne peut pas agrandir une carte vers la gauche ») : le
+// départ bouge, la FIN reste. Au plus PROG_BARS_MAX, une croche au moins, posé à la croche ; rien d'empilé si rien
+// ne bouge. Sur la carte d'avant, le bord la remplace comme le bord droit (_progRecouvre).
+function progtrim(i, pos) {
+	i = _idx(i, progression.length);
+	var s = parseFloat(pos);
+	if (i < 0 || isNaN(s)) return;
+	_progFige();
+	var e = progression[i], fin = _entryStart(i) + _entryBars(e);
+	s = _quart(s);
+	if (s < 0) s = 0;
+	if (s < fin - PROG_BARS_MAX) s = fin - PROG_BARS_MAX;
+	if (s > fin - PROG_BARS_MIN) s = fin - PROG_BARS_MIN;
+	if (s === _entryStart(i)) return;
+	_undoPush();
+	e.start = s;
+	e.bars = fin - s;
+	if (_progRecouvre(e)) _progRelink(progression.indexOf(e));
+	broadcastProg();
+}
+
+// ── Sélection multiple (tuple-dev#77, rétablie sur la piste libre par tuple-dev#142) ──────────
+// Un GROUPE de cartes se supprime, se déplace ou se duplique en UN geste ATOMIQUE : un seul
+// instantané d'annulation, un seul broadcast (donc une seule réécriture du clip lié).
+//   · `progmulti del i…`       — les places deviennent des trous (tuple-dev#141) ;
+//   · `progmulti move pos i…`  — le groupe part ensemble, écarts internes gardés ;
+//   · `progmulti copy pos i…`  — même pose, l'original reste.
+// `pos` vise le départ de la PREMIÈRE carte du groupe, comme `progplace` vise celui d'une carte : un
+// groupe d'une carte se déplace exactement comme elle.
+//
+// La barre d'édition (tuple-dev#128) applique son geste à toutes les cartes sélectionnées, par les mêmes règles
+// que les setters d'une carte (progvoicing, setoct, setinv, settension, resetinv) :
+//   · `progmulti voicing <style> i…` — le même style sur chacune ;
+//   · `progmulti oct <n> i…`         — la même octave (-2..+2) ;
+//   · `progmulti inv <d> i…`         — chaque carte décale SA propre inversion de d crans (cycle) et s'épingle ;
+//   · `progmulti tens <t> <0|1> i…`  — la même tension, là où l'offre de la carte la permet ;
+//   · `progmulti pin <0|1> i…`       — épingle en gardant l'inversion, ou rend au voice-leading (comme resetinv).
+// Un instantané s'il y a au moins un changement, aucun sinon ; un broadcast.
+var _PM_EDITS = { voicing: 1, oct: 1, inv: 1, tens: 1, pin: 1 };
+function progmulti(verb) {
+	var v = String(verb), a = Array.prototype.slice.call(arguments, 1), pos;
+	if (_PM_EDITS[v] === 1) { _progMultiEdit(v, a); return; }
+	if (v !== "del" && v !== "move" && v !== "copy") { post("progmulti: verbe inconnu '" + v + "'\n"); return; }
+	if (v !== "del") { pos = parseFloat(a.shift()); if (isNaN(pos)) return; }
+	var i, k, idxs = [], seen = {};
+	for (k = 0; k < a.length; k++) {
+		i = _idx(a[k], progression.length);
+		if (i < 0 || seen[i]) continue;
+		seen[i] = true; idxs.push(i);
+	}
+	if (!idxs.length) return;
+	if (v !== "del") { _progPoseGroupe(idxs, pos, v === "copy"); return; }
+	_undoPush();
+	_progFige();                    // les places supprimées deviennent des trous (tuple-dev#141)
+	var selRef = (progSel >= 0 && progSel < progression.length) ? progression[progSel] : null;
+	idxs.sort(function (x, y) { return y - x; });   // de la fin vers le début : les index restent vrais
+	for (k = 0; k < idxs.length; k++) progression.splice(idxs[k], 1);
+	progSel = -1;
+	if (selRef) for (i = 0; i < progression.length; i++) if (progression[i] === selRef) { progSel = i; break; }
+	_progRelink(idxs[idxs.length - 1]);   // depuis le plus petit rang supprimé (idxs est trié décroissant)
+	broadcastProg();
+}
+function _progMultiEdit(v, a) {
+	var arg = a.shift(), on = false, k, i, p, n, c, nv, idxs = [], seen = {}, ch = [];
+	// L'argument se valide AVANT tout instantané : un geste refusé ne doit rien empiler.
+	if (v === "voicing") {
+		arg = String(arg);
+		if (!_isVoicingName(arg)) { post("progmulti voicing: style inconnu '" + arg + "'\n"); return; }
+	} else if (v === "tens") {
+		on = (parseInt(a.shift()) === 1);   // `arg` reste la couleur, que _tensVise valide carte par carte
+	} else {
+		arg = parseInt(arg);
+		if (isNaN(arg)) { post("progmulti " + v + ": valeur invalide\n"); return; }
+		if (v === "oct") { if (arg < -2) arg = -2; if (arg > 2) arg = 2; }
+	}
+	for (k = 0; k < a.length; k++) {
+		i = _idx(a[k], progression.length);
+		if (i < 0 || seen[i]) continue;
+		seen[i] = true; idxs.push(i);
+	}
+	idxs.sort(function (x, y) { return x - y; });
+	// Les cartes que le geste change vraiment, avec leur valeur visée.
+	for (k = 0; k < idxs.length; k++) {
+		p = progression[idxs[k]];
+		if (v === "voicing") { if (p.voicing !== arg) ch.push({ i: idxs[k] }); }
+		else if (v === "oct") { if ((parseInt(p.oct) || 0) !== arg) ch.push({ i: idxs[k] }); }
+		else if (v === "inv") {
+			n = (p.notes && p.notes.length) ? p.notes.length : 0;
+			if (!n) continue;
+			nv = ((((p.inv || 0) + arg) % n) + n) % n;
+			if (nv !== (p.inv || 0) || p.vlMode !== "pinned") ch.push({ i: idxs[k], inv: nv });
+		}
+		else if (v === "pin") { if (arg === 1 ? p.vlMode === "follow" : (p.vlMode !== "follow" || p.inv)) ch.push({ i: idxs[k] }); }
+		else { c = _tensVise(p, arg); if (c && c.state !== (on ? "on" : "off")) ch.push({ i: idxs[k], color: c.color }); }
+	}
+	if (!ch.length) return;
+	_undoPush();
+	for (k = 0; k < ch.length; k++) {
+		p = progression[ch[k].i];
+		if (v === "voicing") p.voicing = arg;
+		else if (v === "oct") _octPose(p, arg);
+		else if (v === "inv") { p.vlMode = "pinned"; p.inv = ch[k].inv; }
+		else if (v === "pin") { if (arg === 1) p.vlMode = "pinned"; else { p.vlMode = "follow"; p.inv = 0; } }
+		else _tensPose(p, ch[k].color, on);
+	}
+	// Style, inversion et épingle re-réalisent la carte et propagent aux suivantes en "follow", dans l'ordre de la
+	// piste : chaque carte se re-conduit depuis une précédente déjà à jour. L'octave et les tensions ne re-réalisent
+	// rien, comme leurs setters.
+	if (v === "voicing" || v === "inv" || v === "pin") for (k = 0; k < ch.length; k++) _recascadeFrom(ch[k].i);
+	broadcastProg();
+}
+// Pose le groupe `idxs` (déplacé, ou copié si `copie`) avec sa première carte à `pos`. La visée est celle
+// d'une carte seule (_progVise) : au quart, le groupe borné à la piste, sa première carte lâchée DANS
+// une carte hors groupe se place avant ou après elle selon la moitié visée. Puis les cartes hors groupe
+// (les originaux compris, pour une copie) sont poussées en cascade : chacune part au plus tôt à la fin
+// de la précédente, et passe derrière toute carte du groupe qu'elle chevaucherait. Plus de seize
+// mesures : refus, rien ne bouge.
+function _progPoseGroupe(idxs, pos, copie) {
+	_progFige();
+	var avant = progression.slice(), sel = _progSelRef(), grp = [], autres = [], posee = [], deps = [];
+	var k, j, g, s, x, e, fin;
+	idxs.sort(function (p, q) { return p - q; });
+	for (k = 0; k < idxs.length; k++) grp.push(avant[idxs[k]]);
+	for (k = 0; k < avant.length; k++) if (copie || idxs.indexOf(k) < 0) autres.push(avant[k]);
+	g = grp[0].start;
+	for (fin = g, k = 0; k < grp.length; k++) fin = Math.max(fin, grp[k].start + _entryBars(grp[k]));
+	s = _quart(pos);
+	if (s > PROG_TRACK_BARS - (fin - g)) s = PROG_TRACK_BARS - (fin - g);
+	if (s < 0) s = 0;
+	for (k = 0; k < autres.length; k++) {
+		x = autres[k].start; e = x + _entryBars(autres[k]);
+		if (x < s - 1e-9 && s < e - 1e-9) { s = (s - x < (e - x) / 2) ? x : e; break; }
+	}
+	if (!copie && s === g) return;                  // reposé sur place
+	for (k = 0; k < grp.length; k++) posee.push(grp[k].start + s - g);
+	for (fin = 0, k = 0; k < autres.length; k++) {
+		x = Math.max(autres[k].start, fin);
+		for (j = 0; j < grp.length; j++)
+			if (x < posee[j] + _entryBars(grp[j]) - 1e-9 && x + _entryBars(autres[k]) > posee[j] + 1e-9) x = posee[j] + _entryBars(grp[j]);
+		deps.push(x); fin = x + _entryBars(autres[k]);
+	}
+	for (k = 0; k < grp.length; k++) fin = Math.max(fin, posee[k] + _entryBars(grp[k]));
+	if (fin > PROG_TRACK_BARS + 1e-9) return;       // refus : rien ne bouge
+	_undoPush();
+	for (k = 0; k < autres.length; k++) autres[k].start = deps[k];
+	for (k = 0; k < grp.length; k++) {
+		if (copie) {                                // une carte neuve : ses propres notes, sa propre identité
+			e = _cloneEntry(grp[k]); delete e.uid;
+			if (grp[k] === sel) sel = e;            // la sélection suit le groupe que l'on vient de poser
+			grp[k] = e;
+		}
+		grp[k].start = posee[k];
+	}
+	progression = autres.concat(grp);
+	progression.sort(function (p, q) { return p.start - q.start; });
+	progSel = sel ? progression.indexOf(sel) : -1;
+	// Le voice leading se re-conduit depuis la première carte dont la précédente a changé (comme progplace).
+	for (k = 0; k < progression.length; k++) {
+		j = avant.indexOf(progression[k]);
+		if ((k ? progression[k - 1] : null) !== (j > 0 ? avant[j - 1] : null)) { _progRelink(k); break; }
+	}
+	broadcastProg();
+}
+
+// Hasard REPRODUCTIBLE pour l'écriture de clip. Le jeu live tire `Math.random()` et c'est très
+// bien : chaque passe doit respirer différemment. Un clip, non — il est ÉCRIT, puis réécrit à
+// chaque édition de la progression. Avec `Math.random()`, allonger la 5e carte re-tirerait le feel
+// des quatre premières, et le geste le plus anodin détruirait un réglage qu'on venait d'aimer.
+// D'où une suite déterministe, clavetée sur (carte, note) : elle a l'air aléatoire, elle ne bouge
+// jamais. Pas de graine stockée sur la carte — la position EST la graine, donc rien à migrer.
+function _clipRand(cardIdx, noteIdx, salt) {
+	var x = (cardIdx + 1) * 374761393 + (noteIdx + 1) * 668265263 + salt * 2246822519;
+	x = (x ^ (x >>> 13)) >>> 0;
+	x = (x * 1274126177) >>> 0;
+	x = (x ^ (x >>> 16)) >>> 0;
+	return x / 4294967296;                     // [0, 1)
+}
+// Même forme en cloche que `_bell()` (somme de deux tirages), mais reproductible.
+function _clipBell(cardIdx, noteIdx, salt) {
+	return _clipRand(cardIdx, noteIdx, salt) + _clipRand(cardIdx, noteIdx, salt + 977) - 1;
+}
+
+// Construit les notes de la progression. Le temps de clip Live se compte en noires, et une mesure
+// de la piste en fait toujours PROG_BEATS_PER_BAR : la signature du set n'est plus lue
+// (tuple-dev#122, tranché avec Antoine le 2026-11-02 — dans un set qui n'est pas en 4/4, Tuple
+// compte en temps ; le clip est juste en durée, ses blocs ne tombent plus sur les mesures de Live).
+// Renvoie null sur progression vide. PARTAGÉ par les trois chemins d'écriture du live-sync :
+// tous doivent produire exactement les mêmes notes, sinon lier un clip changerait le rendu.
+function _progToNotes() {
+	if (!progression.length) return null;
+	var song = new LiveAPI(function(){}, "live_set");
+	var barLen = PROG_BEATS_PER_BAR;
+	var notes = [], i, k;
+	// Départ = `_entryStart(i)` : la donnée posée de la carte, trous compris (tuple-dev#141). C'est le seul
+	// endroit qui décide de la place des accords dans le temps du clip.
+	// EXPRESSION. Le clip reçoit ce qu'on entend : strum et humanize s'y écrivent, avec les
+	// contrôles STRUM / HUMANIZE pour seule vérité. Tout à zéro (le défaut) redonne exactement le
+	// bloc propre d'avant — pas de nouveau réglage, pas de surprise pour un set existant.
+	// ⚠️ Le jeu live programme des Tasks en MILLISECONDES ; un clip se compte en TEMPS. La
+	// conversion passe par le tempo, qu'il faut donc lire — l'oublier écrirait des strums 500 fois
+	// trop larges à 120 BPM.
+	var tempo = song.get("tempo"); tempo = parseFloat((tempo instanceof Array) ? tempo[0] : tempo);
+	if (!(tempo > 0)) tempo = 120;
+	var msToBeats = tempo / 60000;
+
+	var mag = Math.abs(_strumMs), up = (_strumMs >= 0);
+	var curveP = STRUM_CURVE_P[strumCurve] || 1.0;
+
+	// Le clip fait la BOUCLE — les blocs entamés —, même si la dernière carte finit avant : le reste du
+	// bloc est un silence, sans note.
+	var total = _loopBars() * barLen;
+	for (i = 0; i < progression.length; i++) {
+		var span = _entryBars(progression[i]) * barLen, ns = progression[i].notes;
+		var acc = _entryStart(i) * barLen;
+		if (acc >= total - 1e-9) continue;                 // au-delà de la boucle : ni jouée ni écrite
+		if (acc + span > total) span = total - acc;        // à cheval : coupée à la fin de la boucle
+		var n = ns.length;
+		var strum = (mag > 0 && n > 1);
+
+		var rank = _strumRank(ns);
+
+		var T = strum ? (n - 1) * mag : 0;
+		for (k = 0; k < n; k++) {
+			var seq = strum ? _strumSeq(rank, k, n, up) : 0;
+			var offMs = strum ? T * _strumFrac(seq, n, curveP) : 0;
+			if (humanizeAmt) offMs += _clipBell(i, k, 1) * (humanizeAmt / 100 * 60);
+			var off = offMs * msToBeats;
+			// Jamais avant le départ de la carte : une note qui recule empiéterait sur l'accord
+			// précédent, que l'utilisateur n'a pas touché.
+			if (off < 0) off = 0;
+			// Ni au-delà : un strum large sur une carte courte sortirait de sa place.
+			if (off > span * 0.5) off = span * 0.5;
+
+			var v = 100;
+			if (strum && strumRamp) v = 100 * _strumRampFactor(seq, n, strumRamp);
+			if (humanizeAmt) v += _clipBell(i, k, 2) * (humanizeAmt * 0.55);
+			v = Math.round(v); if (v < 1) v = 1; if (v > 127) v = 127;
+			v = _velPlage(v);   // même filtre qu'au jeu (#38) : un clip qui sonnerait plus fort mentirait
+
+			// La note garde sa FIN sur la frontière de la carte : le strum retarde l'attaque, il ne
+			// pousse pas la fin de l'accord dans le suivant.
+			notes.push({ pitch: ns[k], start: acc + off, dur: span - off, vel: v });
+		}
+	}
+	return { notes: notes, total: total, barLen: barLen };
+}
+
+// =====================================================
+// LIVE-SYNC (tranche M) — lien PERSISTANT vers UN clip.
+// Le lien mémorise l'**id LiveAPI
+// concret** du clip à l'établissement : sans ça la 2e écriture partirait dans le slot sélectionné du
+// moment, pas dans le clip lié. D'où la séparation établissement (crée) / réécriture (adresse par id).
+// Plan : docs/superpowers/changes/2026-07-20-harmonybeam-integration/plan-m.md
+// =====================================================
+
+var _clipLink  = { id: null, track: "", clip: "", target: "session" };   // id null = aucun lien actif
+var _clipDirty = false;                                        // une réécriture est déjà planifiée
+
+// CLIP-AUTO-FOCUS (#45) — trois états qui décident SEULS si Tuple a le droit d'écrire.
+//   _clipFollow   : le suivi de la sélection Live est-il armé (toggle utilisateur, OFF au chargement).
+//   _clipOwned    : Tuple a-t-il CRÉÉ ce clip ? Un clip qu'il a créé lui appartient — écritures
+//                   libres. Un clip ATTACHÉ par Follow appartient à l'utilisateur : la première
+//                   écriture demande un oui, UNE fois, et le clip devient nôtre ensuite.
+//   _replaceArmed : cette question est-elle posée en ce moment (l'UI affiche REPLACE?).
+// La doctrine vient de _linkAdopt, supprimé ici : « adopter un clip qu'on voulait lire, c'est le
+// perdre — d'où le libellé qui NOMME l'action ». Follow supprime ce geste nommé ; la confirmation
+// le remplace, sinon un simple clic dans Live suffirait à effacer le clip de quelqu'un.
+var _clipFollow   = false;
+var _clipOwned    = false;
+var _replaceArmed = false;
+var _followObs    = [];
+
+// Le clip lié existe-t-il encore ? (l'utilisateur peut l'avoir supprimé dans Live)
+// Renvoie l'objet LiveAPI, ou null — l'appelant rompt alors le lien proprement.
+function _clipLinkApi() {
+	if (!_clipLink.id) return null;
+	try {
+		var c = new LiveAPI(function(){}, "id " + _clipLink.id);
+		if (!c || !c.id || parseInt(c.id) === 0) return null;
+		if (!c.path || String(c.path) === "") return null;   // id survivant mais objet détruit
+		return c;
+	} catch (e) { post("cliplink: id mort (" + e + ")\n"); return null; }
+}
+
+// Réécrit le clip LIÉ. Jamais create_clip : le clip existe déjà et nous appartient.
+function _clipRewrite() {
+	var c = _clipLinkApi();
+	if (!c) { if (_clipLink.id) { post("cliplink: clip disparu -> lien rompu\n"); _linkClear(); } return; }
+	try {
+		var b = _progToNotes();
+		c.call("remove_notes_extended", 0, 128, 0, 1000000);   // table rase sur toute la plage
+		if (!b) { post("cliplink: progression vide -> clip vide (lien conserve)\n"); return; }
+		c.call("add_new_notes", { notes: _notesLom(b.notes) });
+		// Longueur : length et end_time sont LECTURE SEULE au LOM ; loop_end/end_marker sont les
+		// seules écrivables. Sans ça, passer de 4 à 8 accords écrirait 8 mesures dans un clip de 4 →
+		// la moitié de la progression hors du clip, silencieusement.
+		c.set("loop_end", b.total);
+		c.set("end_marker", b.total);
+		// ⚠️ EN ARRANGEMENT, LES DEUX LIGNES CI-DESSUS NE SUFFISENT PAS, et ça a produit un bug
+		// signalé « changer un accord ne marche pas en Arrangement ». Un clip d'arrangement occupe
+		// [start_time, end_time] sur la timeline, et cette étendue N'EST PAS `loop_end`. Mesuré le
+		// 2026-08-18 sur Live 12.2.1 : `end_time` et `length` n'ont PAS DE SETTER, et écrire
+		// `end_marker`/`loop_end` laisse `end_time` inchangé. Constat pris sur le vif — un clip à
+		// `start=64 end=80` (16 temps visibles) portait `length=20` : le 5e accord était bien écrit
+		// mais tombait HORS de la zone jouée. Rien ne le signalait.
+		// La seule sortie est donc de RECRÉER le clip à la bonne longueur, et de relier le neuf.
+		if (_clipLink.target === "arrangement") _clipArrFit(b);
+		post("cliplink: " + progression.length + " accords reecrits (" + b.total + " temps)\n");
+	} catch (e) { outlet(7, "cliperr"); post("cliplink REWRITE ERR " + e + "\n"); }
+}
+
+// Ajuste l'ÉTENDUE d'un clip d'arrangement à la longueur de la progression, en le recréant.
+// Appelé seulement quand l'étendue ne colle plus : recréer à chaque réécriture ferait clignoter le
+// clip et lui ferait perdre son id sans raison.
+//
+// Ce que la recréation coûte, et il faut le savoir : le clip perd ses propriétés propres (nom,
+// couleur, réglages). Tuple est propriétaire du clip lié, donc c'est acceptable — mais c'est le
+// seul endroit du live-sync qui DÉTRUIT puis reconstruit, au lieu de réécrire en place.
+function _clipArrFit(b) {
+	try {
+		var c = _clipLinkApi();
+		if (!c) return;
+		var st = c.get("start_time"); st = parseFloat((st instanceof Array) ? st[0] : st);
+		var en = c.get("end_time");   en = parseFloat((en instanceof Array) ? en[0] : en);
+		if (!(st >= 0) || !(en > st)) return;
+		if (Math.abs((en - st) - b.total) < 0.001) return;      // l'étendue est déjà la bonne
+
+		var tr = new LiveAPI(function(){}, "live_set view selected_track");
+		if (!tr || !tr.id || parseInt(tr.id) === 0) return;
+		// La piste du LIEN, pas celle sélectionnée : l'utilisateur a pu changer de piste entre-temps.
+		var owner = c.get("canonical_parent");
+		var ids = _lomIds(owner || []);
+		if (ids.length) tr = new LiveAPI(function(){}, "id " + ids[0]);
+
+		tr.call("delete_clip", "id", _clipLink.id);
+		tr.call("create_midi_clip", st, b.total);
+
+		// Retrouver le neuf par sa POSITION, comme à l'établissement.
+		var found = _clipParPosition(tr, st);
+		if (found === null) { post("cliplink: recreation arrangement -> clip introuvable, lien rompu\n"); _linkClear(); return; }
+
+		_clipLink.id = String(found);
+		var nc = new LiveAPI(function(){}, "id " + _clipLink.id);
+		nc.call("add_new_notes", { notes: _notesLom(b.notes) });
+		_linkPlayWatch();   // l'id a changé : l'observateur de lecture suit le clip recréé (tuple-dev#77)
+		post("cliplink: clip d'arrangement recree a " + b.total + " temps (id " + _clipLink.id + ")\n");
+	} catch (e) { post("cliplink ARRFIT ERR " + e + "\n"); }
+}
+
+// DÉTECTION DU CLIP VISÉ — pour pouvoir ADOPTER un clip qui existe déjà, au lieu de ne savoir lier
+// que ceux que Tuple vient de créer.
+//
+// ⚠️ Résolu AU MOMENT DU CLIC, jamais par un observateur, et c'est une correction. Un premier jet
+// observait `detail_clip` et basculait l'action sur « adopter » dès qu'un clip était sélectionné.
+// Mesuré : dans Live `detail_clip` reste garni en permanence dès qu'on a touché un clip une fois,
+// donc WRITE CLIP ne créait PLUS JAMAIS de clip neuf. Une détection ne doit pas détourner l'action
+// par défaut.
+//
+// ⚠️ Et `highlighted_clip_slot` N'EST PAS OBSERVABLE de toute façon : mesuré le 2026-08-18 sur
+// Live 12.2.1, `live_set view` n'expose aucun `highlighted_clip_slot_listener` — seuls
+// `detail_clip`, `selected_scene` et `selected_track` en ont un. Le réflexe (observer le slot que
+// lit déjà `_linkEstablish`) n'existe pas.
+//
+// La résolution SUIT LA CIBLE, et ce n'est pas un détail — c'est ce qui empêche `detail_clip` de
+// détourner l'action une seconde fois :
+//   cible Session      -> SEUL le slot surligné fait foi. Slot vide = créer, point. `detail_clip`
+//                         reste garni en permanence dès qu'on a ouvert un clip une fois, y compris
+//                         un clip d'ARRANGEMENT : le consulter ici ferait « adopter » alors que
+//                         l'utilisateur pointe un slot vide (mesuré, deuxième fois).
+//   cible Arrangement  -> `detail_clip`, et seulement s'il EST un clip d'arrangement. La vue
+//                         Arrangement n'a pas de slots, il n'y a pas d'autre désignation.
+// Renvoie l'id, ou null (= créer un clip neuf).
+function _clipAimed() {
+	try {
+		if (_clipLink.target === "arrangement") {
+			// ⚠️ PAS `detail_clip` : il reste garni en permanence, donc s'y fier interdirait à
+			// jamais de créer un clip neuf dès qu'on en a ouvert un (mesuré deux fois, une fois
+			// par cible). Ce qui joue le rôle du slot en vue Arrangement, c'est la POSITION :
+			// « y a-t-il un clip là où je vais écrire ? ». Même question qu'en Session, posée à
+			// la géométrie plutôt qu'à la sélection.
+			var b = _progToNotes();
+			if (!b) return null;
+			var tr = new LiveAPI(function(){}, "live_set view selected_track");
+			if (!tr || !tr.id || parseInt(tr.id) === 0) return null;
+			var song = new LiveAPI(function(){}, "live_set");
+			var now = song.get("current_song_time"); now = parseFloat((now instanceof Array) ? now[0] : now);
+			if (!(now >= 0)) now = 0;
+			var at = Math.floor(now / b.barLen) * b.barLen;
+			var ids = _lomIds(tr.get("arrangement_clips") || []), i;
+			for (i = 0; i < ids.length; i++) {
+				var ex = new LiveAPI(function(){}, "id " + ids[i]);
+				var s = ex.get("start_time"); s = parseFloat((s instanceof Array) ? s[0] : s);
+				var e = ex.get("end_time");   e = parseFloat((e instanceof Array) ? e[0] : e);
+				if (s < at + b.total && e > at && _clipIsMidi(ex)) return String(ids[i]);
+			}
+			return null;
+		}
+		var slot = new LiveAPI(function(){}, "live_set view highlighted_clip_slot");
+		if (slot && slot.id && parseInt(slot.id) !== 0) {
+			var has = slot.get("has_clip"); has = (has instanceof Array) ? has[0] : has;
+			if (parseInt(has) === 1) {
+				var c = new LiveAPI(function(){}, "live_set view highlighted_clip_slot clip");
+				if (c && c.id && parseInt(c.id) !== 0 && _clipIsMidi(c)) return String(c.id);
+			}
+		}
+	} catch (e) { post("clipaimed err " + e + "\n"); }
+	return null;
+}
+
+// Un clip AUDIO ne peut pas porter une progression : l'adopter mènerait à un échec d'écriture
+// incompréhensible. Il est traité comme « rien de visé ».
+function _clipIsMidi(c) {
+	try { var m = c.get("is_midi_clip"); m = (m instanceof Array) ? m[0] : m; return parseInt(m) === 1; }
+	catch (e) { return false; }
+}
+
+// Cible du lien : Session (défaut, comportement historique) ou Arrangement.
+// Changer de cible ROMPT le lien courant — on ne migre pas un clip d'une vue à l'autre, et garder
+// un lien Session actif en cible Arrangement ferait réécrire un clip que l'utilisateur ne regarde
+// plus. La réécriture, elle, est IDENTIQUE dans les deux cas : elle adresse par id, et un clip
+// d'arrangement accepte `remove_notes_extended` / `add_new_notes` comme un clip de session
+// (mesuré le 2026-08-18 sur Live 12.2.1). Seule la CRÉATION diverge.
+// ⚠️ La cible change la QUESTION : « ce slot est-il occupe ? » en Session,
+// « y a-t-il un clip sous la tete de lecture ? » en Arrangement. Le libelle doit
+// donc se recalculer ici, aucun observateur ne le reveillera.
+function cliptarget(v) {
+	var t = (parseInt(v) === 1) ? "arrangement" : "session";
+	if (t === _clipLink.target) return;
+	if (_clipLink.id) { post("cliplink: changement de cible -> lien rompu\n"); _linkClear(); }
+	_clipLink.target = t;
+	outlet(7, "cliptarget", t);
+	_pushClipHere();
+}
+
+// Établit le lien : crée UN clip et mémorise son id.
+// Refuse un emplacement occupé par un clip ÉTRANGER (sécurité non destructive) ;
+// une fois le lien établi, la réécriture de NOTRE clip est libre — refus à l'établissement,
+// propriété ensuite.
+function _linkEstablish() {
+	if (!progression.length) { outlet(7, "clipempty"); post("cliplink: progression vide\n"); return; }
+	if (_clipLink.target === "arrangement") { _linkEstablishArr(); return; }
+	try {
+		var b = _progToNotes();
+		var slot = new LiveAPI(function(){}, "live_set view highlighted_clip_slot");
+		if (!slot || !slot.id || parseInt(slot.id) === 0) { outlet(7, "clipnoslot"); post("cliplink: aucun slot selectionne\n"); return; }
+		var has = slot.get("has_clip"); has = (has instanceof Array) ? has[0] : has;
+		if (parseInt(has) === 1) { outlet(7, "clipbusy"); post("cliplink: slot occupe -> choisir un slot vide\n"); return; }
+		slot.call("create_clip", b.total);
+		var clip = new LiveAPI(function(){}, "live_set view highlighted_clip_slot clip");
+		if (!clip || !clip.id || parseInt(clip.id) === 0) { outlet(7, "clipnoslot"); post("cliplink: clip non cree\n"); return; }
+		_clipLink.id = String(clip.id);
+		_clipLink.clip = _clipName(clip);
+		_clipOwned = true;   // créé par Tuple : il est à nous, aucune question à poser
+		var tr = new LiveAPI(function(){}, "live_set view selected_track");   // le slot surligné appartient à la piste sélectionnée
+		var nm = tr.get("name"); nm = (nm instanceof Array) ? nm[0] : nm;
+		_clipLink.track = String(nm);
+		_clipRewrite();
+		_linkAnnounce();
+		_linkPlayWatch();   // le passthrough suit la lecture de CE clip (tuple-dev#77)
+		post("cliplink: etabli sur id " + _clipLink.id + " (" + _clipLink.track + ")\n");
+	} catch (e) { outlet(7, "cliperr"); post("cliplink ESTABLISH ERR " + e + "\n"); }
+}
+
+// Établissement en cible ARRANGEMENT. Chemin LiveAPI DISTINCT de la Session : `Track.create_midi_clip`
+// et non `ClipSlot.create_clip`. Signature MESURÉE le 2026-08-18 sur Live 12.2.1 (elle n'est pas
+// devinable et le plan interdisait de l'appeler sans la vérifier) : create_midi_clip(start_time, length),
+// les DEUX arguments requis — 1 seul ou zéro lève ArgumentError.
+function _linkEstablishArr() {
+	try {
+		var b = _progToNotes();
+		var tr = new LiveAPI(function(){}, "live_set view selected_track");
+		if (!tr || !tr.id || parseInt(tr.id) === 0) { outlet(7, "clipnoslot"); post("cliplink: aucune piste selectionnee\n"); return; }
+
+		// Position : la tête de lecture, ramenée au DÉBUT DE MESURE. Non arrondie, elle poserait le
+		// clip à un temps quelconque (mesuré : 374.37) — inexploitable et impossible à retrouver.
+		var song = new LiveAPI(function(){}, "live_set");
+		var now = song.get("current_song_time"); now = parseFloat((now instanceof Array) ? now[0] : now);
+		if (!(now >= 0)) now = 0;
+		var at = Math.floor(now / b.barLen) * b.barLen;
+
+		// Non destructif : refuser si un clip d'arrangement CHEVAUCHE [at, at + total).
+		// L'équivalent du « slot occupé » de la Session, qui n'a pas de sens ici (pas de slots).
+		var clips = tr.get("arrangement_clips") || [];
+		var i, ids = _lomIds(clips);
+		for (i = 0; i < ids.length; i++) {
+			var ex = new LiveAPI(function(){}, "id " + ids[i]);
+			var s = ex.get("start_time"); s = parseFloat((s instanceof Array) ? s[0] : s);
+			var e = ex.get("end_time");   e = parseFloat((e instanceof Array) ? e[0] : e);
+			if (s < at + b.total && e > at) { outlet(7, "clipbusy"); post("cliplink: arrangement occupe a " + at + " -> deplacer la tete de lecture\n"); return; }
+		}
+
+		tr.call("create_midi_clip", at, b.total);
+
+		var found = _clipParPosition(tr, at);
+		if (found === null) { outlet(7, "cliperr"); post("cliplink: clip d'arrangement introuvable apres creation\n"); return; }
+
+		_clipLink.id = String(found);
+		_clipLink.clip = _clipName(new LiveAPI(function(){}, "id " + _clipLink.id));
+		_clipOwned = true;   // créé par Tuple, comme en Session
+		var nm = tr.get("name"); nm = (nm instanceof Array) ? nm[0] : nm;
+		_clipLink.track = String(nm);
+		_clipRewrite();
+		_linkAnnounce();
+		_linkPlayWatch();   // le passthrough suit la lecture de CE clip (tuple-dev#77)
+		post("cliplink: etabli (arrangement) sur id " + _clipLink.id + " a " + at + " (" + _clipLink.track + ")\n");
+	} catch (e) { outlet(7, "cliperr"); post("cliplink ESTABLISH ARR ERR " + e + "\n"); }
+}
+
+// Une propriété LOM « liste d'objets » revient aplatie en ["id", N, "id", M, …]. Extraire les N.
+// Écrit une fois ici : le faire à la main sur chaque site rejouerait l'erreur d'indice à chaque appel.
+function _lomIds(flat) {
+	var out = [], i;
+	if (!flat || !flat.length) return out;
+	for (i = 0; i < flat.length; i++) {
+		if (String(flat[i]) === "id" && i + 1 < flat.length) { out.push(flat[i + 1]); i++; }
+	}
+	// Certaines versions rendent déjà une liste d'ids nus : ne pas rendre un tableau vide en silence.
+	if (!out.length) for (i = 0; i < flat.length; i++) if (parseInt(flat[i]) > 0) out.push(flat[i]);
+	return out;
+}
+
+// Les notes de `_progToNotes` vers les dicts que `add_new_notes` attend. La boucle vivait
+// en DEUX copies a soixante lignes d'ecart, avec deux noms d'accumulateur (`arr`, `arr2`)
+// et deux noms d'indice pour eviter la collision — le genre de divergence cosmetique qui
+// masque une divergence reelle. Meme raison que `_lomIds` juste au-dessus.
+function _notesLom(notes) {
+	var out = [], i;
+	for (i = 0; i < notes.length; i++) {
+		out.push({ pitch: notes[i].pitch, start_time: notes[i].start, duration: notes[i].dur, velocity: notes[i].vel });
+	}
+	return out;
+}
+
+// Retrouve un clip d'arrangement par sa POSITION, jamais par la valeur de retour de
+// `create_midi_clip` : `call` ne rend pas un id exploitable de facon fiable cote Max, et
+// `start_time` est exact. Rend l'id, ou null — jamais une valeur plausible.
+//
+// ⚠️ LA TOLERANCE EST LOAD-BEARING. Les temps du LOM sont des flottants : une comparaison
+// stricte raterait le clip qu'on vient de creer. Elle etait ecrite 0.001 aux deux sites ;
+// deux copies d'un seuil, c'est un seuil qu'on peut regler a moitie.
+function _clipParPosition(tr, at) {
+	var ids = _lomIds(tr.get("arrangement_clips") || []), i;
+	for (i = 0; i < ids.length; i++) {
+		var c = new LiveAPI(function(){}, "id " + ids[i]);
+		var cs = c.get("start_time"); cs = parseFloat((cs instanceof Array) ? cs[0] : cs);
+		if (Math.abs(cs - at) < 0.001) return ids[i];
+	}
+	return null;
+}
+
+// Rompt le lien. NE TOUCHE PAS au clip dans Live : il reste tel quel, il cesse simplement d'être suivi.
+function _linkClear() {
+	_clipLink.id = null; _clipLink.track = ""; _clipLink.clip = "";
+	_clipOwned = false;
+	if (_replaceArmed) { _replaceArmed = false; outlet(7, "clipreplace", 0); }
+	_linkPlayWatch();   // id null : l'observateur tombe, le passthrough se relâche
+	outlet(7, "linkoff");
+}
+
+// ── Observateur de lecture du clip lié (tuple-dev#77, 2026-09-18) ─────────────
+// `is_playing` du clip lié pilote le passthrough de midinote (voir _passNote). Posé à
+// chaque (ré)attache — établissement Session/Arrangement, FOLLOW, recréation d'étendue —
+// et retiré au linkoff. À la PRISE de lecture, l'accord de grille tenu est relâché
+// (sinon il sonnerait sous le clip) ; à l'ARRÊT, les passthrough tenues partent en
+// note-off et le remappage grille reprend.
+var _linkPlayObs = null, _linkPlaying = false;
+function _linkPlayCb(args) {
+	if (!args || String(args[0]) !== "is_playing") return;
+	var on = !!parseInt(args[1]);
+	if (on === _linkPlaying) return;
+	_linkPlaying = on;
+	// Le clip lié devient la SEULE voix : se taire ne suffit pas, il faut relâcher. `_seqTick`
+	// s'arrête bien sur `_linkPlaying`, mais l'accord qu'il tenait restait sonnant sous toute la
+	// lecture du clip, doublé par le passthrough (audit 2026-10-21). `_seqStop` remet aussi
+	// `_seqCard` à null : à l'arrêt du clip, le tick suivant reprend la carte sous la tête.
+	if (on) { _releaseHeld(); _seqStop(); }
+	else _passRelease();
+}
+function _linkPlayWatch() {
+	if (_linkPlaying) { _linkPlaying = false; _passRelease(); }
+	try {
+		if (_linkPlayObs) { try { _linkPlayObs.property = ""; } catch (e) {} }
+		_linkPlayObs = null;
+		if (!_clipLink.id) return;
+		_linkPlayObs = new LiveAPI(_linkPlayCb, "id " + _clipLink.id);
+		_linkPlayObs.property = "is_playing";
+	} catch (e) { post("linkplay: " + e + "\n"); }
+}
+
+// Nom du clip lié, pour l'indicateur 🔗. Un clip sans nom rend "" et l'UI n'affiche alors que la
+// piste : fabriquer « Clip 3 » côté moteur mentirait sur ce que Live montre.
+function _clipName(c) {
+	try { var n = c.get("name"); n = (n instanceof Array) ? n[0] : n; return (n === undefined || n === null) ? "" : String(n); }
+	catch (e) { return ""; }
+}
+
+// Une seule façon d'annoncer le lien : trois sites l'émettaient à la main, et le nom du clip
+// aurait dû s'ajouter aux trois.
+function _linkAnnounce() {
+	outlet(7, "linkon", _clipLink.track, _clipLink.clip);
+}
+
+// Marque « à réécrire » et planifie UNE réécriture. Le drapeau est ce qui coalesce : dix mutations dans
+// le même geste produisent UNE écriture, pas dix.
+// Le passage par _taskDefer n'est PAS cosmétique : une modif de Live appelée depuis un callback
+// d'OBSERVATEUR LiveAPI échoue SILENCIEUSEMENT (ré-entrance) — cf. docs/decisions.md § Gotchas LiveAPI.
+function _clipSyncDirty() {
+	if (!_clipLink.id) return;
+	// Clip attaché par Follow et jamais confirmé : on POSE la question au lieu d'écrire. L'écriture
+	// n'est pas mise en file — répondre oui relance _clipSyncDirty, et une file voudrait dire qu'un
+	// oui donné plus tard écrit un état de progression qui n'existe plus.
+	if (!_clipOwned) {
+		if (!_replaceArmed) { _replaceArmed = true; outlet(7, "clipreplace", 1); post("cliplink: clip etranger vise -> REPLACE? en attente\n"); }
+		return;
+	}
+	if (_clipDirty) return;
+	_clipDirty = true;
+	_taskDefer(function(){ _clipDirty = false; _clipRewrite(); });
+}
+
+// CLIP-AUTO-FOCUS (#45) — Follow : le clip SÉLECTIONNÉ dans Live devient la cible d'édition.
+//
+// Remplace l'ADOPTION à deux clics (supprimée ici) : le bouton unique armait « REPLACE? » puis
+// adoptait au second clic. Follow rend l'attache automatique, donc le geste qui NOMMAIT le
+// remplacement disparaît — la confirmation se déplace au premier ÉCRIT (voir _clipSyncDirty),
+// une fois par clip. Attacher ne détruit rien ; écrire, si.
+//
+// ⚠️ `detail_clip` est TOUJOURS garni dès qu'un clip a été ouvert une fois (mesuré, deux fois).
+// L'absence de cible est donc un état de TUPLE (`_clipLink.id === null`), jamais une lecture de
+// Live. Un slot vide sélectionné ne détache pas : il n'y a simplement rien à viser.
+//
+// ⚠️ `highlighted_clip_slot` n'est PAS observable (mesuré le 2026-08-18, Live 12.2.1) — d'où
+// l'observateur COMPOSÉ : `detail_clip` bouge quand on ouvre un clip, `selected_track` et
+// `selected_scene` couvrent le déplacement de la sélection dans la grille de Session. À chaque
+// réveil on RÉSOUT, on ne croit pas la propriété qui a bougé.
+
+var FOLLOW_PROPS = ["detail_clip", "selected_track", "selected_scene"];
+
+// Quel clip l'utilisateur regarde-t-il ? Distinct de `_clipAimed()`, qui répond « où écrirais-je
+// si je créais » et suit donc le réglage de CIBLE. Ici la question est « que montre Live », et la
+// réponse suit le clip, pas le réglage.
+//   Session     : le slot surligné fait foi. `detail_clip` y est trompeur (il reste garni).
+//   Arrangement : pas de slots, `detail_clip` est la seule désignation — et seulement s'il EST
+//                 un clip d'arrangement, sinon un vieux clip de session serait re-visé.
+function _clipSelected() {
+	try {
+		var slot = new LiveAPI(function(){}, "live_set view highlighted_clip_slot");
+		if (slot && slot.id && parseInt(slot.id) !== 0) {
+			var has = slot.get("has_clip"); has = (has instanceof Array) ? has[0] : has;
+			if (parseInt(has) === 1) {
+				var c = new LiveAPI(function(){}, "live_set view highlighted_clip_slot clip");
+				if (c && c.id && parseInt(c.id) !== 0) return _clipIsMidi(c) ? String(c.id) : null;
+			}
+		}
+		var d = new LiveAPI(function(){}, "live_set view detail_clip");
+		if (d && d.id && parseInt(d.id) !== 0 && _clipIsMidi(d)) {
+			var arr = d.get("is_arrangement_clip"); arr = (arr instanceof Array) ? arr[0] : arr;
+			if (parseInt(arr) === 1) return String(d.id);
+		}
+	} catch (e) { post("clipselected err " + e + "\n"); }
+	return null;
+}
+
+// Attache SANS écrire. C'est tout l'écart avec l'adoption : le clip devient la cible, son contenu
+// reste intact tant que la progression ne bouge pas — et la première écriture demandera un oui.
+function _clipAttach(id) {
+	try {
+		var c = new LiveAPI(function(){}, "id " + id);
+		if (!c || !c.id || parseInt(c.id) === 0) return;
+		_clipLink.id = String(id);
+		_clipOwned = false;
+		if (_replaceArmed) { _replaceArmed = false; outlet(7, "clipreplace", 0); }
+		// La cible suit le clip attaché : un clip d'arrangement suivi en réglage Session ferait
+		// mentir l'affichage, et la RECRÉATION d'étendue (_clipArrFit) se poserait sur la mauvaise
+		// branche.
+		var arr = c.get("is_arrangement_clip"); arr = (arr instanceof Array) ? arr[0] : arr;
+		var t = (parseInt(arr) === 1) ? "arrangement" : "session";
+		if (t !== _clipLink.target) { _clipLink.target = t; outlet(7, "cliptarget", t); }
+		var tr = new LiveAPI(function(){}, "live_set view selected_track");
+		var nm = tr.get("name"); nm = (nm instanceof Array) ? nm[0] : nm;
+		_clipLink.track = String(nm);
+		_clipLink.clip = _clipName(c);
+		_linkAnnounce();
+		_linkPlayWatch();   // le passthrough suit la lecture du clip attaché (tuple-dev#77)
+		post("cliplink: FOLLOW attache le clip id " + _clipLink.id + " (" + _clipLink.track + ")\n");
+	} catch (e) { outlet(7, "cliperr"); post("cliplink ATTACH ERR " + e + "\n"); }
+}
+
+// Reveil d'observateur : DEUX consommateurs, un seul jeu d'observateurs.
+// `_followResolve` ne travaille que si FOLLOW est arme ; `_pushClipHere` travaille
+// toujours, parce que le bouton doit dire ce qu'il fera meme sans suivi.
+function _followReveil() {
+	_followResolve();
+	_pushClipHere();
+}
+
+// Réveil d'observateur. VERROU PAR ID : re-attacher le clip déjà suivi ré-émettrait `linkon` et
+// remettrait `_clipOwned` à false — donc reposerait REPLACE? sur un clip déjà confirmé, à chaque
+// clic dans Live.
+function _followResolve() {
+	if (!_clipFollow) return;
+	var id = _clipSelected();
+	if (!id) return;                                       // slot vide, clip audio : rien à viser
+	if (_clipLink.id && String(id) === String(_clipLink.id)) return;
+	_clipAttach(id);
+}
+
+// ⚠️ Le corps est DIFFÉRÉ : toute écriture LiveAPI faite depuis un callback d'observateur échoue
+// SILENCIEUSEMENT (ré-entrance). _clipAttach ne fait que lire, mais une confirmation peut suivre
+// immédiatement — et la règle tient mieux appliquée partout qu'au cas par cas.
+// ⚠️ Demarre au CHARGEMENT, plus seulement quand FOLLOW s'allume : le libelle du
+// bouton depend de la selection dans Live, donc il lui faut les memes reveils.
+// `_followResolve` garde son propre garde `if (!_clipFollow) return`, le suivi ne
+// s'active donc pas pour autant.
+function _followStart() {
+	if (typeof LiveAPI === 'undefined') return;
+	if (_followObs.length) return;
+	var i;
+	for (i = 0; i < FOLLOW_PROPS.length; i++) {
+		try {
+			var o = new LiveAPI(function(){ _taskDefer(_followReveil); }, "live_set view");
+			o.property = FOLLOW_PROPS[i];
+			_followObs.push(o);
+		} catch (e) { post("follow: observateur " + FOLLOW_PROPS[i] + " refuse (" + e + ")\n"); }
+	}
+}
+
+// Toggle FOLLOW. OFF ne détache que ce que FOLLOW a attaché : un clip CRÉÉ par Tuple (CREATE CLIP)
+// lui appartient et reste lié — couper le suivi n'est pas jeter son propre clip.
+function clipfollow(v) {
+	var on = parseInt(v) !== 0;
+	_clipFollow = on;
+	outlet(7, "clipfollow", on ? 1 : 0);
+	if (on) { _followStart(); _taskDefer(_followResolve); }
+	else {
+		// ⚠️ On ne coupe PLUS les observateurs ici. Ils servent aussi au libelle du
+		// bouton, qui doit rester juste quand le suivi est eteint. `_followResolve`
+		// se garde tout seul.
+		if (_clipLink.id && !_clipOwned) _linkClear();
+	}
+	post("cliplink: follow " + (on ? "ON" : "OFF") + "\n");
+}
+
+// « × détacher » de la barre Follow. Détacher en LAISSANT le suivi armé n'aurait pas de sens : le
+// clic suivant dans Live ré-attacherait aussitôt. Le geste coupe donc les deux, et l'UI retombe
+// exactement sur l'état « Détaché — aucun clip édité » de la maquette.
+// ⚠️ Désarmer le suivi ne coupe PAS les observateurs — même règle que `clipfollow 0`. Ils
+// nourrissent aussi `cliphere` (libellé du bouton CLIP) ; les couper ici figeait ce libellé
+// après un Detach (session 85, device/tests/clip-detache-observe.test.mjs). Plus aucun
+// chemin ne les coupe : la fonction qui le faisait a disparu avec ce dernier appelant.
+function clipdetach() {
+	if (_clipFollow) { _clipFollow = false; outlet(7, "clipfollow", 0); }
+	if (_clipLink.id) { post("cliplink: detache par l'utilisateur\n"); _linkClear(); }
+	else outlet(7, "linkoff");
+}
+
+// Réponse à REPLACE? — 1 = oui, écrase ; 0 = non, on reste attaché sans rien écrire.
+// Le oui rend le clip NÔTRE : la question ne se repose pas à chaque accord.
+function clipreplace(v) {
+	if (!_replaceArmed) return;
+	_replaceArmed = false;
+	outlet(7, "clipreplace", 0);
+	if (parseInt(v) !== 1) { post("cliplink: REPLACE refuse -> clip intact\n"); return; }
+	_clipOwned = true;
+	post("cliplink: REPLACE accepte -> le clip " + _clipLink.id + " devient la cible\n");
+	_clipSyncDirty();
+}
+
+// « Y a-t-il un clip la ou j'ecrirais ? », diffuse a l'UI pour que le bouton DISE
+// ce qu'il va faire au lieu de le decouvrir au clic. `_clipAimed()` pose deja la
+// question a la GEOMETRIE — slot surligne en Session, tete de lecture en
+// Arrangement — et non a `detail_clip`, qui reste garni en permanence.
+//
+// ⚠️ Memoise : sans le garde d'egalite, chaque reveil d'observateur reemettrait
+// le meme etat, et l'UI repeindrait un bouton qui n'a pas change.
+var _clipHere = -1;
+function _pushClipHere() {
+	var v = _clipAimed() ? 1 : 0;
+	if (v === _clipHere) return;
+	_clipHere = v;
+	outlet(7, "cliphere", v);
+}
+
+// CREATE CLIP / APPLY TO CLIP — un seul bouton, deux actions selon ce qui est vise.
+//
+// Il REFUSAIT quand un clip occupait la cible (`clipbusy`), en renvoyant vers
+// FOLLOW. C'etait une impasse : le geste naturel — selectionner un clip, cliquer
+// pour y imprimer la progression — ne menait nulle part.
+//
+// ⚠️ Adopter n'ECRIT PAS. `_clipAttach` pose `_clipOwned = false`, donc la
+// premiere ecriture passe par `_clipSyncDirty` qui arme REPLACE? et attend un
+// oui. C'est ce qui rend l'adoption sure : attacher ne detruit rien, ecrire si.
+function writeclip() {
+	var aim = _clipAimed();
+	if (aim) {
+		_clipAttach(aim);
+		_clipSyncDirty();   // arme REPLACE? : le clip appartient encore a l'utilisateur
+		post("cliplink: clip existant adopte (id " + aim + ") -> REPLACE? en attente\n");
+		return;
+	}
+	_linkEstablish();
+}
+
+// CHORDIFY : SUPPRIMÉ le 2026-08-20. Transformait un clip de notes-déclencheurs en accords
+// Tuple — remplacé par l'édition en direct du clip (Clip Target + live-sync, sessions 60/60b),
+// qui écrit les accords sans passer par un enregistrement de déclencheurs. Retiré : message
+// `chordify` (table LIST_DISPATCH + bouton du dock jweb), _chordifyMode/_chordifyResult,
+// _readClipNotes, _chordifyNotes. Historique complet : docs/decisions.md (2026-06-16 → 2026-08-20).
+
+// =====================================================
+// TYPES D'ACCORDS
+// =====================================================
+// ⚠️ LES QUATRE `var q` ONT ÉTÉ RETIRÉS LE 2026-09-16. Chacun classait la qualité de
+// l'accord — dim/aug/m, M7/ø7/dim7/m7, M9/m9, m — puis n'était JAMAIS relu : `sendChord`
+// reçoit `gridLabel(d, fn, iv)`, qui refait la classification pour son compte. Neuf lignes
+// sur le chemin chaud d'émission de note, pour rien. `iv` reste : il est l'argument de
+// `gridLabel`.
+
+function triad(d) {
+	d = parseInt(d); lastFn = "triad"; lastDegree = d;
+	if (!gridTypeValid(d, "triad")) { post("triad " + d + " : hors grille\n"); return; }
+	var notes = buildNotes(d, [0,2,4]);
+	var iv = getIntervals(d);
+	sendChord(gridLabel(d, "triad", iv), notes);
+}
+
+function seven(d) {
+	d = parseInt(d); lastFn = "seven"; lastDegree = d;
+	if (!gridTypeValid(d, "seven")) { post("seven " + d + " : invalid\n"); return; }
+	var notes = buildNotes(d, [0,2,4,6]);
+	var iv = getIntervals(d);
+	sendChord(gridLabel(d, "seven", iv), notes);
+}
+
+function nine(d) {
+	d = parseInt(d); lastFn = "nine"; lastDegree = d;
+	// La grille tranche seule. Les deux `isValid` qui élargissaient cette garde acceptaient
+	// une neuvième sur un degré dont la gamme n'a pas la note — huit cases sur les deux
+	// pentatoniques, que `_scaleAllowsSpec` refuse et que la grille ne montre donc jamais.
+	if (!gridTypeValid(d, "nine")) { post("nine " + d + " : hors grille\n"); return; }
+	var notes = buildNotes(d, [0,2,4,6,8]);
+	var iv = getIntervals(d);
+	sendChord(gridLabel(d, "nine", iv), notes);
+}
+
+function add9(d) {
+	d = parseInt(d); lastFn = "add9"; lastDegree = d;
+	if (!gridTypeValid(d, "add9")) { post("add9 " + d + " : invalid\n"); return; }
+	var notes = buildNotes(d, [0,2,4,8]);
+	var iv = getIntervals(d);
+	sendChord(gridLabel(d, "add9", iv), notes);
+}
+
+function sus2(d) {
+	d = parseInt(d); lastFn = "sus2"; lastDegree = d;
+	if (!gridTypeValid(d, "sus2")) { post("sus2 " + d + " : invalid\n"); return; }
+	var notes = buildNotes(d, [0,1,4]);
+	sendChord(gridLabel(d, "sus2"), notes);
+}
+
+function sus4(d) {
+	d = parseInt(d); lastFn = "sus4"; lastDegree = d;
+	if (!gridTypeValid(d, "sus4")) { post("sus4 " + d + " : invalid\n"); return; }
+	var notes = buildNotes(d, [0,3,4]);
+	sendChord(gridLabel(d, "sus4"), notes);
+}
+
+// ----- Nouveaux types -----
+
+function six(d) {
+	d = parseInt(d); lastFn = "six"; lastDegree = d;
+	if (!gridTypeValid(d, "six")) return;
+	var notes = buildNotes(d, [0,2,4,5]);        // root, 3ce, 5te, 6te
+	var iv = getIntervals(d);
+	sendChord(gridLabel(d, "six", iv), notes);
+}
+
+function sixnine(d) {
+	d = parseInt(d); lastFn = "sixnine"; lastDegree = d;
+	if (!gridTypeValid(d, "sixnine")) return;
+	var notes = buildNotes(d, [0,2,4,5,8]);      // + 9e
+	var iv = getIntervals(d);
+	sendChord(gridLabel(d, "sixnine", iv), notes);
+}
+
+function sevensus4(d) {
+	d = parseInt(d); lastFn = "sevensus4"; lastDegree = d;
+	if (!gridTypeValid(d, "sevensus4")) return;
+	var notes = buildNotes(d, [0,3,4,6]);        // root, 4te, 5te, 7e
+	sendChord(gridLabel(d, "sevensus4"), notes);
+}
+
+function mmaj7(d) {
+	d = parseInt(d); lastFn = "mmaj7"; lastDegree = d;
+	if (!gridTypeValid(d, "mmaj7")) return;
+	var notes = buildNotes(d, [0,2,4,6]);        // root, 3ce min, 5te, 7e maj
+	sendChord(gridLabel(d, "mmaj7"), notes);
+}
+
+function sevenflat9(d) {
+	d = parseInt(d); lastFn = "sevenflat9"; lastDegree = d;
+	if (!gridTypeValid(d, "sevenflat9")) return;
+	var notes = buildNotes(d, [0,2,4,6,8]);      // + b9
+	sendChord(gridLabel(d, "sevenflat9"), notes);
+}
+
+function sevensharp9(d) {
+	d = parseInt(d); lastFn = "sevensharp9"; lastDegree = d;
+	if (!gridTypeValid(d, "sevensharp9")) return;
+	var notes = buildNotes(d, [0,2,4,6,8]);      // + #9
+	sendChord(gridLabel(d, "sevensharp9"), notes);
+}
+
+function m7s5(d) {
+	d = parseInt(d); lastFn = "m7s5"; lastDegree = d;
+	if (!gridTypeValid(d, "m7s5")) return;
+	var notes = buildNotes(d, [0,2,4,6]);
+	// Augmenter la quinte (index 2) d'un demi-ton
+	if (notes.length > 2) notes[2]++;
+	sendChord(gridLabel(d, "m7s5"), notes);
+}
+
+function release() {
+	sendNoteOff();
+}
+
+// =====================================================
+// ACCORDS EMPRUNTÉS (borrowed / modal interchange)
+// Construit un accord à partir d'un décalage en demi-tons depuis
+// la tonique + un type explicite. Passe par le pipeline normal
+// (voicing, voice leading, sortie, moniteur).
+// =====================================================
+
+function colorchord(semis, type) {
+	semis = parseInt(semis);
+	type  = String(type);
+
+	var ivs = _colorIvs(type);   // type x (page Ext) compris : ses notes sont dans le type
+
+	var base  = root + semis + (4 + currentOctave) * 12;
+	var notes = [];
+	for (var i = 0; i < ivs.length; i++) {
+		var m = base + ivs[i];
+		if (m >= 0 && m <= 127) notes.push(m);
+	}
+
+	lastFn = "color"; lastDegree = semis;
+	lastColorSemis = semis; lastColorType = type;
+	sendChord(noteName(notes[0]) + _borSuffix(semis, type), notes);   // nom enrichi en EXT (colonne Borrowed seule)
+}
+
+// Auto-updater:
+//  - DETECTION is browser-side in the jweb (checkForUpdates() → GitHub API).
+//  - INSTALL goes through tuple_dl (node.script): installupdate() below sends
+//    'dl <url> <platform> <amxdPath>' to it. tuple_dl downloads + extracts
+//    in-place (or launches the installer on Win+requires_reinstall), and
+//    reports back to the jweb via its OWN outlet wired in tuple.amxd
+//    (obj-UPD-dl → strip jweb + s ---tuple_ui): updprogress/updone/upderr.
+//  This is NOT the old _wire_updater relay (removed in 1c1416b) — just one
+//  node.script + two patchlines. See docs/decisions.md.
+
+// Diffusion initiale de la grille (différée le temps que l'UI charge) — passe par la surface unique
+var gridInitTask = new Task(broadcastSurface, this);
+gridInitTask.schedule(700);
+
+// Auto-sync observers — init at global scope too so autowatch reloads recreate them.
+var _autoSyncInitTask = new Task(_initAutoSync, this);
+_autoSyncInitTask.schedule(800);
+
+// Observateurs de SELECTION (detail_clip / selected_track / selected_scene) : ils
+// ne servaient qu'à FOLLOW et ne démarraient donc qu'avec lui. Le libellé du
+// bouton CLIP en dépend aussi — il doit dire « APPLY TO CLIP » dès qu'un clip
+// occupe la cible, suivi armé ou non. Ils démarrent donc au chargement, et
+// `_followResolve` garde son propre garde : les observer n'active pas le suivi.
+// Portée globale, comme les autres : un reload autowatch les recrée.
+var _clipHereInitTask = new Task(function(){ _followStart(); _pushClipHere(); }, this);
+_clipHereInitTask.schedule(900);
+
+// =====================================================
+// SELF-CHECK — confirme que les globals critiques sont initialisés.
+// Visible dans device/max_console.log après (re)chargement.
+// =====================================================
+(function _selfCheck(){
+	try {
+		var okSt = (typeof _vl2_st !== 'undefined' && _vl2_st && _vl2_st.recall);
+		post("tuple selfcheck: Set=" + (typeof Set !== 'undefined') +
+		     " Map=" + (typeof Map !== 'undefined') +
+		     " _vl2_st=" + (okSt ? "ok" : "KO") +
+		     " FOLD=" + (typeof _vl2_FOLD !== 'undefined') +
+		     " SPACING_NAMES=" + SPACING_NAMES.length + "\n");
+	} catch(e) { post("tuple selfcheck ERROR: " + e + "\n"); }
+})();
+
